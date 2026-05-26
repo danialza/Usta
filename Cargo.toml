@@ -6,6 +6,7 @@ members = [
     "crates/atelier-providers",
     "crates/atelier-index",
     "crates/atelier-pm",
+    "crates/atelier-roles",
     "crates/atelier-daemon",
     "crates/atelier-cli",
 ]
@@ -51,3 +52,4 @@ nix = { version = "0.29", features = ["signal", "process"] }
 ignore = "0.4"
 fastembed = "4"
 walkdir = "2"
+serde_yaml = "0.9"

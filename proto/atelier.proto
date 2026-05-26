@@ -34,6 +34,10 @@ service Atelier {
 
   // PM orchestrator: identify stack + propose team for a workspace.
   rpc AnalyzeWorkspace(AnalyzeRequest) returns (WorkspaceAnalysis);
+
+  // Roles.
+  rpc ListRoles(Empty) returns (RoleList);
+  rpc RoleChat(RoleChatRequest) returns (stream ChatToken);
 }
 
 message Empty {}
@@ -191,4 +195,27 @@ message WorkspaceAnalysis {
   string summary                = 1;
   repeated StackTag stack       = 2;
   repeated ProposedRole team    = 3;
+}
+
+// --- Roles ---
+
+message Role {
+  string name              = 1;
+  string emoji             = 2;
+  string description       = 3;
+  string default_provider  = 4;
+  string default_model     = 5;
+  repeated string allowed_tools = 6;
+  string source_path       = 7;
+}
+
+message RoleList { repeated Role items = 1; }
+
+message RoleChatRequest {
+  string role_name = 1;
+  string user_msg  = 2;
+  // Optional overrides; empty = use role defaults.
+  string provider  = 3;
+  string model     = 4;
+  int32  max_tokens = 5;
 }

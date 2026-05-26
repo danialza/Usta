@@ -8,7 +8,7 @@ use atelier_proto::v1::{
     pty_server_msg::Kind as PtySKind, AnalyzeRequest, ChatMessage, ChatRequest,
     CloseTerminalRequest, CreateTerminalRequest, Empty, IndexRequest, ListTerminalsRequest,
     OpenWorkspaceRequest, PingRequest, PtyAttach, PtyClientMsg, PtyInput, PtyResize,
-    SearchRequest,
+    RoleChatRequest, SearchRequest,
 };
 use chrono::{Local, TimeZone};
 use clap::{Parser, Subcommand};
@@ -85,6 +85,11 @@ enum Cmd {
         k: i32,
         query: Vec<String>,
     },
+    /// Role subcommands.
+    Role {
+        #[command(subcommand)]
+        sub: RoleCmd,
+    },
     /// PM orchestrator: identify stack + propose team.
     Analyze {
         #[arg(long, default_value = "")]
@@ -101,6 +106,25 @@ enum DaemonCmd {
     Start,
     Stop,
     Status,
+}
+
+#[derive(Subcommand, Debug)]
+enum RoleCmd {
+    /// List all loaded roles.
+    List,
+    /// Show metadata for a role.
+    Show { name: String },
+    /// Streaming chat as a role.
+    Chat {
+        name: String,
+        #[arg(short, long, default_value = "")]
+        provider: String,
+        #[arg(short, long, default_value = "")]
+        model: String,
+        #[arg(long, default_value_t = 1024)]
+        max_tokens: i32,
+        prompt: Vec<String>,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -347,6 +371,53 @@ async fn main() -> Result<()> {
                 println!();
             }
         }
+        Cmd::Role { sub } => match sub {
+            RoleCmd::List => {
+                let r = client.list_roles(Empty {}).await?.into_inner();
+                if r.items.is_empty() {
+                    println!("{}", "(no roles found — check roles/ dir)".dimmed());
+                }
+                for role in r.items {
+                    println!("{} {}  {}",
+                        role.emoji,
+                        role.name.bold(),
+                        role.description.dimmed(),
+                    );
+                    println!("    {} {} / {}", "model".dimmed(), role.default_provider, role.default_model);
+                    if !role.allowed_tools.is_empty() {
+                        println!("    {} {}", "tools".dimmed(), role.allowed_tools.join(", "));
+                    }
+                }
+            }
+            RoleCmd::Show { name } => {
+                let r = client.list_roles(Empty {}).await?.into_inner();
+                let role = r.items.iter().find(|x| x.name == name)
+                    .ok_or_else(|| anyhow::anyhow!("role '{name}' not found"))?;
+                println!("{} {}", role.emoji, role.name.bold());
+                println!("  {} {}", "desc    ".dimmed(), role.description);
+                println!("  {} {}", "provider".dimmed(), role.default_provider);
+                println!("  {} {}", "model   ".dimmed(), role.default_model);
+                println!("  {} {}", "tools   ".dimmed(), role.allowed_tools.join(", "));
+                println!("  {} {}", "source  ".dimmed(), role.source_path);
+            }
+            RoleCmd::Chat { name, provider, model, max_tokens, prompt } => {
+                let prompt = prompt.join(" ");
+                if prompt.trim().is_empty() { anyhow::bail!("empty prompt"); }
+                let mut s = client.role_chat(RoleChatRequest {
+                    role_name: name,
+                    user_msg: prompt,
+                    provider, model, max_tokens,
+                }).await?.into_inner();
+                let stdout = std::io::stdout();
+                let mut out = stdout.lock();
+                while let Some(item) = s.next().await {
+                    let t = item?;
+                    if !t.error.is_empty() { eprintln!("\n{} {}", "✗".red(), t.error); std::process::exit(1); }
+                    if !t.text.is_empty() { out.write_all(t.text.as_bytes())?; out.flush()?; }
+                    if t.done { writeln!(out, "\n{} done ({})", "·".dimmed(), t.stop_reason.dimmed())?; break; }
+                }
+            }
+        },
         Cmd::Analyze { workspace_id, provider, model } => {
             let ws_id = resolve_ws(workspace_id)?;
             eprintln!("{} analyzing with {} / {} ...", "·".dimmed(), provider, model);

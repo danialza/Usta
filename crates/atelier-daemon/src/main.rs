@@ -10,10 +10,11 @@ use atelier_proto::v1::{
     CreateTerminalRequest, Empty, IndexProgress as PbIndexProgress, IndexRequest,
     ListTerminalsRequest, OpenWorkspaceRequest, PingRequest, PingResponse,
     ProposedRole as PbProposedRole, ProviderInfo, ProviderList, PtyClientMsg, PtyServerMsg,
-    SearchHit as PbSearchHit, SearchRequest, SearchResults, StackTag as PbStackTag,
-    Terminal as PbTerminal, TerminalList, Workspace, WorkspaceAnalysis as PbAnalysis,
-    WorkspaceList,
+    Role as PbRole, RoleChatRequest, RoleList, SearchHit as PbSearchHit, SearchRequest,
+    SearchResults, StackTag as PbStackTag, Terminal as PbTerminal, TerminalList, Workspace,
+    WorkspaceAnalysis as PbAnalysis, WorkspaceList,
 };
+use atelier_roles::RoleLibrary;
 use atelier_providers::{ChatDelta, ChatMessage, ChatRequest, ProviderRegistry};
 use atelier_index::{Embedder, EmbedderConfig, Indexer};
 use tokio::sync::OnceCell;
@@ -40,6 +41,7 @@ struct AtelierSvc {
     pty: Arc<PtyManager>,
     providers: Arc<ProviderRegistry>,
     embedder: Arc<OnceCell<Arc<Embedder>>>,
+    roles: Arc<RoleLibrary>,
 }
 
 impl AtelierSvc {
@@ -456,6 +458,77 @@ impl Atelier for AtelierSvc {
         Ok(Response::new(Box::pin(stream) as Self::IndexWorkspaceStream))
     }
 
+    async fn list_roles(&self, _req: Request<Empty>) -> Result<Response<RoleList>, Status> {
+        let items = self
+            .roles
+            .iter()
+            .map(|r| PbRole {
+                name: r.name.clone(),
+                emoji: r.emoji.clone(),
+                description: r.description.clone(),
+                default_provider: r.default_provider.clone(),
+                default_model: r.default_model.clone(),
+                allowed_tools: r.allowed_tools.clone(),
+                source_path: r.source.to_string_lossy().into_owned(),
+            })
+            .collect();
+        Ok(Response::new(RoleList { items }))
+    }
+
+    type RoleChatStream = TokenStream;
+
+    async fn role_chat(
+        &self,
+        req: Request<RoleChatRequest>,
+    ) -> Result<Response<Self::RoleChatStream>, Status> {
+        let r = req.into_inner();
+        let role = self
+            .roles
+            .get(&r.role_name)
+            .cloned()
+            .ok_or_else(|| Status::not_found(format!("role '{}' not found", r.role_name)))?;
+
+        let provider_name = if r.provider.is_empty() { role.default_provider.clone() } else { r.provider };
+        let model = if r.model.is_empty() { role.default_model.clone() } else { r.model };
+
+        let provider = self
+            .providers
+            .get(&provider_name)
+            .ok_or_else(|| Status::not_found(format!("unknown provider '{provider_name}'")))?;
+
+        let req = ChatRequest {
+            model,
+            system: Some(role.system_prompt.clone()),
+            messages: vec![ChatMessage { role: "user".into(), content: r.user_msg }],
+            max_tokens: if r.max_tokens > 0 { Some(r.max_tokens as u32) } else { Some(1024) },
+        };
+
+        let inner = match provider.chat(req).await {
+            Ok(s) => s,
+            Err(e) => return Err(Status::internal(e.to_string())),
+        };
+
+        let mapped = async_stream::stream! {
+            let mut s = inner;
+            while let Some(item) = s.next().await {
+                match item {
+                    Ok(ChatDelta::Text(t)) => {
+                        yield Ok(ChatToken { text: t, done: false, stop_reason: String::new(), error: String::new() });
+                    }
+                    Ok(ChatDelta::Done { stop_reason }) => {
+                        yield Ok(ChatToken { text: String::new(), done: true, stop_reason, error: String::new() });
+                        return;
+                    }
+                    Err(e) => {
+                        yield Ok(ChatToken { text: String::new(), done: true, stop_reason: String::new(), error: e.to_string() });
+                        return;
+                    }
+                }
+            }
+        };
+        Ok(Response::new(Box::pin(mapped) as Self::RoleChatStream))
+    }
+
     async fn analyze_workspace(
         &self,
         req: Request<AnalyzeRequest>,
@@ -576,11 +649,15 @@ async fn main() -> anyhow::Result<()> {
 
     info!(socket = %socket_path.display(), "atelierd listening");
 
+    let roles = RoleLibrary::load_defaults();
+    info!(count = roles.len(), "roles loaded");
+
     let svc = AtelierSvc {
         db: Arc::new(db),
         pty: Arc::new(PtyManager::new()),
         providers: Arc::new(ProviderRegistry::with_defaults()),
         embedder: Arc::new(OnceCell::new()),
+        roles: Arc::new(roles),
     };
 
     if let Err(e) = Server::builder()
