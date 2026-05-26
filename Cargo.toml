@@ -1,0 +1,36 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/atelier-proto",
+    "crates/atelier-core",
+    "crates/atelier-providers",
+    "crates/atelier-daemon",
+    "crates/atelier-cli",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.80"
+authors = ["danial <danial.zaferanchi@gmail.com>"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/danialza/atelier"
+
+[workspace.dependencies]
+tokio = { version = "1.40", features = ["full"] }
+tonic = "0.12"
+tonic-build = "0.12"
+prost = "0.13"
+prost-types = "0.13"
+anyhow = "1"
+thiserror = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio-stream = { version = "0.1", features = ["net"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+tower = "0.5"
+clap = { version = "4.5", features = ["derive"] }
+directories = "5"
+async-trait = "0.1"

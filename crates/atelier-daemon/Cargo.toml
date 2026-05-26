@@ -1,0 +1,22 @@
+[package]
+name = "atelier-daemon"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "atelierd"
+path = "src/main.rs"
+
+[dependencies]
+atelier-proto = { path = "../atelier-proto" }
+atelier-core  = { path = "../atelier-core" }
+tokio = { workspace = true }
+tonic = { workspace = true }
+prost = { workspace = true }
+tokio-stream = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+clap = { workspace = true }
+async-trait = { workspace = true }

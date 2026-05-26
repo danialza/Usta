@@ -1,0 +1,20 @@
+[package]
+name = "atelier-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "ateliercli"
+path = "src/main.rs"
+
+[dependencies]
+atelier-proto = { path = "../atelier-proto" }
+atelier-core  = { path = "../atelier-core" }
+tokio = { workspace = true }
+tonic = { workspace = true }
+prost = { workspace = true }
+anyhow = { workspace = true }
+clap = { workspace = true }
+hyper-util = { workspace = true }
+tower = { workspace = true }

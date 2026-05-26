@@ -1,0 +1,42 @@
+syntax = "proto3";
+
+package atelier.v1;
+
+// Atelier core service. v0 — minimal surface for ping + workspace stub.
+service Atelier {
+  // Health check. Returns daemon version + build info.
+  rpc Ping(PingRequest) returns (PingResponse);
+
+  // Open a workspace at the given filesystem path.
+  rpc OpenWorkspace(OpenWorkspaceRequest) returns (Workspace);
+
+  // List currently open workspaces.
+  rpc ListWorkspaces(Empty) returns (WorkspaceList);
+}
+
+message Empty {}
+
+message PingRequest {
+  string client_name = 1;
+}
+
+message PingResponse {
+  string daemon_version = 1;
+  int64  server_unix_ms = 2;
+  string greeting       = 3;
+}
+
+message OpenWorkspaceRequest {
+  string path = 1;
+}
+
+message Workspace {
+  string id    = 1;
+  string path  = 2;
+  string name  = 3;
+  int64  opened_unix_ms = 4;
+}
+
+message WorkspaceList {
+  repeated Workspace items = 1;
+}
