@@ -12,6 +12,7 @@ path = "src/main.rs"
 atelier-proto = { path = "../atelier-proto" }
 atelier-core  = { path = "../atelier-core" }
 tokio = { workspace = true }
+tokio-stream = { workspace = true }
 tonic = { workspace = true }
 prost = { workspace = true }
 anyhow = { workspace = true }

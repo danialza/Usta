@@ -2,41 +2,71 @@ syntax = "proto3";
 
 package atelier.v1;
 
-// Atelier core service. v0 — minimal surface for ping + workspace stub.
+// Atelier core service.
 service Atelier {
-  // Health check. Returns daemon version + build info.
+  // Health check.
   rpc Ping(PingRequest) returns (PingResponse);
 
-  // Open a workspace at the given filesystem path.
+  // Workspace management.
   rpc OpenWorkspace(OpenWorkspaceRequest) returns (Workspace);
-
-  // List currently open workspaces.
   rpc ListWorkspaces(Empty) returns (WorkspaceList);
+
+  // Provider / model introspection.
+  rpc ListProviders(Empty) returns (ProviderList);
+
+  // Streaming chat. Server emits a sequence of ChatToken until done=true.
+  rpc Chat(ChatRequest) returns (stream ChatToken);
 }
 
 message Empty {}
 
-message PingRequest {
-  string client_name = 1;
-}
+// --- Ping ---
 
+message PingRequest  { string client_name = 1; }
 message PingResponse {
   string daemon_version = 1;
   int64  server_unix_ms = 2;
   string greeting       = 3;
 }
 
-message OpenWorkspaceRequest {
-  string path = 1;
-}
+// --- Workspace ---
 
+message OpenWorkspaceRequest { string path = 1; }
 message Workspace {
   string id    = 1;
   string path  = 2;
   string name  = 3;
   int64  opened_unix_ms = 4;
 }
+message WorkspaceList { repeated Workspace items = 1; }
 
-message WorkspaceList {
-  repeated Workspace items = 1;
+// --- Providers ---
+
+message ProviderInfo {
+  string name         = 1; // "anthropic", "ollama", ...
+  bool   available    = 2; // configured + reachable
+  repeated string default_models = 3;
+}
+message ProviderList { repeated ProviderInfo items = 1; }
+
+// --- Chat ---
+
+message ChatMessage {
+  string role    = 1; // "user" | "assistant"
+  string content = 2;
+}
+
+message ChatRequest {
+  string provider = 1;             // "anthropic" | "ollama"
+  string model    = 2;             // model id
+  string system   = 3;             // optional system prompt
+  repeated ChatMessage messages = 4;
+  int32  max_tokens = 5;           // 0 = provider default
+}
+
+message ChatToken {
+  string text        = 1; // incremental text delta
+  bool   done        = 2; // final frame
+  string stop_reason = 3; // set when done
+  string error       = 4; // non-empty on failure
 }
