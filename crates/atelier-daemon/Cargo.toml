@@ -14,6 +14,7 @@ atelier-core  = { path = "../atelier-core" }
 atelier-providers = { path = "../atelier-providers" }
 futures = { workspace = true }
 async-stream = { workspace = true }
+uuid = { workspace = true }
 tokio = { workspace = true }
 tonic = { workspace = true }
 prost = { workspace = true }

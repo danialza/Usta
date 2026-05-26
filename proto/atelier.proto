@@ -16,6 +16,15 @@ service Atelier {
 
   // Streaming chat. Server emits a sequence of ChatToken until done=true.
   rpc Chat(ChatRequest) returns (stream ChatToken);
+
+  // Terminal lifecycle.
+  rpc CreateTerminal(CreateTerminalRequest) returns (Terminal);
+  rpc ListTerminals(ListTerminalsRequest) returns (TerminalList);
+  rpc CloseTerminal(CloseTerminalRequest) returns (Empty);
+
+  // Bidirectional pty stream. Client first sends PtyAttach, then PtyInput /
+  // PtyResize frames. Server streams PtyOutput chunks and a final PtyExit.
+  rpc StreamPty(stream PtyClientMsg) returns (stream PtyServerMsg);
 }
 
 message Empty {}
@@ -70,3 +79,52 @@ message ChatToken {
   string stop_reason = 3; // set when done
   string error       = 4; // non-empty on failure
 }
+
+// --- Terminal ---
+
+message CreateTerminalRequest {
+  string workspace_id = 1;
+  string shell        = 2;  // default "zsh"
+  string cwd          = 3;  // default = workspace path
+  int32  cols         = 4;
+  int32  rows         = 5;
+}
+
+message Terminal {
+  string id              = 1;
+  string workspace_id    = 2;
+  string shell           = 3;
+  string cwd             = 4;
+  int64  created_unix_ms = 5;
+  bool   alive           = 6;
+}
+
+message ListTerminalsRequest { string workspace_id = 1; /* empty = all */ }
+message TerminalList         { repeated Terminal items = 1; }
+message CloseTerminalRequest { string id = 1; }
+
+// --- Pty bidi ---
+
+message PtyClientMsg {
+  oneof kind {
+    PtyAttach attach = 1;
+    PtyInput  input  = 2;
+    PtyResize resize = 3;
+  }
+}
+
+message PtyAttach { string terminal_id = 1; }
+message PtyInput  { bytes  data = 1; }
+message PtyResize { int32  cols = 1; int32 rows = 2; }
+
+message PtyServerMsg {
+  oneof kind {
+    PtyOutput output = 1;
+    PtyExit   exit   = 2;
+    PtyError  error  = 3;
+  }
+}
+
+message PtyOutput { bytes  data = 1; }
+message PtyExit   { string reason = 1; }
+message PtyError  { string message = 1; }

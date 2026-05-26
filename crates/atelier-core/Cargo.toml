@@ -11,3 +11,8 @@ tracing = { workspace = true }
 serde = { workspace = true }
 tokio = { workspace = true }
 directories = { workspace = true }
+rusqlite = { workspace = true }
+portable-pty = { workspace = true }
+uuid = { workspace = true }
+async-trait = { workspace = true }
+bytes = { workspace = true }
