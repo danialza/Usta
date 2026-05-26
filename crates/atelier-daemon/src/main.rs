@@ -7,11 +7,14 @@ use atelier_core::{
 use atelier_proto::v1::{
     atelier_server::{Atelier, AtelierServer},
     ChatRequest as PbChatReq, ChatToken, CloseTerminalRequest, CreateTerminalRequest, Empty,
-    ListTerminalsRequest, OpenWorkspaceRequest, PingRequest, PingResponse, ProviderInfo,
-    ProviderList, PtyClientMsg, PtyServerMsg, Terminal as PbTerminal, TerminalList, Workspace,
-    WorkspaceList,
+    IndexProgress as PbIndexProgress, IndexRequest, ListTerminalsRequest, OpenWorkspaceRequest,
+    PingRequest, PingResponse, ProviderInfo, ProviderList, PtyClientMsg, PtyServerMsg,
+    SearchHit as PbSearchHit, SearchRequest, SearchResults, Terminal as PbTerminal, TerminalList,
+    Workspace, WorkspaceList,
 };
 use atelier_providers::{ChatDelta, ChatMessage, ChatRequest, ProviderRegistry};
+use atelier_index::{Embedder, EmbedderConfig, Indexer};
+use tokio::sync::OnceCell;
 use clap::Parser;
 use futures::StreamExt;
 use std::{path::PathBuf, pin::Pin, sync::Arc};
@@ -34,10 +37,28 @@ struct AtelierSvc {
     db: Arc<Db>,
     pty: Arc<PtyManager>,
     providers: Arc<ProviderRegistry>,
+    embedder: Arc<OnceCell<Arc<Embedder>>>,
+}
+
+impl AtelierSvc {
+    async fn embedder(&self) -> Result<Arc<Embedder>, Status> {
+        self.embedder
+            .get_or_try_init(|| async {
+                tokio::task::spawn_blocking(|| {
+                    Embedder::load(EmbedderConfig::default()).map(Arc::new)
+                })
+                .await
+                .map_err(|e| anyhow::anyhow!("join: {e}"))?
+            })
+            .await
+            .map(Arc::clone)
+            .map_err(|e| Status::internal(format!("embedder init: {e}")))
+    }
 }
 
 type TokenStream = Pin<Box<dyn futures::Stream<Item = Result<ChatToken, Status>> + Send>>;
 type PtyStream = Pin<Box<dyn futures::Stream<Item = Result<PtyServerMsg, Status>> + Send>>;
+type IndexStream = Pin<Box<dyn futures::Stream<Item = Result<PbIndexProgress, Status>> + Send>>;
 
 fn now_ms() -> i64 {
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -383,6 +404,88 @@ impl Atelier for AtelierSvc {
 
         Ok(Response::new(Box::pin(outbound) as Self::StreamPtyStream))
     }
+
+    type IndexWorkspaceStream = IndexStream;
+
+    async fn index_workspace(
+        &self,
+        req: Request<IndexRequest>,
+    ) -> Result<Response<Self::IndexWorkspaceStream>, Status> {
+        let ws_id = req.into_inner().workspace_id;
+        let db = self.db.clone();
+        let ws_id2 = ws_id.clone();
+        let workspaces = tokio::task::spawn_blocking(move || db.list_workspaces())
+            .await
+            .unwrap()
+            .map_err(|e| Status::internal(e.to_string()))?;
+        let ws = workspaces
+            .into_iter()
+            .find(|w| w.id == ws_id2)
+            .ok_or_else(|| Status::not_found(format!("workspace '{ws_id}' not found")))?;
+
+        let embedder = self.embedder().await?;
+        let db = self.db.clone();
+
+        let (tx, rx) = tokio::sync::mpsc::channel::<Result<PbIndexProgress, Status>>(32);
+
+        tokio::task::spawn_blocking(move || {
+            let indexer = Indexer::new(db, embedder);
+            let root = std::path::PathBuf::from(&ws.path);
+            let mut last_emit = std::time::Instant::now();
+            let result = indexer.index_workspace(&ws.id, &root, |p| {
+                // throttle progress emit to ~10/sec, always emit done.
+                if p.done || last_emit.elapsed() > std::time::Duration::from_millis(100) {
+                    let _ = tx.blocking_send(Ok(PbIndexProgress {
+                        files_seen: p.files_seen,
+                        files_indexed: p.files_indexed,
+                        chunks: p.chunks,
+                        current_path: p.current_path.clone(),
+                        done: p.done,
+                    }));
+                    last_emit = std::time::Instant::now();
+                }
+            });
+            if let Err(e) = result {
+                let _ = tx.blocking_send(Err(Status::internal(format!("index: {e}"))));
+            }
+        });
+
+        let stream = tokio_stream::wrappers::ReceiverStream::new(rx);
+        Ok(Response::new(Box::pin(stream) as Self::IndexWorkspaceStream))
+    }
+
+    async fn search_workspace(
+        &self,
+        req: Request<SearchRequest>,
+    ) -> Result<Response<SearchResults>, Status> {
+        let r = req.into_inner();
+        let k = if r.k > 0 { r.k as usize } else { 5 };
+        let embedder = self.embedder().await?;
+        let db = self.db.clone();
+        let ws_id = r.workspace_id.clone();
+        let query = r.query.clone();
+
+        let hits = tokio::task::spawn_blocking(move || -> anyhow::Result<_> {
+            let indexer = Indexer::new(db, embedder);
+            indexer.search(&ws_id, &query, k)
+        })
+        .await
+        .map_err(|e| Status::internal(format!("join: {e}")))?
+        .map_err(|e| Status::internal(format!("search: {e}")))?;
+
+        Ok(Response::new(SearchResults {
+            items: hits
+                .into_iter()
+                .map(|h| PbSearchHit {
+                    path: h.path,
+                    start_line: h.start_line,
+                    end_line: h.end_line,
+                    snippet: h.snippet,
+                    score: h.score,
+                })
+                .collect(),
+        }))
+    }
 }
 
 #[tokio::main]
@@ -419,6 +522,7 @@ async fn main() -> anyhow::Result<()> {
         db: Arc::new(db),
         pty: Arc::new(PtyManager::new()),
         providers: Arc::new(ProviderRegistry::with_defaults()),
+        embedder: Arc::new(OnceCell::new()),
     };
 
     if let Err(e) = Server::builder()

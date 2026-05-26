@@ -6,8 +6,8 @@ use atelier_core::default_socket_path;
 use atelier_proto::v1::{
     atelier_client::AtelierClient, pty_client_msg::Kind as PtyCKind,
     pty_server_msg::Kind as PtySKind, ChatMessage, ChatRequest, CloseTerminalRequest,
-    CreateTerminalRequest, Empty, ListTerminalsRequest, OpenWorkspaceRequest, PingRequest,
-    PtyAttach, PtyClientMsg, PtyInput, PtyResize,
+    CreateTerminalRequest, Empty, IndexRequest, ListTerminalsRequest, OpenWorkspaceRequest,
+    PingRequest, PtyAttach, PtyClientMsg, PtyInput, PtyResize, SearchRequest,
 };
 use chrono::{Local, TimeZone};
 use clap::{Parser, Subcommand};
@@ -71,6 +71,19 @@ enum Cmd {
         #[command(subcommand)]
         sub: TermCmd,
     },
+    /// Index a workspace for semantic search.
+    Index {
+        #[arg(long, default_value = "")]
+        workspace_id: String,
+    },
+    /// Semantic search over an indexed workspace.
+    Search {
+        #[arg(long, default_value = "")]
+        workspace_id: String,
+        #[arg(short, long, default_value_t = 5)]
+        k: i32,
+        query: Vec<String>,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -95,6 +108,19 @@ enum TermCmd {
     },
     Close { id: String },
     Attach { id: String },
+}
+
+fn resolve_ws(arg: String) -> Result<String> {
+    if !arg.is_empty() { return Ok(arg); }
+    CliState::load()
+        .active_workspace_id
+        .ok_or_else(|| anyhow::anyhow!("no active workspace — run `ateliercli use <path>` or pass --workspace-id"))
+}
+
+fn truncate(s: &str, max: usize) -> String {
+    if s.chars().count() <= max { return s.to_string(); }
+    let head: String = s.chars().take(max.saturating_sub(1)).collect();
+    format!("{head}…")
 }
 
 fn fmt_ms(ms: i64) -> String {
@@ -267,6 +293,50 @@ async fn main() -> Result<()> {
             }
             TermCmd::Attach { id } => { attach(&mut client, id).await?; }
         },
+        Cmd::Index { workspace_id } => {
+            let ws_id = resolve_ws(workspace_id)?;
+            let mut s = client.index_workspace(IndexRequest { workspace_id: ws_id }).await?.into_inner();
+            use std::io::Write as _;
+            let stderr = std::io::stderr();
+            let mut err = stderr.lock();
+            while let Some(item) = s.next().await {
+                let p = item?;
+                if p.done {
+                    writeln!(err, "\r{} indexed {} files, {} chunks                              ",
+                        "✓".green(), p.files_indexed, p.chunks)?;
+                    break;
+                }
+                write!(err, "\r{} seen {:>5}  indexed {:>5}  chunks {:>6}  {} ",
+                    "·".dimmed(),
+                    p.files_seen,
+                    p.files_indexed,
+                    p.chunks,
+                    truncate(&p.current_path, 40).dimmed(),
+                )?;
+                err.flush()?;
+            }
+        }
+        Cmd::Search { workspace_id, k, query } => {
+            let query = query.join(" ");
+            if query.trim().is_empty() { anyhow::bail!("empty query"); }
+            let ws_id = resolve_ws(workspace_id)?;
+            let r = client.search_workspace(SearchRequest { workspace_id: ws_id, query: query.clone(), k }).await?.into_inner();
+            if r.items.is_empty() { println!("{}", "(no hits)".dimmed()); }
+            for (i, h) in r.items.iter().enumerate() {
+                println!("{} {:.3}  {}:{}-{}",
+                    format!("#{}", i + 1).bold(),
+                    h.score,
+                    h.path.bold(),
+                    h.start_line,
+                    h.end_line,
+                );
+                for line in h.snippet.lines().take(6) {
+                    println!("    {}", line.dimmed());
+                }
+                if h.snippet.lines().count() > 6 { println!("    {}", "…".dimmed()); }
+                println!();
+            }
+        }
         Cmd::Doctor => { doctor(&mut client, &sock).await?; }
         Cmd::Daemon { .. } => unreachable!(),
     }

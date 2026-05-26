@@ -25,6 +25,12 @@ service Atelier {
   // Bidirectional pty stream. Client first sends PtyAttach, then PtyInput /
   // PtyResize frames. Server streams PtyOutput chunks and a final PtyExit.
   rpc StreamPty(stream PtyClientMsg) returns (stream PtyServerMsg);
+
+  // Index a workspace (walk + chunk + embed). Streams progress until done=true.
+  rpc IndexWorkspace(IndexRequest) returns (stream IndexProgress);
+
+  // Semantic search over indexed chunks.
+  rpc SearchWorkspace(SearchRequest) returns (SearchResults);
 }
 
 message Empty {}
@@ -128,3 +134,31 @@ message PtyServerMsg {
 message PtyOutput { bytes  data = 1; }
 message PtyExit   { string reason = 1; }
 message PtyError  { string message = 1; }
+
+// --- Index / Search ---
+
+message IndexRequest { string workspace_id = 1; }
+
+message IndexProgress {
+  uint64 files_seen    = 1;
+  uint64 files_indexed = 2;
+  uint64 chunks        = 3;
+  string current_path  = 4;
+  bool   done          = 5;
+}
+
+message SearchRequest {
+  string workspace_id = 1;
+  string query        = 2;
+  int32  k            = 3; // top-k, default 5
+}
+
+message SearchHit {
+  string path       = 1;
+  uint32 start_line = 2;
+  uint32 end_line   = 3;
+  string snippet    = 4;
+  float  score      = 5;
+}
+
+message SearchResults { repeated SearchHit items = 1; }

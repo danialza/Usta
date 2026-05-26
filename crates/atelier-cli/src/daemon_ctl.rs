@@ -10,6 +10,7 @@ use std::process::{Command, Stdio};
 pub struct DaemonStatus {
     pub running: bool,
     pub pid: Option<i32>,
+    #[allow(dead_code)] // surfaced through CLI separately for now
     pub socket: Option<PathBuf>,
 }
 

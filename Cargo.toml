@@ -4,6 +4,7 @@ members = [
     "crates/atelier-proto",
     "crates/atelier-core",
     "crates/atelier-providers",
+    "crates/atelier-index",
     "crates/atelier-daemon",
     "crates/atelier-cli",
 ]
@@ -46,3 +47,6 @@ owo-colors = "4"
 toml = "0.8"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 nix = { version = "0.29", features = ["signal", "process"] }
+ignore = "0.4"
+fastembed = "4"
+walkdir = "2"

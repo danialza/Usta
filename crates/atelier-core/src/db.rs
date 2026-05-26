@@ -6,6 +6,29 @@ use rusqlite::{params, Connection};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
+fn vec_f32_to_bytes(v: &[f32]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(v.len() * 4);
+    for f in v {
+        out.extend_from_slice(&f.to_le_bytes());
+    }
+    out
+}
+
+fn bytes_to_vec_f32(b: &[u8]) -> Vec<f32> {
+    let n = b.len() / 4;
+    let mut out = Vec::with_capacity(n);
+    for i in 0..n {
+        let mut buf = [0u8; 4];
+        buf.copy_from_slice(&b[i * 4..i * 4 + 4]);
+        out.push(f32::from_le_bytes(buf));
+    }
+    out
+}
+
+fn norm(v: &[f32]) -> f32 {
+    v.iter().map(|x| x * x).sum::<f32>().sqrt()
+}
+
 pub struct Db {
     conn: Mutex<Connection>,
     pub path: PathBuf,
@@ -40,6 +63,20 @@ CREATE TABLE IF NOT EXISTS chat_messages (
 
 CREATE INDEX IF NOT EXISTS idx_terms_ws ON terminals(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_chat_term ON chat_messages(terminal_id);
+
+CREATE TABLE IF NOT EXISTS chunks (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    workspace_id    TEXT NOT NULL,
+    path            TEXT NOT NULL,
+    start_line      INTEGER NOT NULL,
+    end_line        INTEGER NOT NULL,
+    content         TEXT NOT NULL,
+    embedding       BLOB NOT NULL,
+    FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_chunks_ws ON chunks(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_chunks_path ON chunks(workspace_id, path);
 "#;
 
 #[derive(Debug, Clone)]
@@ -173,6 +210,88 @@ impl Db {
             stmt.query_map([], map)?.collect::<Result<Vec<_>, _>>()?
         };
         Ok(rows)
+    }
+
+    // --- Chunks / embeddings ---
+
+    pub fn clear_index(&self, workspace_id: &str) -> rusqlite::Result<usize> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "DELETE FROM chunks WHERE workspace_id = ?1",
+            params![workspace_id],
+        )
+    }
+
+    pub fn insert_chunk(
+        &self,
+        workspace_id: &str,
+        path: &str,
+        start_line: u32,
+        end_line: u32,
+        content: &str,
+        embedding: &[f32],
+    ) -> rusqlite::Result<i64> {
+        let conn = self.conn.lock().unwrap();
+        let blob = vec_f32_to_bytes(embedding);
+        conn.execute(
+            "INSERT INTO chunks (workspace_id, path, start_line, end_line, content, embedding)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![workspace_id, path, start_line, end_line, content, blob],
+        )?;
+        Ok(conn.last_insert_rowid())
+    }
+
+    pub fn chunk_count(&self, workspace_id: &str) -> rusqlite::Result<i64> {
+        let conn = self.conn.lock().unwrap();
+        conn.query_row(
+            "SELECT COUNT(*) FROM chunks WHERE workspace_id = ?1",
+            params![workspace_id],
+            |r| r.get::<_, i64>(0),
+        )
+    }
+
+    /// Brute-force cosine top-k. Fine up to ~50k chunks; swap for sqlite-vec
+    /// later if needed.
+    pub fn cosine_topk(
+        &self,
+        workspace_id: &str,
+        query: &[f32],
+        k: usize,
+    ) -> rusqlite::Result<Vec<(String, u32, u32, String, f32)>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT path, start_line, end_line, content, embedding
+             FROM chunks WHERE workspace_id = ?1",
+        )?;
+        let q_norm = norm(query).max(1e-9);
+
+        let mut heap: Vec<(f32, String, u32, u32, String)> = Vec::new();
+
+        let mut rows = stmt.query(params![workspace_id])?;
+        while let Some(r) = rows.next()? {
+            let path: String = r.get(0)?;
+            let start: u32 = r.get::<_, i64>(1)? as u32;
+            let end: u32 = r.get::<_, i64>(2)? as u32;
+            let content: String = r.get(3)?;
+            let blob: Vec<u8> = r.get(4)?;
+            let vec = bytes_to_vec_f32(&blob);
+            if vec.len() != query.len() {
+                continue;
+            }
+            let n = norm(&vec).max(1e-9);
+            let mut dot = 0f32;
+            for (a, b) in query.iter().zip(vec.iter()) {
+                dot += a * b;
+            }
+            let score = dot / (q_norm * n);
+            heap.push((score, path, start, end, content));
+        }
+        heap.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+        heap.truncate(k);
+        Ok(heap
+            .into_iter()
+            .map(|(s, p, st, en, c)| (p, st, en, c, s))
+            .collect())
     }
 
     pub fn insert_chat(
