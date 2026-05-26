@@ -22,3 +22,9 @@ tower = { workspace = true }
 crossterm = { workspace = true }
 futures = { workspace = true }
 async-stream = { workspace = true }
+owo-colors = { workspace = true }
+toml = { workspace = true }
+chrono = { workspace = true }
+serde = { workspace = true }
+directories = { workspace = true }
+nix = { workspace = true }

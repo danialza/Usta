@@ -1,3 +1,6 @@
+mod daemon_ctl;
+mod state;
+
 use anyhow::{Context, Result};
 use atelier_core::default_socket_path;
 use atelier_proto::v1::{
@@ -6,8 +9,11 @@ use atelier_proto::v1::{
     CreateTerminalRequest, Empty, ListTerminalsRequest, OpenWorkspaceRequest, PingRequest,
     PtyAttach, PtyClientMsg, PtyInput, PtyResize,
 };
+use chrono::{Local, TimeZone};
 use clap::{Parser, Subcommand};
 use crossterm::terminal;
+use owo_colors::OwoColorize;
+use state::CliState;
 use std::io::Write;
 use std::path::PathBuf;
 use tokio::net::UnixStream;
@@ -29,10 +35,26 @@ struct Args {
 
 #[derive(Subcommand, Debug)]
 enum Cmd {
+    /// Daemon health check.
     Ping,
+    /// Daemon lifecycle.
+    Daemon {
+        #[command(subcommand)]
+        sub: DaemonCmd,
+    },
+    /// Run the full self-check (auto-starts daemon).
+    Doctor,
+    /// Open a workspace by path.
     Open { path: PathBuf },
+    /// List open workspaces.
     List,
+    /// Set the active workspace by path (opens it if needed).
+    Use { path: PathBuf },
+    /// Show the current active workspace.
+    Active,
+    /// List configured providers.
     Providers,
+    /// Streaming chat.
     Chat {
         #[arg(short, long, default_value = "anthropic")]
         provider: String,
@@ -52,22 +74,35 @@ enum Cmd {
 }
 
 #[derive(Subcommand, Debug)]
+enum DaemonCmd {
+    Start,
+    Stop,
+    Status,
+}
+
+#[derive(Subcommand, Debug)]
 enum TermCmd {
-    /// Create a new terminal in a workspace.
+    /// Create a terminal. Defaults to the active workspace if --workspace-id omitted.
     New {
+        #[arg(long, default_value = "")]
         workspace_id: String,
         #[arg(long, default_value = "")]
         shell: String,
     },
-    /// List terminals (optionally filtered by workspace).
     List {
         #[arg(long, default_value = "")]
         workspace_id: String,
     },
-    /// Close a terminal by id.
     Close { id: String },
-    /// Attach interactively to a terminal. Ctrl-Q to detach.
     Attach { id: String },
+}
+
+fn fmt_ms(ms: i64) -> String {
+    Local
+        .timestamp_millis_opt(ms)
+        .single()
+        .map(|d| d.format("%Y-%m-%d %H:%M:%S").to_string())
+        .unwrap_or_else(|| ms.to_string())
 }
 
 async fn connect(socket: PathBuf) -> Result<AtelierClient<tonic::transport::Channel>> {
@@ -84,37 +119,97 @@ async fn connect(socket: PathBuf) -> Result<AtelierClient<tonic::transport::Chan
     Ok(AtelierClient::new(channel))
 }
 
+fn find_daemon_bin() -> PathBuf {
+    // Sibling next to ateliercli (same target dir).
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            let p = dir.join("atelierd");
+            if p.exists() { return p; }
+        }
+    }
+    PathBuf::from("atelierd")
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
-    let sock = args.socket.unwrap_or_else(default_socket_path);
-    let mut client = connect(sock).await?;
+    let sock = args.socket.clone().unwrap_or_else(default_socket_path);
+
+    // Commands that do not need a connection.
+    match &args.cmd {
+        Cmd::Daemon { sub } => return run_daemon(sub, &sock),
+        Cmd::Active => return show_active(),
+        _ => {}
+    }
+
+    let mut client = match connect(sock.clone()).await {
+        Ok(c) => c,
+        Err(e) => {
+            // For doctor, attempt auto-start.
+            if matches!(args.cmd, Cmd::Doctor) {
+                eprintln!("{} daemon not reachable, starting...", "·".dimmed());
+                let bin = find_daemon_bin();
+                let pid = daemon_ctl::start(&bin, &sock)?;
+                eprintln!("{} started (pid {pid})", "✓".green());
+                tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+                connect(sock.clone()).await?
+            } else {
+                eprintln!("{} {e}\n   hint: `ateliercli daemon start`", "✗".red());
+                std::process::exit(1);
+            }
+        }
+    };
 
     match args.cmd {
         Cmd::Ping => {
             let r = client.ping(PingRequest { client_name: "ateliercli".into() }).await?.into_inner();
-            println!("daemon  : v{}", r.daemon_version);
-            println!("server  : {}ms", r.server_unix_ms);
-            println!("greeting: {}", r.greeting);
+            println!("{} v{}", "daemon  ".dimmed(), r.daemon_version.bold());
+            println!("{} {}ms", "server  ".dimmed(), r.server_unix_ms);
+            println!("{} {}", "greeting".dimmed(), r.greeting);
         }
         Cmd::Open { path } => {
+            let abs = path.canonicalize().unwrap_or(path);
             let r = client
-                .open_workspace(OpenWorkspaceRequest { path: path.to_string_lossy().into() })
+                .open_workspace(OpenWorkspaceRequest { path: abs.to_string_lossy().into() })
                 .await?
                 .into_inner();
-            println!("opened  : {} ({})", r.name, r.id);
-            println!("path    : {}", r.path);
+            println!("{} {} {}", "✓".green(), r.name.bold(), format!("({})", r.id).dimmed());
+            println!("  {}", r.path.dimmed());
         }
+        Cmd::Use { path } => {
+            let abs = path.canonicalize().context("canonicalize path")?;
+            let r = client
+                .open_workspace(OpenWorkspaceRequest { path: abs.to_string_lossy().into() })
+                .await?
+                .into_inner();
+            let mut st = CliState::load();
+            st.active_workspace_path = Some(r.path.clone());
+            st.active_workspace_id = Some(r.id.clone());
+            st.save()?;
+            println!("{} active workspace: {} {}", "✓".green(), r.name.bold(), format!("({})", r.id).dimmed());
+        }
+        Cmd::Active => unreachable!(),
         Cmd::List => {
             let r = client.list_workspaces(Empty {}).await?.into_inner();
-            if r.items.is_empty() { println!("(no workspaces)"); }
-            for w in r.items { println!("- {}  {}  {}", w.id, w.name, w.path); }
+            if r.items.is_empty() {
+                println!("{}", "(no workspaces)".dimmed());
+            }
+            let active = CliState::load().active_workspace_id;
+            for w in r.items {
+                let mark = if Some(&w.id) == active.as_ref() { "★".yellow().to_string() } else { " ".to_string() };
+                println!("{mark} {}  {}  {}  {}",
+                    w.id.dimmed(),
+                    w.name.bold(),
+                    fmt_ms(w.opened_unix_ms).dimmed(),
+                    w.path,
+                );
+            }
         }
         Cmd::Providers => {
             let r = client.list_providers(Empty {}).await?.into_inner();
             for p in r.items {
-                let m = if p.available { "✓" } else { "✗" };
-                println!("{m} {:<10}  models: {}", p.name, p.default_models.join(", "));
+                let mark = if p.available { "✓".green().to_string() } else { "✗".red().to_string() };
+                println!("{mark} {:<10}  {}", p.name.bold(), p.default_models.join(", ").dimmed());
             }
         }
         Cmd::Chat { provider, model, system, max_tokens, prompt } => {
@@ -129,42 +224,128 @@ async fn main() -> Result<()> {
             let mut out = stdout.lock();
             while let Some(item) = s.next().await {
                 let t = item?;
-                if !t.error.is_empty() { eprintln!("\n[error] {}", t.error); std::process::exit(1); }
+                if !t.error.is_empty() { eprintln!("\n{} {}", "✗".red(), t.error); std::process::exit(1); }
                 if !t.text.is_empty() { out.write_all(t.text.as_bytes())?; out.flush()?; }
-                if t.done { writeln!(out, "\n--- done ({}) ---", t.stop_reason)?; break; }
+                if t.done { writeln!(out, "\n{} done ({})", "·".dimmed(), t.stop_reason.dimmed())?; break; }
             }
         }
         Cmd::Term { sub } => match sub {
             TermCmd::New { workspace_id, shell } => {
+                let ws_id = if workspace_id.is_empty() {
+                    CliState::load()
+                        .active_workspace_id
+                        .ok_or_else(|| anyhow::anyhow!("no active workspace — run `ateliercli use <path>` first or pass --workspace-id"))?
+                } else { workspace_id };
                 let (cols, rows) = terminal::size().unwrap_or((120, 32));
                 let r = client.create_terminal(CreateTerminalRequest {
-                    workspace_id,
-                    shell,
-                    cwd: String::new(),
-                    cols: cols as i32,
-                    rows: rows as i32,
+                    workspace_id: ws_id,
+                    shell, cwd: String::new(),
+                    cols: cols as i32, rows: rows as i32,
                 }).await?.into_inner();
-                println!("created : {}", r.id);
-                println!("shell   : {}", r.shell);
-                println!("cwd     : {}", r.cwd);
+                println!("{} {}", "✓".green(), r.id.bold());
+                println!("  {} {}", "shell".dimmed(), r.shell);
+                println!("  {} {}", "cwd  ".dimmed(), r.cwd);
             }
             TermCmd::List { workspace_id } => {
                 let r = client.list_terminals(ListTerminalsRequest { workspace_id }).await?.into_inner();
-                if r.items.is_empty() { println!("(no terminals)"); }
+                if r.items.is_empty() {
+                    println!("{}", "(no terminals)".dimmed());
+                }
                 for t in r.items {
-                    let mark = if t.alive { "●" } else { "○" };
-                    println!("{mark} {}  ws={}  {}  {}", t.id, t.workspace_id, t.shell, t.cwd);
+                    let mark = if t.alive { "●".green().to_string() } else { "○".dimmed().to_string() };
+                    println!("{mark} {}  {}  {}  {}",
+                        t.id.dimmed(),
+                        t.shell.bold(),
+                        fmt_ms(t.created_unix_ms).dimmed(),
+                        t.cwd,
+                    );
                 }
             }
             TermCmd::Close { id } => {
                 client.close_terminal(CloseTerminalRequest { id: id.clone() }).await?;
-                println!("closed  : {id}");
+                println!("{} closed {}", "✓".green(), id);
             }
-            TermCmd::Attach { id } => {
-                attach(&mut client, id).await?;
+            TermCmd::Attach { id } => { attach(&mut client, id).await?; }
+        },
+        Cmd::Doctor => { doctor(&mut client, &sock).await?; }
+        Cmd::Daemon { .. } => unreachable!(),
+    }
+    Ok(())
+}
+
+fn run_daemon(sub: &DaemonCmd, sock: &std::path::Path) -> Result<()> {
+    match sub {
+        DaemonCmd::Start => {
+            let bin = find_daemon_bin();
+            let pid = daemon_ctl::start(&bin, sock)?;
+            println!("{} started (pid {pid}, socket {})", "✓".green(), sock.display());
+        }
+        DaemonCmd::Stop => {
+            let pid = daemon_ctl::stop()?;
+            println!("{} stopped (pid {pid})", "✓".green());
+        }
+        DaemonCmd::Status => {
+            let s = daemon_ctl::status(sock);
+            if s.running {
+                println!("{} running pid={} socket={}",
+                    "●".green(),
+                    s.pid.unwrap(),
+                    sock.display(),
+                );
+            } else {
+                println!("{} not running", "○".dimmed());
             }
         }
     }
+    Ok(())
+}
+
+fn show_active() -> Result<()> {
+    let st = CliState::load();
+    match (&st.active_workspace_path, &st.active_workspace_id) {
+        (Some(p), Some(id)) => {
+            println!("{} {} {}", "★".yellow(), id.bold(), p);
+        }
+        _ => println!("{}", "(no active workspace — `ateliercli use <path>`)".dimmed()),
+    }
+    Ok(())
+}
+
+async fn doctor(client: &mut AtelierClient<tonic::transport::Channel>, sock: &std::path::Path) -> Result<()> {
+    println!("{} {}", "atelier doctor".bold(), env!("CARGO_PKG_VERSION").dimmed());
+    println!();
+
+    // Ping.
+    let r = client.ping(PingRequest { client_name: "doctor".into() }).await?.into_inner();
+    println!("{} daemon v{} at {}", "✓".green(), r.daemon_version, sock.display());
+
+    // Providers.
+    let p = client.list_providers(Empty {}).await?.into_inner();
+    println!("{} providers:", "·".dimmed());
+    for it in p.items {
+        let m = if it.available { "✓".green().to_string() } else { "✗".red().to_string() };
+        println!("    {m} {}  {}", it.name, it.default_models.join(", ").dimmed());
+    }
+
+    // Workspaces.
+    let w = client.list_workspaces(Empty {}).await?.into_inner();
+    println!("{} {} workspaces", "·".dimmed(), w.items.len());
+
+    // Terminals.
+    let t = client.list_terminals(ListTerminalsRequest { workspace_id: String::new() }).await?.into_inner();
+    let alive = t.items.iter().filter(|x| x.alive).count();
+    println!("{} {} terminals ({} alive)", "·".dimmed(), t.items.len(), alive);
+
+    // Active workspace.
+    let st = CliState::load();
+    if let (Some(p), Some(id)) = (&st.active_workspace_path, &st.active_workspace_id) {
+        println!("{} active: {} {}", "★".yellow(), id, p.dimmed());
+    } else {
+        println!("{} no active workspace set", "·".dimmed());
+    }
+
+    println!();
+    println!("{}", "all green.".green().bold());
     Ok(())
 }
 
@@ -173,24 +354,15 @@ async fn attach(client: &mut AtelierClient<tonic::transport::Channel>, id: Strin
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     let (cols, rows) = terminal::size().unwrap_or((120, 32));
-
     let (tx, rx) = mpsc::channel::<PtyClientMsg>(64);
-    // First frame: Attach.
-    tx.send(PtyClientMsg { kind: Some(PtyCKind::Attach(PtyAttach { terminal_id: id.clone() })) })
-        .await
-        .ok();
-    // Send initial resize.
-    tx.send(PtyClientMsg { kind: Some(PtyCKind::Resize(PtyResize { cols: cols as i32, rows: rows as i32 })) })
-        .await
-        .ok();
-
+    tx.send(PtyClientMsg { kind: Some(PtyCKind::Attach(PtyAttach { terminal_id: id.clone() })) }).await.ok();
+    tx.send(PtyClientMsg { kind: Some(PtyCKind::Resize(PtyResize { cols: cols as i32, rows: rows as i32 })) }).await.ok();
     let outbound = ReceiverStream::new(rx);
     let mut inbound = client.stream_pty(outbound).await?.into_inner();
 
     enable_raw_mode()?;
     eprintln!("\r\n[attached to {id}. Ctrl-Q to detach]\r\n");
 
-    // stdin → input pump
     let tx_in = tx.clone();
     let stdin_task = tokio::spawn(async move {
         let mut stdin = tokio::io::stdin();
@@ -200,17 +372,11 @@ async fn attach(client: &mut AtelierClient<tonic::transport::Channel>, id: Strin
                 Ok(0) | Err(_) => break,
                 Ok(n) => n,
             };
-            // Ctrl-Q (0x11) detaches.
             if buf[..n].contains(&0x11) { break; }
-            if tx_in
-                .send(PtyClientMsg { kind: Some(PtyCKind::Input(PtyInput { data: buf[..n].to_vec() })) })
-                .await
-                .is_err()
-            { break; }
+            if tx_in.send(PtyClientMsg { kind: Some(PtyCKind::Input(PtyInput { data: buf[..n].to_vec() })) }).await.is_err() { break; }
         }
     });
 
-    // server → stdout
     let mut stdout = tokio::io::stdout();
     let mut exited = false;
     while let Some(msg) = inbound.next().await {
@@ -219,18 +385,9 @@ async fn attach(client: &mut AtelierClient<tonic::transport::Channel>, id: Strin
             Err(e) => { eprintln!("\r\n[stream error: {e}]\r\n"); break; }
         };
         match msg.kind {
-            Some(PtySKind::Output(o)) => {
-                stdout.write_all(&o.data).await.ok();
-                stdout.flush().await.ok();
-            }
-            Some(PtySKind::Exit(e)) => {
-                eprintln!("\r\n[exit: {}]\r\n", e.reason);
-                exited = true;
-                break;
-            }
-            Some(PtySKind::Error(e)) => {
-                eprintln!("\r\n[error: {}]\r\n", e.message);
-            }
+            Some(PtySKind::Output(o)) => { stdout.write_all(&o.data).await.ok(); stdout.flush().await.ok(); }
+            Some(PtySKind::Exit(e))   => { eprintln!("\r\n[exit: {}]\r\n", e.reason); exited = true; break; }
+            Some(PtySKind::Error(e))  => { eprintln!("\r\n[error: {}]\r\n", e.message); }
             None => {}
         }
         if stdin_task.is_finished() { break; }
@@ -238,8 +395,6 @@ async fn attach(client: &mut AtelierClient<tonic::transport::Channel>, id: Strin
 
     disable_raw_mode().ok();
     stdin_task.abort();
-    if !exited {
-        eprintln!("[detached]");
-    }
+    if !exited { eprintln!("[detached]"); }
     Ok(())
 }
