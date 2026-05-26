@@ -3,18 +3,20 @@ use atelier_core::{
     db::{Db, TerminalRow, WorkspaceRow},
     default_data_dir, default_socket_path,
     pty::{PtyManager, TerminalSpec},
+    tools::ToolRegistry,
 };
 use atelier_proto::v1::{
     atelier_server::{Atelier, AtelierServer},
-    AnalyzeRequest, ChatRequest as PbChatReq, ChatToken, CloseTerminalRequest,
-    CreateTerminalRequest, Empty, IndexProgress as PbIndexProgress, IndexRequest,
-    ListTerminalsRequest, OpenWorkspaceRequest, PingRequest, PingResponse,
-    ProposedRole as PbProposedRole, ProviderInfo, ProviderList, PtyClientMsg, PtyServerMsg,
-    Role as PbRole, RoleChatRequest, RoleList, SearchHit as PbSearchHit, SearchRequest,
-    SearchResults, StackTag as PbStackTag, Terminal as PbTerminal, TerminalList, Workspace,
-    WorkspaceAnalysis as PbAnalysis, WorkspaceList,
+    AnalyzeRequest, ApplyTeamRequest, ApplyTeamResponse, ChatRequest as PbChatReq, ChatToken,
+    CloseTerminalRequest, CreateTerminalRequest, Empty, IndexProgress as PbIndexProgress,
+    IndexRequest, ListRolesRequest, ListTerminalsRequest, ListToolsRequest,
+    OpenWorkspaceRequest, PingRequest, PingResponse, ProposedRole as PbProposedRole,
+    ProviderInfo, ProviderList, PtyClientMsg, PtyServerMsg, Role as PbRole, RoleChatRequest,
+    RoleList, SearchHit as PbSearchHit, SearchRequest, SearchResults, StackTag as PbStackTag,
+    TeamChatEvent, TeamChatRequest, Terminal as PbTerminal, TerminalList, Tool as PbTool,
+    ToolList, Workspace, WorkspaceAnalysis as PbAnalysis, WorkspaceList,
 };
-use atelier_roles::RoleLibrary;
+use atelier_roles::{Role as RoleDef, RoleLibrary};
 use atelier_providers::{ChatDelta, ChatMessage, ChatRequest, ProviderRegistry};
 use atelier_index::{Embedder, EmbedderConfig, Indexer};
 use tokio::sync::OnceCell;
@@ -42,9 +44,30 @@ struct AtelierSvc {
     providers: Arc<ProviderRegistry>,
     embedder: Arc<OnceCell<Arc<Embedder>>>,
     roles: Arc<RoleLibrary>,
+    tools: Arc<ToolRegistry>,
 }
 
 impl AtelierSvc {
+    /// Build a RoleLibrary view that includes builtin/user roles plus any
+    /// workspace-scoped roles found under <ws>/.atelier/roles/ when a
+    /// workspace_id is provided.
+    async fn effective_roles(&self, workspace_id: &str) -> Result<RoleLibrary, Status> {
+        if workspace_id.is_empty() {
+            return Ok((*self.roles).clone());
+        }
+        let db = self.db.clone();
+        let ws_id = workspace_id.to_string();
+        let workspaces = tokio::task::spawn_blocking(move || db.list_workspaces())
+            .await
+            .unwrap()
+            .map_err(|e| Status::internal(e.to_string()))?;
+        let ws = workspaces
+            .into_iter()
+            .find(|w| w.id == ws_id)
+            .ok_or_else(|| Status::not_found(format!("workspace '{workspace_id}' not found")))?;
+        Ok(self.roles.with_workspace(std::path::Path::new(&ws.path)))
+    }
+
     async fn embedder(&self) -> Result<Arc<Embedder>, Status> {
         self.embedder
             .get_or_try_init(|| async {
@@ -63,6 +86,35 @@ impl AtelierSvc {
 type TokenStream = Pin<Box<dyn futures::Stream<Item = Result<ChatToken, Status>> + Send>>;
 type PtyStream = Pin<Box<dyn futures::Stream<Item = Result<PtyServerMsg, Status>> + Send>>;
 type IndexStream = Pin<Box<dyn futures::Stream<Item = Result<PbIndexProgress, Status>> + Send>>;
+type TeamStream = Pin<Box<dyn futures::Stream<Item = Result<TeamChatEvent, Status>> + Send>>;
+
+/// Extract `@role` mentions (ASCII letters / digits / `-` / `_`).
+fn parse_mentions(msg: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let bytes = msg.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'@' {
+            let start = i + 1;
+            let mut end = start;
+            while end < bytes.len()
+                && (bytes[end].is_ascii_alphanumeric() || bytes[end] == b'-' || bytes[end] == b'_')
+            {
+                end += 1;
+            }
+            if end > start {
+                let name = std::str::from_utf8(&bytes[start..end]).unwrap_or("").to_string();
+                if !name.is_empty() && !out.contains(&name) {
+                    out.push(name);
+                }
+            }
+            i = end.max(i + 1);
+        } else {
+            i += 1;
+        }
+    }
+    out
+}
 
 fn now_ms() -> i64 {
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -458,9 +510,13 @@ impl Atelier for AtelierSvc {
         Ok(Response::new(Box::pin(stream) as Self::IndexWorkspaceStream))
     }
 
-    async fn list_roles(&self, _req: Request<Empty>) -> Result<Response<RoleList>, Status> {
-        let items = self
-            .roles
+    async fn list_roles(
+        &self,
+        req: Request<ListRolesRequest>,
+    ) -> Result<Response<RoleList>, Status> {
+        let ws_id = req.into_inner().workspace_id;
+        let lib = self.effective_roles(&ws_id).await?;
+        let items = lib
             .iter()
             .map(|r| PbRole {
                 name: r.name.clone(),
@@ -470,6 +526,7 @@ impl Atelier for AtelierSvc {
                 default_model: r.default_model.clone(),
                 allowed_tools: r.allowed_tools.clone(),
                 source_path: r.source.to_string_lossy().into_owned(),
+                scope: r.scope.as_str().to_string(),
             })
             .collect();
         Ok(Response::new(RoleList { items }))
@@ -482,8 +539,8 @@ impl Atelier for AtelierSvc {
         req: Request<RoleChatRequest>,
     ) -> Result<Response<Self::RoleChatStream>, Status> {
         let r = req.into_inner();
-        let role = self
-            .roles
+        let lib = self.effective_roles(&r.workspace_id).await?;
+        let role = lib
             .get(&r.role_name)
             .cloned()
             .ok_or_else(|| Status::not_found(format!("role '{}' not found", r.role_name)))?;
@@ -580,9 +637,269 @@ impl Atelier for AtelierSvc {
                     why: r.why,
                     recommended_model: r.recommended_model,
                     tools: r.tools,
+                    system_prompt: r.system_prompt,
+                    recommended_provider: r.recommended_provider,
                 })
                 .collect(),
         }))
+    }
+
+    async fn apply_team(
+        &self,
+        req: Request<ApplyTeamRequest>,
+    ) -> Result<Response<ApplyTeamResponse>, Status> {
+        let r = req.into_inner();
+        let provider_name = if r.provider.is_empty() { "anthropic".into() } else { r.provider };
+        let model = if r.model.is_empty() { "claude-sonnet-4-6".into() } else { r.model };
+        let provider = self
+            .providers
+            .get(&provider_name)
+            .ok_or_else(|| Status::not_found(format!("unknown provider '{provider_name}'")))?;
+
+        let db = self.db.clone();
+        let ws_id = r.workspace_id.clone();
+        let workspaces = tokio::task::spawn_blocking(move || db.list_workspaces())
+            .await
+            .unwrap()
+            .map_err(|e| Status::internal(e.to_string()))?;
+        let ws = workspaces
+            .into_iter()
+            .find(|w| w.id == ws_id)
+            .ok_or_else(|| Status::not_found(format!("workspace '{ws_id}' not found")))?;
+
+        let pm = atelier_pm::Pm::new(provider, model);
+        let root = std::path::PathBuf::from(&ws.path);
+        let analysis = pm
+            .analyze(&root)
+            .await
+            .map_err(|e| Status::internal(format!("pm analyze: {e}")))?;
+
+        // Materialize each proposed role into <ws>/.atelier/roles/
+        let roles_dir = root.join(".atelier").join("roles");
+        std::fs::create_dir_all(&roles_dir)
+            .map_err(|e| Status::internal(format!("mkdir {}: {e}", roles_dir.display())))?;
+
+        let mut written = Vec::new();
+        // Snapshot library to mutate locally (we keep daemon's Arc immutable).
+        let mut local = (*self.roles).clone();
+        for pr in &analysis.team {
+            let prompt = if pr.system_prompt.trim().is_empty() {
+                // Fallback if PM omitted it.
+                format!(
+                    "You are the {} specialist on this project. {}",
+                    pr.name, pr.why
+                )
+            } else {
+                pr.system_prompt.clone()
+            };
+            let role = RoleDef {
+                name: pr.name.clone(),
+                emoji: pr.emoji.clone(),
+                description: pr.why.clone(),
+                system_prompt: prompt,
+                default_provider: if pr.recommended_provider.is_empty() {
+                    "anthropic".into()
+                } else {
+                    pr.recommended_provider.clone()
+                },
+                default_model: pr.recommended_model.clone(),
+                allowed_tools: pr.tools.clone(),
+                permissions: Default::default(),
+                source: roles_dir.join(format!("{}.yaml", pr.name)),
+                scope: atelier_roles::RoleScope::Workspace,
+            };
+            let path = local
+                .write_role(&roles_dir, &role)
+                .map_err(|e| Status::internal(format!("write role: {e}")))?;
+            written.push(path.to_string_lossy().into_owned());
+        }
+
+        Ok(Response::new(ApplyTeamResponse {
+            analysis: Some(PbAnalysis {
+                summary: analysis.summary,
+                stack: analysis
+                    .stack
+                    .into_iter()
+                    .map(|t| PbStackTag { name: t.name, category: t.category })
+                    .collect(),
+                team: analysis
+                    .team
+                    .into_iter()
+                    .map(|r| PbProposedRole {
+                        name: r.name,
+                        emoji: r.emoji,
+                        why: r.why,
+                        recommended_model: r.recommended_model,
+                        tools: r.tools,
+                        system_prompt: r.system_prompt,
+                        recommended_provider: r.recommended_provider,
+                    })
+                    .collect(),
+            }),
+            written_paths: written,
+        }))
+    }
+
+    type TeamChatStream = TeamStream;
+
+    async fn team_chat(
+        &self,
+        req: Request<TeamChatRequest>,
+    ) -> Result<Response<Self::TeamChatStream>, Status> {
+        let r = req.into_inner();
+        let lib = self.effective_roles(&r.workspace_id).await?;
+
+        // Resolve mentions: explicit list, else parse from message.
+        let mentions: Vec<String> = if !r.mentions.is_empty() {
+            r.mentions
+        } else {
+            let parsed = parse_mentions(&r.user_msg);
+            if parsed.is_empty() {
+                return Err(Status::invalid_argument(
+                    "no @mentions in message and no explicit mentions list",
+                ));
+            }
+            parsed
+        };
+
+        let providers = self.providers.clone();
+        let model_override = r.model;
+        let user_msg = r.user_msg.clone();
+
+        // Resolve each role + provider up front so we can fail fast.
+        struct Plan {
+            role_name: String,
+            provider: atelier_providers::DynProvider,
+            request: ChatRequest,
+        }
+        let mut plans = Vec::new();
+        for name in &mentions {
+            let role = lib
+                .get(name)
+                .cloned()
+                .ok_or_else(|| Status::not_found(format!("role '{name}' not found")))?;
+            let model = if model_override.is_empty() {
+                role.default_model.clone()
+            } else {
+                model_override.clone()
+            };
+            let provider = providers
+                .get(&role.default_provider)
+                .ok_or_else(|| Status::not_found(format!("provider '{}' not found", role.default_provider)))?;
+            let req = ChatRequest {
+                model,
+                system: Some(role.system_prompt.clone()),
+                messages: vec![ChatMessage { role: "user".into(), content: user_msg.clone() }],
+                max_tokens: Some(1024),
+            };
+            plans.push(Plan { role_name: role.name.clone(), provider, request: req });
+        }
+
+        // Multiplex per-role streams into one tagged TeamChatEvent stream.
+        let (tx, rx) =
+            tokio::sync::mpsc::channel::<Result<TeamChatEvent, Status>>(128);
+
+        for plan in plans {
+            let tx = tx.clone();
+            tokio::spawn(async move {
+                let name = plan.role_name.clone();
+                let inner = match plan.provider.chat(plan.request).await {
+                    Ok(s) => s,
+                    Err(e) => {
+                        let _ = tx
+                            .send(Ok(TeamChatEvent {
+                                role: name.clone(),
+                                text: String::new(),
+                                done: true,
+                                stop_reason: String::new(),
+                                error: e.to_string(),
+                            }))
+                            .await;
+                        return;
+                    }
+                };
+                let mut s = inner;
+                while let Some(item) = s.next().await {
+                    match item {
+                        Ok(ChatDelta::Text(t)) => {
+                            if tx
+                                .send(Ok(TeamChatEvent {
+                                    role: name.clone(),
+                                    text: t,
+                                    done: false,
+                                    stop_reason: String::new(),
+                                    error: String::new(),
+                                }))
+                                .await
+                                .is_err()
+                            { return; }
+                        }
+                        Ok(ChatDelta::Done { stop_reason }) => {
+                            let _ = tx
+                                .send(Ok(TeamChatEvent {
+                                    role: name.clone(),
+                                    text: String::new(),
+                                    done: true,
+                                    stop_reason,
+                                    error: String::new(),
+                                }))
+                                .await;
+                            return;
+                        }
+                        Err(e) => {
+                            let _ = tx
+                                .send(Ok(TeamChatEvent {
+                                    role: name.clone(),
+                                    text: String::new(),
+                                    done: true,
+                                    stop_reason: String::new(),
+                                    error: e.to_string(),
+                                }))
+                                .await;
+                            return;
+                        }
+                    }
+                }
+            });
+        }
+        drop(tx);
+
+        let stream = tokio_stream::wrappers::ReceiverStream::new(rx);
+        Ok(Response::new(Box::pin(stream) as Self::TeamChatStream))
+    }
+
+    async fn list_tools(
+        &self,
+        req: Request<ListToolsRequest>,
+    ) -> Result<Response<ToolList>, Status> {
+        let r = req.into_inner();
+        let items: Vec<PbTool> = if r.role_name.is_empty() {
+            self.tools
+                .iter()
+                .map(|t| PbTool {
+                    name: t.name.clone(),
+                    kind: t.kind.as_str().into(),
+                    description: t.description.clone(),
+                    needs_approval: t.needs_approval,
+                })
+                .collect()
+        } else {
+            let lib = self.effective_roles(&r.workspace_id).await?;
+            let role = lib
+                .get(&r.role_name)
+                .cloned()
+                .ok_or_else(|| Status::not_found(format!("role '{}' not found", r.role_name)))?;
+            self.tools
+                .intersect(&role.allowed_tools)
+                .map(|t| PbTool {
+                    name: t.name.clone(),
+                    kind: t.kind.as_str().into(),
+                    description: t.description.clone(),
+                    needs_approval: t.needs_approval,
+                })
+                .collect()
+        };
+        Ok(Response::new(ToolList { items }))
     }
 
     async fn search_workspace(
@@ -658,6 +975,7 @@ async fn main() -> anyhow::Result<()> {
         providers: Arc::new(ProviderRegistry::with_defaults()),
         embedder: Arc::new(OnceCell::new()),
         roles: Arc::new(roles),
+        tools: Arc::new(ToolRegistry::with_defaults()),
     };
 
     if let Err(e) = Server::builder()

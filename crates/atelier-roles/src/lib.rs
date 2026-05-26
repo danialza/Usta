@@ -37,6 +37,23 @@ pub struct PermissionPolicy {
     pub secrets: Option<Permission>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RoleScope {
+    Builtin,
+    User,
+    Workspace,
+}
+
+impl RoleScope {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            RoleScope::Builtin => "builtin",
+            RoleScope::User => "user",
+            RoleScope::Workspace => "workspace",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Role {
     pub name: String,
@@ -55,11 +72,16 @@ pub struct Role {
     /// Source path the role was loaded from (filled in by the loader).
     #[serde(default, skip_serializing)]
     pub source: PathBuf,
+    /// Where this role came from (filled in by the loader).
+    #[serde(default = "default_scope", skip)]
+    pub scope: RoleScope,
 }
+
+fn default_scope() -> RoleScope { RoleScope::Builtin }
 
 fn default_provider() -> String { "anthropic".into() }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct RoleLibrary {
     roles: BTreeMap<String, Role>,
 }
@@ -69,22 +91,27 @@ impl RoleLibrary {
 
     pub fn load_defaults() -> Self {
         let mut lib = Self::default();
-        // 1. bundled roles next to current_exe / target dir / workspace root
         for dir in bundled_dirs() {
-            let _ = lib.load_dir(&dir);
+            let _ = lib.load_dir(&dir, RoleScope::Builtin);
         }
-        // 2. shared data dir
         if let Some(d) = directories::ProjectDirs::from("dev", "atelier", "atelier") {
-            let _ = lib.load_dir(&d.data_dir().join("roles"));
-        }
-        // 3. user config dir
-        if let Some(d) = directories::ProjectDirs::from("dev", "atelier", "atelier") {
-            let _ = lib.load_dir(&d.config_dir().join("roles"));
+            let _ = lib.load_dir(&d.data_dir().join("roles"), RoleScope::User);
+            let _ = lib.load_dir(&d.config_dir().join("roles"), RoleScope::User);
         }
         lib
     }
 
-    pub fn load_dir(&mut self, dir: &Path) -> anyhow::Result<usize> {
+    /// Returns a fresh library equal to `self` plus any roles found under
+    /// `<workspace_root>/.atelier/roles/`. Workspace roles override others
+    /// with the same name.
+    pub fn with_workspace(&self, workspace_root: &Path) -> Self {
+        let mut out = Self { roles: self.roles.clone() };
+        let ws_dir = workspace_root.join(".atelier").join("roles");
+        let _ = out.load_dir(&ws_dir, RoleScope::Workspace);
+        out
+    }
+
+    pub fn load_dir(&mut self, dir: &Path, scope: RoleScope) -> anyhow::Result<usize> {
         if !dir.is_dir() { return Ok(0); }
         let mut n = 0usize;
         for entry in std::fs::read_dir(dir)? {
@@ -92,9 +119,9 @@ impl RoleLibrary {
             let p = entry.path();
             let ext = p.extension().and_then(|s| s.to_str()).unwrap_or("");
             if !matches!(ext, "yaml" | "yml") { continue; }
-            match load_file(&p) {
+            match load_file(&p, scope) {
                 Ok(r) => {
-                    tracing::debug!(name = %r.name, src = %p.display(), "loaded role");
+                    tracing::debug!(name = %r.name, src = %p.display(), scope = scope.as_str(), "loaded role");
                     self.roles.insert(r.name.clone(), r);
                     n += 1;
                 }
@@ -106,6 +133,20 @@ impl RoleLibrary {
         Ok(n)
     }
 
+    /// Persist a role as YAML under `<dir>/<name>.yaml` and insert it into
+    /// this library. Returns the absolute file path written.
+    pub fn write_role(&mut self, dir: &Path, role: &Role) -> anyhow::Result<PathBuf> {
+        std::fs::create_dir_all(dir)?;
+        let path = dir.join(format!("{}.yaml", sanitize_name(&role.name)));
+        let yaml = serde_yaml::to_string(role)?;
+        std::fs::write(&path, yaml)?;
+        let mut stored = role.clone();
+        stored.source = path.clone();
+        // Caller sets scope via reload; default-keep here.
+        self.roles.insert(stored.name.clone(), stored);
+        Ok(path)
+    }
+
     pub fn get(&self, name: &str) -> Option<&Role> { self.roles.get(name) }
 
     pub fn iter(&self) -> impl Iterator<Item = &Role> { self.roles.values() }
@@ -114,11 +155,18 @@ impl RoleLibrary {
     pub fn is_empty(&self) -> bool { self.roles.is_empty() }
 }
 
-fn load_file(path: &Path) -> anyhow::Result<Role> {
+fn load_file(path: &Path, scope: RoleScope) -> anyhow::Result<Role> {
     let s = std::fs::read_to_string(path)?;
     let mut role: Role = serde_yaml::from_str(&s)?;
     role.source = path.to_path_buf();
+    role.scope = scope;
     Ok(role)
+}
+
+fn sanitize_name(s: &str) -> String {
+    s.chars()
+        .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c.to_ascii_lowercase() } else { '-' })
+        .collect()
 }
 
 fn bundled_dirs() -> Vec<PathBuf> {

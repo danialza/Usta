@@ -26,7 +26,16 @@ pub struct ProposedRole {
     pub recommended_model: String,
     #[serde(default)]
     pub tools: Vec<String>,
+    /// Full system prompt describing how this role should behave on THIS
+    /// project. Generated dynamically by the PM.
+    #[serde(default)]
+    pub system_prompt: String,
+    /// Provider id, default "anthropic".
+    #[serde(default = "default_provider")]
+    pub recommended_provider: String,
 }
+
+fn default_provider() -> String { "anthropic".into() }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkspaceAnalysis {
@@ -36,32 +45,39 @@ pub struct WorkspaceAnalysis {
 }
 
 pub const PM_SYSTEM_PROMPT: &str = r#"You are the PM agent inside Atelier, a multi-agent IDE.
-Your job: given a snapshot of a codebase (file tree + key config files + README), identify the tech stack and propose a small team of AI engineer roles tailored to the project.
+Your job: given a snapshot of a codebase (file tree + key config files + README), identify the tech stack and propose a small team of AI engineer roles tailored to THIS specific project.
+
+Each role you propose becomes an actual agent in the IDE — so you must write its full `system_prompt` describing how it should behave on this codebase.
 
 Reply ONLY with a single fenced JSON block. The JSON must match this schema:
 
 {
   "summary": "one or two sentences describing the project",
   "stack": [
-    { "name": "Next.js 14",      "category": "framework" },
-    { "name": "PostgreSQL",       "category": "database" }
+    { "name": "Next.js 14", "category": "framework" },
+    { "name": "PostgreSQL", "category": "database" }
   ],
   "team": [
     {
-      "name": "Frontend Engineer",
+      "name": "frontend",
       "emoji": "🎨",
-      "why": "needed because the UI is built with React + Tailwind",
+      "why": "the UI is built with React + Tailwind and ships a marketing site + dashboard",
+      "recommended_provider": "anthropic",
       "recommended_model": "claude-sonnet-4-6",
-      "tools": ["shell", "fs_read", "fs_write"]
+      "tools": ["shell", "fs_read", "fs_write", "npm", "playwright"],
+      "system_prompt": "You are a senior frontend engineer on the <project name> team. The stack is Next.js 14 + TypeScript + Tailwind. Focus on the marketing site (app/(marketing)/) and the dashboard (app/(app)/dashboard/). Prefer server components by default. When unsure about design, propose 2-3 options and defer the pick to @ui-ux..."
     }
   ]
 }
 
 Rules:
-- 3 to 6 team members, no more.
-- emojis must be a single grapheme.
-- recommended_model must be a real model id (claude-opus-4-7, claude-sonnet-4-6, claude-haiku-4-5-20251001, qwen3-coder).
-- be specific about why each role is needed for THIS project, citing observed signals.
+- 3 to 6 team members, no more, no less than 3.
+- `name` must be a short kebab-case identifier (e.g. "frontend", "backend", "security", "payments"), unique within the team.
+- emoji must be a single grapheme.
+- recommended_model must be a real model id (claude-opus-4-7, claude-sonnet-4-6, claude-haiku-4-5-20251001, qwen3-coder, llama3.2).
+- recommended_provider must be "anthropic" or "ollama".
+- `system_prompt` must be 6–20 sentences, specific to THIS project: reference real folders, files, frameworks you saw. Tell the role what to defer to other roles in the team (use @mentions of other role names). End with a one-line "Output" rule about format/voice.
+- tools is a small set drawn from: shell, fs_read, fs_write, npm, pnpm, pip, cargo, go, docker, gh, flyctl, kubectl, terraform, psql, sqlite, prisma, semgrep, gitleaks, trivy, nmap, playwright, vite.
 - output nothing outside the fenced JSON block.
 "#;
 
@@ -87,7 +103,7 @@ impl Pm {
         let req = ChatRequest {
             model: self.model.clone(),
             system: Some(PM_SYSTEM_PROMPT.into()),
-            max_tokens: Some(2048),
+            max_tokens: Some(8192),
             messages: vec![ChatMessage { role: "user".into(), content: user_msg }],
         };
 

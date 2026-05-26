@@ -36,8 +36,20 @@ service Atelier {
   rpc AnalyzeWorkspace(AnalyzeRequest) returns (WorkspaceAnalysis);
 
   // Roles.
-  rpc ListRoles(Empty) returns (RoleList);
+  rpc ListRoles(ListRolesRequest) returns (RoleList);
   rpc RoleChat(RoleChatRequest) returns (stream ChatToken);
+
+  // Materialize a PM-proposed team as workspace-scoped roles
+  // (<ws>/.atelier/roles/*.yaml). Reloads the daemon's library.
+  rpc ApplyTeam(ApplyTeamRequest) returns (ApplyTeamResponse);
+
+  // Multi-agent chat. @mentions route the message to one or more roles
+  // (in parallel). Each role's tokens stream back tagged by role name.
+  rpc TeamChat(TeamChatRequest) returns (stream TeamChatEvent);
+
+  // Tool catalog. With a role_name, returns only tools that role is
+  // allowed to invoke.
+  rpc ListTools(ListToolsRequest) returns (ToolList);
 }
 
 message Empty {}
@@ -184,11 +196,13 @@ message StackTag {
 }
 
 message ProposedRole {
-  string name              = 1;
-  string emoji             = 2;
-  string why               = 3;
-  string recommended_model = 4;
-  repeated string tools    = 5;
+  string name                 = 1;
+  string emoji                = 2;
+  string why                  = 3;
+  string recommended_model    = 4;
+  repeated string tools       = 5;
+  string system_prompt        = 6;
+  string recommended_provider = 7;
 }
 
 message WorkspaceAnalysis {
@@ -207,9 +221,62 @@ message Role {
   string default_model     = 5;
   repeated string allowed_tools = 6;
   string source_path       = 7;
+  string scope             = 8; // "builtin" | "user" | "workspace"
+}
+
+message ListRolesRequest {
+  // optional: include workspace-scoped roles for this workspace
+  string workspace_id = 1;
 }
 
 message RoleList { repeated Role items = 1; }
+
+message ApplyTeamRequest {
+  string workspace_id = 1;
+  string provider     = 2; // default "anthropic"
+  string model        = 3; // default "claude-sonnet-4-6"
+}
+
+message ApplyTeamResponse {
+  WorkspaceAnalysis analysis = 1;
+  repeated string written_paths = 2;
+}
+
+// --- Team chat ---
+
+message TeamChatRequest {
+  string workspace_id = 1;
+  string user_msg     = 2;
+  // explicit role list; empty => auto-detect @mentions in user_msg
+  repeated string mentions = 3;
+  // optional model override applied to every mentioned role
+  string model = 4;
+}
+
+message TeamChatEvent {
+  string role        = 1; // which role is speaking
+  string text        = 2; // incremental text
+  bool   done        = 3; // this role finished
+  string stop_reason = 4;
+  string error       = 5;
+}
+
+// --- Tool registry ---
+
+message Tool {
+  string name           = 1;
+  string kind           = 2; // "shell" | "fs" | "binary"
+  string description    = 3;
+  bool   needs_approval = 4;
+}
+
+message ListToolsRequest {
+  // empty => list all tools; non-empty => intersect with role.allowed_tools
+  string role_name = 1;
+  string workspace_id = 2;
+}
+
+message ToolList { repeated Tool items = 1; }
 
 message RoleChatRequest {
   string role_name = 1;
@@ -218,4 +285,6 @@ message RoleChatRequest {
   string provider  = 3;
   string model     = 4;
   int32  max_tokens = 5;
+  // Optional: include workspace-scoped roles for this workspace.
+  string workspace_id = 6;
 }

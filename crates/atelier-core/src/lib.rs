@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 pub mod db;
 pub mod pty;
+pub mod tools;
 pub mod workspace;
 
 pub const DAEMON_VERSION: &str = env!("CARGO_PKG_VERSION");

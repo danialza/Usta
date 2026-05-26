@@ -5,10 +5,10 @@ use anyhow::{Context, Result};
 use atelier_core::default_socket_path;
 use atelier_proto::v1::{
     atelier_client::AtelierClient, pty_client_msg::Kind as PtyCKind,
-    pty_server_msg::Kind as PtySKind, AnalyzeRequest, ChatMessage, ChatRequest,
-    CloseTerminalRequest, CreateTerminalRequest, Empty, IndexRequest, ListTerminalsRequest,
-    OpenWorkspaceRequest, PingRequest, PtyAttach, PtyClientMsg, PtyInput, PtyResize,
-    RoleChatRequest, SearchRequest,
+    pty_server_msg::Kind as PtySKind, AnalyzeRequest, ApplyTeamRequest, ChatMessage, ChatRequest,
+    CloseTerminalRequest, CreateTerminalRequest, Empty, IndexRequest, ListRolesRequest,
+    ListTerminalsRequest, ListToolsRequest, OpenWorkspaceRequest, PingRequest, PtyAttach,
+    PtyClientMsg, PtyInput, PtyResize, RoleChatRequest, SearchRequest, TeamChatRequest,
 };
 use chrono::{Local, TimeZone};
 use clap::{Parser, Subcommand};
@@ -90,6 +90,16 @@ enum Cmd {
         #[command(subcommand)]
         sub: RoleCmd,
     },
+    /// Team subcommands (workspace-scoped roles).
+    Team {
+        #[command(subcommand)]
+        sub: TeamCmd,
+    },
+    /// Tool catalog (capabilities the daemon can offer to roles).
+    Tools {
+        #[command(subcommand)]
+        sub: ToolsCmd,
+    },
     /// PM orchestrator: identify stack + propose team.
     Analyze {
         #[arg(long, default_value = "")]
@@ -110,11 +120,11 @@ enum DaemonCmd {
 
 #[derive(Subcommand, Debug)]
 enum RoleCmd {
-    /// List all loaded roles.
+    /// List all loaded roles (including workspace-scoped if active ws set).
     List,
     /// Show metadata for a role.
     Show { name: String },
-    /// Streaming chat as a role.
+    /// Streaming chat as a role (uses active workspace's overrides if set).
     Chat {
         name: String,
         #[arg(short, long, default_value = "")]
@@ -124,6 +134,43 @@ enum RoleCmd {
         #[arg(long, default_value_t = 1024)]
         max_tokens: i32,
         prompt: Vec<String>,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum TeamCmd {
+    /// Analyze workspace and persist proposed roles as workspace YAMLs.
+    Apply {
+        #[arg(long, default_value = "")]
+        workspace_id: String,
+        #[arg(short, long, default_value = "anthropic")]
+        provider: String,
+        #[arg(short, long, default_value = "claude-sonnet-4-6")]
+        model: String,
+    },
+    /// List workspace roles only (filtered).
+    List {
+        #[arg(long, default_value = "")]
+        workspace_id: String,
+    },
+    /// Send a message with @mentions to one or more roles in parallel.
+    Chat {
+        #[arg(long, default_value = "")]
+        workspace_id: String,
+        #[arg(short, long, default_value = "")]
+        model: String,
+        prompt: Vec<String>,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum ToolsCmd {
+    /// List all tools, or only those allowed for --role.
+    List {
+        #[arg(long, default_value = "")]
+        role: String,
+        #[arg(long, default_value = "")]
+        workspace_id: String,
     },
 }
 
@@ -142,6 +189,18 @@ enum TermCmd {
     },
     Close { id: String },
     Attach { id: String },
+}
+
+fn colorize(s: &str, color: &str) -> String {
+    match color {
+        "cyan"    => s.cyan().to_string(),
+        "magenta" => s.magenta().to_string(),
+        "yellow"  => s.yellow().to_string(),
+        "green"   => s.green().to_string(),
+        "blue"    => s.blue().to_string(),
+        "red"     => s.red().to_string(),
+        _         => s.to_string(),
+    }
 }
 
 fn resolve_ws(arg: String) -> Result<String> {
@@ -373,14 +432,21 @@ async fn main() -> Result<()> {
         }
         Cmd::Role { sub } => match sub {
             RoleCmd::List => {
-                let r = client.list_roles(Empty {}).await?.into_inner();
+                let ws_id = CliState::load().active_workspace_id.unwrap_or_default();
+                let r = client.list_roles(ListRolesRequest { workspace_id: ws_id }).await?.into_inner();
                 if r.items.is_empty() {
                     println!("{}", "(no roles found — check roles/ dir)".dimmed());
                 }
                 for role in r.items {
-                    println!("{} {}  {}",
+                    let scope_tag = match role.scope.as_str() {
+                        "workspace" => "[ws]".yellow().to_string(),
+                        "user"      => "[user]".cyan().to_string(),
+                        _           => "[builtin]".dimmed().to_string(),
+                    };
+                    println!("{} {} {}  {}",
                         role.emoji,
                         role.name.bold(),
+                        scope_tag,
                         role.description.dimmed(),
                     );
                     println!("    {} {} / {}", "model".dimmed(), role.default_provider, role.default_model);
@@ -390,10 +456,11 @@ async fn main() -> Result<()> {
                 }
             }
             RoleCmd::Show { name } => {
-                let r = client.list_roles(Empty {}).await?.into_inner();
+                let ws_id = CliState::load().active_workspace_id.unwrap_or_default();
+                let r = client.list_roles(ListRolesRequest { workspace_id: ws_id }).await?.into_inner();
                 let role = r.items.iter().find(|x| x.name == name)
                     .ok_or_else(|| anyhow::anyhow!("role '{name}' not found"))?;
-                println!("{} {}", role.emoji, role.name.bold());
+                println!("{} {}  [{}]", role.emoji, role.name.bold(), role.scope);
                 println!("  {} {}", "desc    ".dimmed(), role.description);
                 println!("  {} {}", "provider".dimmed(), role.default_provider);
                 println!("  {} {}", "model   ".dimmed(), role.default_model);
@@ -403,10 +470,12 @@ async fn main() -> Result<()> {
             RoleCmd::Chat { name, provider, model, max_tokens, prompt } => {
                 let prompt = prompt.join(" ");
                 if prompt.trim().is_empty() { anyhow::bail!("empty prompt"); }
+                let ws_id = CliState::load().active_workspace_id.unwrap_or_default();
                 let mut s = client.role_chat(RoleChatRequest {
                     role_name: name,
                     user_msg: prompt,
                     provider, model, max_tokens,
+                    workspace_id: ws_id,
                 }).await?.into_inner();
                 let stdout = std::io::stdout();
                 let mut out = stdout.lock();
@@ -415,6 +484,110 @@ async fn main() -> Result<()> {
                     if !t.error.is_empty() { eprintln!("\n{} {}", "✗".red(), t.error); std::process::exit(1); }
                     if !t.text.is_empty() { out.write_all(t.text.as_bytes())?; out.flush()?; }
                     if t.done { writeln!(out, "\n{} done ({})", "·".dimmed(), t.stop_reason.dimmed())?; break; }
+                }
+            }
+        },
+        Cmd::Team { sub } => match sub {
+            TeamCmd::Apply { workspace_id, provider, model } => {
+                let ws_id = resolve_ws(workspace_id)?;
+                eprintln!("{} analyzing + applying team ({} / {}) ...", "·".dimmed(), provider, model);
+                let r = client.apply_team(ApplyTeamRequest {
+                    workspace_id: ws_id,
+                    provider, model,
+                }).await?.into_inner();
+
+                if let Some(a) = &r.analysis {
+                    println!();
+                    println!("{} {}", "summary".bold(), a.summary);
+                    println!();
+                    println!("{}", "stack".bold());
+                    for t in &a.stack {
+                        let cat = if t.category.is_empty() { String::new() } else { format!(" [{}]", t.category) };
+                        println!("  • {}{}", t.name, cat.dimmed());
+                    }
+                    println!();
+                    println!("{}", "team (now workspace-scoped)".bold());
+                    for m in &a.team {
+                        println!("  {} {} {}", m.emoji, m.name.bold(), format!("({})", m.recommended_model).dimmed());
+                        println!("    {} {}", "why  ".dimmed(), m.why);
+                        if !m.tools.is_empty() {
+                            println!("    {} {}", "tools".dimmed(), m.tools.join(", "));
+                        }
+                    }
+                }
+                println!();
+                println!("{} wrote {} role file(s):", "✓".green(), r.written_paths.len());
+                for p in &r.written_paths {
+                    println!("  {}", p.dimmed());
+                }
+            }
+            TeamCmd::List { workspace_id } => {
+                let ws_id = resolve_ws(workspace_id)?;
+                let r = client.list_roles(ListRolesRequest { workspace_id: ws_id }).await?.into_inner();
+                let mut shown = 0;
+                for role in r.items {
+                    if role.scope != "workspace" { continue; }
+                    shown += 1;
+                    println!("{} {}  {}", role.emoji, role.name.bold(), role.description.dimmed());
+                    println!("    {} {} / {}", "model".dimmed(), role.default_provider, role.default_model);
+                    println!("    {} {}", "src  ".dimmed(), role.source_path.dimmed());
+                }
+                if shown == 0 {
+                    println!("{}", "(no workspace roles yet — run `ateliercli team apply`)".dimmed());
+                }
+            }
+            TeamCmd::Chat { workspace_id, model, prompt } => {
+                let prompt = prompt.join(" ");
+                if prompt.trim().is_empty() { anyhow::bail!("empty prompt"); }
+                let ws_id = resolve_ws(workspace_id)?;
+                let mut s = client.team_chat(TeamChatRequest {
+                    workspace_id: ws_id,
+                    user_msg: prompt,
+                    mentions: vec![],   // auto-detect from message
+                    model,
+                }).await?.into_inner();
+                use std::collections::HashMap;
+                let mut buffers: HashMap<String, String> = HashMap::new();
+                let palette = ["cyan", "magenta", "yellow", "green", "blue", "red"];
+                let mut color_of: HashMap<String, &'static str> = HashMap::new();
+                let mut next_color = 0;
+                while let Some(item) = s.next().await {
+                    let ev = item?;
+                    let color = *color_of.entry(ev.role.clone()).or_insert_with(|| {
+                        let c = palette[next_color % palette.len()];
+                        next_color += 1;
+                        c
+                    });
+                    if !ev.error.is_empty() {
+                        eprintln!("{} {} {}", colorize(&format!("[{}]", ev.role), color), "error:".red(), ev.error);
+                        continue;
+                    }
+                    if !ev.text.is_empty() {
+                        buffers.entry(ev.role.clone()).or_default().push_str(&ev.text);
+                    }
+                    if ev.done {
+                        let body = buffers.remove(&ev.role).unwrap_or_default();
+                        println!("\n{}", colorize(&format!("─── @{} ({}) ───", ev.role, ev.stop_reason), color));
+                        println!("{}\n", body);
+                    }
+                }
+            }
+        },
+        Cmd::Tools { sub } => match sub {
+            ToolsCmd::List { role, workspace_id } => {
+                let ws_id = if workspace_id.is_empty() {
+                    CliState::load().active_workspace_id.unwrap_or_default()
+                } else { workspace_id };
+                let r = client.list_tools(ListToolsRequest { role_name: role, workspace_id: ws_id }).await?.into_inner();
+                if r.items.is_empty() { println!("{}", "(no tools)".dimmed()); }
+                for t in r.items {
+                    let approval = if t.needs_approval { "ask".yellow().to_string() } else { "auto".green().to_string() };
+                    println!("  {} [{}] {}  {}",
+                        t.name.bold(),
+                        t.kind.dimmed(),
+                        approval,
+                        t.description.dimmed(),
+                    );
                 }
             }
         },
