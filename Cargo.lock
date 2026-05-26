@@ -230,6 +230,7 @@ dependencies = [
  "async-trait",
  "atelier-core",
  "atelier-index",
+ "atelier-pm",
  "atelier-proto",
  "atelier-providers",
  "clap",
@@ -253,6 +254,23 @@ dependencies = [
  "fastembed",
  "ignore",
  "serde",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "walkdir",
+]
+
+[[package]]
+name = "atelier-pm"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "atelier-providers",
+ "futures",
+ "ignore",
+ "serde",
+ "serde_json",
  "thiserror 1.0.69",
  "tokio",
  "tracing",

@@ -6,11 +6,13 @@ use atelier_core::{
 };
 use atelier_proto::v1::{
     atelier_server::{Atelier, AtelierServer},
-    ChatRequest as PbChatReq, ChatToken, CloseTerminalRequest, CreateTerminalRequest, Empty,
-    IndexProgress as PbIndexProgress, IndexRequest, ListTerminalsRequest, OpenWorkspaceRequest,
-    PingRequest, PingResponse, ProviderInfo, ProviderList, PtyClientMsg, PtyServerMsg,
-    SearchHit as PbSearchHit, SearchRequest, SearchResults, Terminal as PbTerminal, TerminalList,
-    Workspace, WorkspaceList,
+    AnalyzeRequest, ChatRequest as PbChatReq, ChatToken, CloseTerminalRequest,
+    CreateTerminalRequest, Empty, IndexProgress as PbIndexProgress, IndexRequest,
+    ListTerminalsRequest, OpenWorkspaceRequest, PingRequest, PingResponse,
+    ProposedRole as PbProposedRole, ProviderInfo, ProviderList, PtyClientMsg, PtyServerMsg,
+    SearchHit as PbSearchHit, SearchRequest, SearchResults, StackTag as PbStackTag,
+    Terminal as PbTerminal, TerminalList, Workspace, WorkspaceAnalysis as PbAnalysis,
+    WorkspaceList,
 };
 use atelier_providers::{ChatDelta, ChatMessage, ChatRequest, ProviderRegistry};
 use atelier_index::{Embedder, EmbedderConfig, Indexer};
@@ -452,6 +454,62 @@ impl Atelier for AtelierSvc {
 
         let stream = tokio_stream::wrappers::ReceiverStream::new(rx);
         Ok(Response::new(Box::pin(stream) as Self::IndexWorkspaceStream))
+    }
+
+    async fn analyze_workspace(
+        &self,
+        req: Request<AnalyzeRequest>,
+    ) -> Result<Response<PbAnalysis>, Status> {
+        let r = req.into_inner();
+        let provider_name = if r.provider.is_empty() { "anthropic".to_string() } else { r.provider };
+        let model = if r.model.is_empty() {
+            "claude-sonnet-4-6".to_string()
+        } else {
+            r.model
+        };
+        let provider = self
+            .providers
+            .get(&provider_name)
+            .ok_or_else(|| Status::not_found(format!("unknown provider '{provider_name}'")))?;
+
+        // Resolve workspace path.
+        let db = self.db.clone();
+        let ws_id = r.workspace_id.clone();
+        let workspaces = tokio::task::spawn_blocking(move || db.list_workspaces())
+            .await
+            .unwrap()
+            .map_err(|e| Status::internal(e.to_string()))?;
+        let ws = workspaces
+            .into_iter()
+            .find(|w| w.id == ws_id)
+            .ok_or_else(|| Status::not_found(format!("workspace '{ws_id}' not found")))?;
+
+        let pm = atelier_pm::Pm::new(provider, model);
+        let root = std::path::PathBuf::from(&ws.path);
+        let analysis = pm
+            .analyze(&root)
+            .await
+            .map_err(|e| Status::internal(format!("pm analyze: {e}")))?;
+
+        Ok(Response::new(PbAnalysis {
+            summary: analysis.summary,
+            stack: analysis
+                .stack
+                .into_iter()
+                .map(|t| PbStackTag { name: t.name, category: t.category })
+                .collect(),
+            team: analysis
+                .team
+                .into_iter()
+                .map(|r| PbProposedRole {
+                    name: r.name,
+                    emoji: r.emoji,
+                    why: r.why,
+                    recommended_model: r.recommended_model,
+                    tools: r.tools,
+                })
+                .collect(),
+        }))
     }
 
     async fn search_workspace(

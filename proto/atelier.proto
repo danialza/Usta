@@ -31,6 +31,9 @@ service Atelier {
 
   // Semantic search over indexed chunks.
   rpc SearchWorkspace(SearchRequest) returns (SearchResults);
+
+  // PM orchestrator: identify stack + propose team for a workspace.
+  rpc AnalyzeWorkspace(AnalyzeRequest) returns (WorkspaceAnalysis);
 }
 
 message Empty {}
@@ -162,3 +165,30 @@ message SearchHit {
 }
 
 message SearchResults { repeated SearchHit items = 1; }
+
+// --- PM analyze ---
+
+message AnalyzeRequest {
+  string workspace_id = 1;
+  string provider     = 2; // default "anthropic"
+  string model        = 3; // default "claude-sonnet-4-6"
+}
+
+message StackTag {
+  string name     = 1;
+  string category = 2;
+}
+
+message ProposedRole {
+  string name              = 1;
+  string emoji             = 2;
+  string why               = 3;
+  string recommended_model = 4;
+  repeated string tools    = 5;
+}
+
+message WorkspaceAnalysis {
+  string summary                = 1;
+  repeated StackTag stack       = 2;
+  repeated ProposedRole team    = 3;
+}

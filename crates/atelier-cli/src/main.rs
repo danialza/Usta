@@ -5,9 +5,10 @@ use anyhow::{Context, Result};
 use atelier_core::default_socket_path;
 use atelier_proto::v1::{
     atelier_client::AtelierClient, pty_client_msg::Kind as PtyCKind,
-    pty_server_msg::Kind as PtySKind, ChatMessage, ChatRequest, CloseTerminalRequest,
-    CreateTerminalRequest, Empty, IndexRequest, ListTerminalsRequest, OpenWorkspaceRequest,
-    PingRequest, PtyAttach, PtyClientMsg, PtyInput, PtyResize, SearchRequest,
+    pty_server_msg::Kind as PtySKind, AnalyzeRequest, ChatMessage, ChatRequest,
+    CloseTerminalRequest, CreateTerminalRequest, Empty, IndexRequest, ListTerminalsRequest,
+    OpenWorkspaceRequest, PingRequest, PtyAttach, PtyClientMsg, PtyInput, PtyResize,
+    SearchRequest,
 };
 use chrono::{Local, TimeZone};
 use clap::{Parser, Subcommand};
@@ -83,6 +84,15 @@ enum Cmd {
         #[arg(short, long, default_value_t = 5)]
         k: i32,
         query: Vec<String>,
+    },
+    /// PM orchestrator: identify stack + propose team.
+    Analyze {
+        #[arg(long, default_value = "")]
+        workspace_id: String,
+        #[arg(short, long, default_value = "anthropic")]
+        provider: String,
+        #[arg(short, long, default_value = "claude-sonnet-4-6")]
+        model: String,
     },
 }
 
@@ -335,6 +345,34 @@ async fn main() -> Result<()> {
                 }
                 if h.snippet.lines().count() > 6 { println!("    {}", "…".dimmed()); }
                 println!();
+            }
+        }
+        Cmd::Analyze { workspace_id, provider, model } => {
+            let ws_id = resolve_ws(workspace_id)?;
+            eprintln!("{} analyzing with {} / {} ...", "·".dimmed(), provider, model);
+            let r = client.analyze_workspace(AnalyzeRequest {
+                workspace_id: ws_id,
+                provider,
+                model,
+            }).await?.into_inner();
+
+            println!();
+            println!("{} {}", "summary".bold(), r.summary);
+            println!();
+            println!("{}", "stack".bold());
+            if r.stack.is_empty() { println!("  {}", "(none)".dimmed()); }
+            for t in &r.stack {
+                let cat = if t.category.is_empty() { String::new() } else { format!(" [{}]", t.category) };
+                println!("  • {}{}", t.name, cat.dimmed());
+            }
+            println!();
+            println!("{}", "team".bold());
+            for m in &r.team {
+                println!("  {} {} {}", m.emoji, m.name.bold(), format!("({})", m.recommended_model).dimmed());
+                println!("    {} {}", "why  ".dimmed(), m.why);
+                if !m.tools.is_empty() {
+                    println!("    {} {}", "tools".dimmed(), m.tools.join(", "));
+                }
             }
         }
         Cmd::Doctor => { doctor(&mut client, &sock).await?; }

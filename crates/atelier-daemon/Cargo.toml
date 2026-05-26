@@ -13,6 +13,7 @@ atelier-proto = { path = "../atelier-proto" }
 atelier-core  = { path = "../atelier-core" }
 atelier-providers = { path = "../atelier-providers" }
 atelier-index = { path = "../atelier-index" }
+atelier-pm = { path = "../atelier-pm" }
 futures = { workspace = true }
 async-stream = { workspace = true }
 uuid = { workspace = true }

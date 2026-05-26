@@ -5,6 +5,7 @@ members = [
     "crates/atelier-core",
     "crates/atelier-providers",
     "crates/atelier-index",
+    "crates/atelier-pm",
     "crates/atelier-daemon",
     "crates/atelier-cli",
 ]
