@@ -172,19 +172,30 @@ fn sanitize_name(s: &str) -> String {
 fn bundled_dirs() -> Vec<PathBuf> {
     let mut out = Vec::new();
     if let Ok(exe) = std::env::current_exe() {
-        // target/debug/foo -> walk up to find sibling `roles/`
+        // .app bundle: <exe>/../../Resources/roles  (MacOS/ -> Contents/Resources/)
+        if let Some(exe_dir) = exe.parent() {
+            let app_resources = exe_dir
+                .parent()
+                .map(|p| p.join("Resources").join("roles"));
+            if let Some(r) = app_resources {
+                if r.is_dir() {
+                    out.push(r);
+                }
+            }
+        }
+        // dev / generic: walk up to find sibling `roles/`
         let mut dir = exe.parent().map(Path::to_path_buf);
         for _ in 0..4 {
             let Some(d) = dir.clone() else { break };
             let candidate = d.join("roles");
-            if candidate.is_dir() {
+            if candidate.is_dir() && !out.contains(&candidate) {
                 out.push(candidate);
                 break;
             }
             dir = d.parent().map(Path::to_path_buf);
         }
     }
-    // CWD/roles is handy during `cargo run`.
+    // CWD/roles handy during `cargo run`.
     if let Ok(cwd) = std::env::current_dir() {
         let p = cwd.join("roles");
         if p.is_dir() && !out.contains(&p) {

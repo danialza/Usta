@@ -116,6 +116,15 @@ fn parse_mentions(msg: &str) -> Vec<String> {
     out
 }
 
+fn probe_socket_alive(path: &std::path::Path) -> bool {
+    use std::os::unix::net::UnixStream;
+    use std::time::Duration;
+    match UnixStream::connect(path) {
+        Ok(s) => { let _ = s.set_read_timeout(Some(Duration::from_millis(50))); true }
+        Err(_) => false,
+    }
+}
+
 fn now_ms() -> i64 {
     use std::time::{SystemTime, UNIX_EPOCH};
     SystemTime::now()
@@ -954,6 +963,14 @@ async fn main() -> anyhow::Result<()> {
     info!(db = %db_path.display(), "db ready");
 
     if socket_path.exists() {
+        // Probe: if something accepts on this socket, another daemon is alive.
+        // We refuse rather than stomp.
+        if probe_socket_alive(&socket_path) {
+            anyhow::bail!(
+                "another atelierd is already listening on {} — refusing to start",
+                socket_path.display()
+            );
+        }
         std::fs::remove_file(&socket_path)
             .with_context(|| format!("removing stale socket {}", socket_path.display()))?;
     }

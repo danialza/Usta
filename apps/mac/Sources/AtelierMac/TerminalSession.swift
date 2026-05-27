@@ -12,6 +12,8 @@ import GRPCNIOTransportHTTP2
 final class TerminalSession: ObservableObject, Identifiable {
     let id: String
     let title: String
+    var roleName: String? = nil
+    var roleEmoji: String? = nil
 
     @Published var alive: Bool = true
     @Published var lastError: String? = nil

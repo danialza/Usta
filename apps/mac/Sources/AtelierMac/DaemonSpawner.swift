@@ -41,9 +41,38 @@ enum DaemonSpawner {
         return nil
     }
 
+    /// True if something is accepting on the given UDS path.
+    static func isSocketAlive(_ path: String) -> Bool {
+        guard FileManager.default.fileExists(atPath: path) else { return false }
+        let fd = Darwin.socket(AF_UNIX, SOCK_STREAM, 0)
+        if fd < 0 { return false }
+        defer { close(fd) }
+
+        var addr = sockaddr_un()
+        addr.sun_family = sa_family_t(AF_UNIX)
+        let bytes = Array(path.utf8)
+        let cap = MemoryLayout.size(ofValue: addr.sun_path)
+        guard bytes.count < cap else { return false }
+        withUnsafeMutableBytes(of: &addr.sun_path) { ptr in
+            for (i, b) in bytes.enumerated() {
+                ptr[i] = b
+            }
+            ptr[bytes.count] = 0
+        }
+        let size = MemoryLayout<sockaddr_un>.size
+        let result = withUnsafePointer(to: &addr) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                Darwin.connect(fd, $0, socklen_t(size))
+            }
+        }
+        return result == 0
+    }
+
     /// Spawn the daemon detached. Returns the launched URL on success.
     @discardableResult
     static func spawn(socket: String, anthropicKey: String? = nil) -> URL? {
+        // Refuse stomping a live daemon.
+        if isSocketAlive(socket) { return nil }
         guard let bin = locateBinary() else { return nil }
         let proc = Process()
         proc.executableURL = bin
