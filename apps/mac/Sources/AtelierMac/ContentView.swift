@@ -118,24 +118,100 @@ struct WorkspaceRow: View {
 
 struct WorkspaceDetailView: View {
     let ws: Atelier_V1_Workspace
+    @EnvironmentObject var client: AtelierClientModel
+    @StateObject private var grid = TerminalGridModel()
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack(alignment: .top, spacing: 12) {
-                Image(systemName: "folder.fill.badge.gear")
-                    .font(.system(size: 36))
-                    .foregroundStyle(.tint)
-                VStack(alignment: .leading) {
-                    Text(ws.name).font(.title2.bold())
-                    Text(ws.path).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
-                }
-                Spacer()
-            }
+        VStack(spacing: 0) {
+            header
             Divider()
-            Text("Workspace detail UI lands in week 10 (terminal grid + chat).")
-                .foregroundStyle(.secondary)
-            Spacer()
+            if grid.sessions.isEmpty {
+                empty
+            } else {
+                terminals
+            }
         }
-        .padding(24)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .task(id: ws.id) {
+            await grid.load(workspaceID: ws.id, client: client)
+        }
+    }
+
+    private var header: some View {
+        HStack(alignment: .center, spacing: 12) {
+            Image(systemName: "folder.fill.badge.gear")
+                .font(.system(size: 28))
+                .foregroundStyle(.tint)
+            VStack(alignment: .leading) {
+                Text(ws.name).font(.title3.bold())
+                Text(ws.path).font(.caption).foregroundStyle(.secondary)
+                    .textSelection(.enabled).lineLimit(1)
+            }
+            Spacer()
+            Button {
+                Task { await grid.newTerminal(workspaceID: ws.id, client: client) }
+            } label: {
+                Label("New Terminal", systemImage: "plus.rectangle")
+            }
+        }
+        .padding(12)
+    }
+
+    private var empty: some View {
+        VStack(spacing: 12) {
+            Image(systemName: "terminal").font(.system(size: 40)).foregroundStyle(.tertiary)
+            Text("No terminals open in this workspace.").foregroundStyle(.secondary)
+            Button("Open the first one") {
+                Task { await grid.newTerminal(workspaceID: ws.id, client: client) }
+            }
+            .buttonStyle(.borderedProminent)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var terminals: some View {
+        let cols = max(1, min(grid.sessions.count, 2))
+        let layout = Array(repeating: GridItem(.flexible(), spacing: 6), count: cols)
+        return LazyVGrid(columns: layout, spacing: 6) {
+            ForEach(grid.sessions) { session in
+                TerminalCell(session: session) {
+                    Task { await grid.closeTerminal(id: session.id, client: client) }
+                }
+            }
+        }
+        .padding(6)
+    }
+}
+
+struct TerminalCell: View {
+    @ObservedObject var session: TerminalSession
+    var onClose: () -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Circle()
+                    .fill(session.alive ? Color.green : Color.gray)
+                    .frame(width: 8, height: 8)
+                Text(session.title).font(.caption).foregroundStyle(.secondary)
+                Spacer()
+                Button(action: onClose) {
+                    Image(systemName: "xmark")
+                }
+                .buttonStyle(.borderless)
+                .controlSize(.small)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            .background(.thinMaterial)
+            PtyTerminalView(session: session)
+                .frame(minHeight: 220)
+                .clipped()
+        }
+        .background(Color.black)
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color.secondary.opacity(0.2))
+        )
     }
 }

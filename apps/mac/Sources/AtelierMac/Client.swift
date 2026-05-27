@@ -75,4 +75,40 @@ final class AtelierClientModel: ObservableObject {
             self.lastError = "open: \(error)"
         }
     }
+
+    // --- Terminals ---
+
+    func listTerminals(workspaceID: String) async -> [Atelier_V1_Terminal] {
+        guard let stub else { return [] }
+        do {
+            let r = try await stub.listTerminals(.with { $0.workspaceID = workspaceID })
+            return r.items
+        } catch {
+            self.lastError = "list terminals: \(error)"
+            return []
+        }
+    }
+
+    func createTerminal(workspaceID: String, cols: Int = 120, rows: Int = 32) async -> Atelier_V1_Terminal? {
+        guard let stub else { return nil }
+        do {
+            let req = Atelier_V1_CreateTerminalRequest.with {
+                $0.workspaceID = workspaceID
+                $0.cols = Int32(cols)
+                $0.rows = Int32(rows)
+            }
+            return try await stub.createTerminal(req)
+        } catch {
+            self.lastError = "create terminal: \(error)"
+            return nil
+        }
+    }
+
+    func closeTerminal(id: String) async {
+        guard let stub else { return }
+        _ = try? await stub.closeTerminal(.with { $0.id = id })
+    }
+
+    /// Returns the underlying stub so a TerminalSession can open a bidi RPC.
+    func ptyStub() -> Atelier_V1_Atelier.Client<HTTP2ClientTransport.Posix>? { stub }
 }
