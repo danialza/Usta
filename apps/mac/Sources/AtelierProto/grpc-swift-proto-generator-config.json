@@ -1,0 +1,14 @@
+{
+  "generate": {
+    "clients": true,
+    "servers": false,
+    "messages": true
+  },
+  "generatedSource": {
+    "accessLevelOnImports": false,
+    "accessLevel": "public"
+  },
+  "protoc": {
+    "importPaths": ["."]
+  }
+}
