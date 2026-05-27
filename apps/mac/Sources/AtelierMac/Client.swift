@@ -16,11 +16,15 @@ final class AtelierClientModel: ObservableObject {
     private var runTask: Task<Void, Never>? = nil
     private var stub: Atelier_V1_Atelier.Client<HTTP2ClientTransport.Posix>? = nil
 
-    let socketPath: String = {
+    private(set) var socketPath: String = {
         if let s = ProcessInfo.processInfo.environment["ATELIER_SOCKET"], !s.isEmpty { return s }
         let tmp = ProcessInfo.processInfo.environment["TMPDIR"] ?? "/tmp"
         return (tmp as NSString).appendingPathComponent("atelier.sock")
     }()
+
+    func applySocket(_ path: String) {
+        if !path.isEmpty { self.socketPath = path }
+    }
 
     func ensureConnected() async {
         if connected { return }

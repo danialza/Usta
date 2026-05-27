@@ -1,40 +1,62 @@
 # Atelier
 
-Multi-agent desktop dev environment. Each terminal = one specialist AI engineer with own role, model, and permissions.
+Multi-agent desktop development environment. Each terminal is a specialist AI
+engineer with its own role, model, and permissions. A PM agent reads your
+codebase and proposes a team tailored to the project; the proposed roles are
+persisted as YAML in `<project>/.atelier/roles/` so the team evolves with the
+codebase.
 
-**Status:** Phase 1 / Week 1 — workspace bootstrap, gRPC skeleton, CLI ping.
+**Status:** Phase 3 — macOS app on top of the daemon/CLI core.
 
 ## Layout
 
 ```
 atelier/
-├── proto/                  # gRPC contracts
+├── proto/                       gRPC contract (single source of truth)
+├── roles/                       5 builtin role YAMLs (frontend/backend/...)
 ├── crates/
-│   ├── atelier-proto/      # generated stubs
-│   ├── atelier-core/       # business logic
-│   ├── atelier-providers/  # LLM provider abstraction
-│   ├── atelier-daemon/     # the long-running service (atelierd)
-│   └── atelier-cli/        # ateliercli — dev/test client
-└── Cargo.toml
+│   ├── atelier-proto/           tonic-generated stubs
+│   ├── atelier-core/            db (sqlite), pty manager, tool registry
+│   ├── atelier-providers/       Anthropic + Ollama with streaming
+│   ├── atelier-index/           fastembed + cosine search
+│   ├── atelier-pm/              PM agent (workspace summary + JSON team)
+│   ├── atelier-roles/           role library (builtin / user / workspace)
+│   ├── atelier-daemon/          atelierd
+│   └── atelier-cli/             ateliercli
+├── apps/
+│   └── mac/                     SwiftUI app (grpc-swift-2 over UDS)
+└── scripts/build-mac.sh         assemble dist/Atelier.app
 ```
 
-## Build
+## Quick start (CLI)
 
 ```bash
 cargo build
+./target/debug/ateliercli daemon start
+./target/debug/ateliercli use <path/to/project>
+./target/debug/ateliercli team apply               # PM proposes + persists team
+./target/debug/ateliercli team chat "@security review login"
+./target/debug/ateliercli term new                 # spawn a real pty
 ```
 
-## Run
+Set `ANTHROPIC_API_KEY` in the daemon's env (export then `daemon start`).
 
-Terminal A:
+## Quick start (Mac app)
+
 ```bash
-cargo run -p atelier-daemon
+# dev: run alongside the rust target dir
+cargo build
+swift build --package-path apps/mac
+./apps/mac/.build/debug/AtelierMac
+# Atelier auto-starts atelierd from target/debug/atelierd if missing.
+
+# release: assemble the .app bundle
+./scripts/build-mac.sh
+open dist/Atelier.app
 ```
 
-Terminal B:
-```bash
-cargo run -p atelier-cli -- ping
-```
+The app's Settings sheet lets you change the socket path, paste an
+ANTHROPIC_API_KEY (passed to the daemon it spawns), and toggle auto-start.
 
 ## License
 
