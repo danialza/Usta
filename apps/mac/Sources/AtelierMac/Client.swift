@@ -111,4 +111,99 @@ final class AtelierClientModel: ObservableObject {
 
     /// Returns the underlying stub so a TerminalSession can open a bidi RPC.
     func ptyStub() -> Atelier_V1_Atelier.Client<HTTP2ClientTransport.Posix>? { stub }
+
+    // --- Providers / Roles ---
+
+    func listProviders() async -> [Atelier_V1_ProviderInfo] {
+        guard let stub else { return [] }
+        do {
+            let r = try await stub.listProviders(Atelier_V1_Empty())
+            return r.items
+        } catch {
+            self.lastError = "providers: \(error)"
+            return []
+        }
+    }
+
+    func listRoles(workspaceID: String) async -> [Atelier_V1_Role] {
+        guard let stub else { return [] }
+        do {
+            let r = try await stub.listRoles(.with { $0.workspaceID = workspaceID })
+            return r.items
+        } catch {
+            self.lastError = "roles: \(error)"
+            return []
+        }
+    }
+
+    /// Streaming chat helper. Yields the running text + a final stop_reason.
+    func roleChat(
+        roleName: String,
+        userMsg: String,
+        workspaceID: String,
+        provider: String,
+        model: String,
+        onToken: @escaping @MainActor (String) -> Void,
+        onDone: @escaping @MainActor (String) -> Void,
+        onError: @escaping @MainActor (String) -> Void
+    ) {
+        guard let stub else { onError("not connected"); return }
+        let onTokenSendable = MainActorClosure(closure: onToken)
+        let onDoneSendable = MainActorClosure(closure: onDone)
+        let onErrorSendable = MainActorClosure(closure: onError)
+        Task.detached {
+            do {
+                let req = Atelier_V1_RoleChatRequest.with {
+                    $0.roleName = roleName
+                    $0.userMsg = userMsg
+                    $0.workspaceID = workspaceID
+                    $0.provider = provider
+                    $0.model = model
+                    $0.maxTokens = 1024
+                }
+                try await stub.roleChat(req) { response in
+                    for try await tok in response.messages {
+                        if !tok.error.isEmpty {
+                            let msg = tok.error
+                            await MainActor.run { onErrorSendable.closure(msg) }
+                            return
+                        }
+                        if !tok.text.isEmpty {
+                            let t = tok.text
+                            await MainActor.run { onTokenSendable.closure(t) }
+                        }
+                        if tok.done {
+                            let r = tok.stopReason
+                            await MainActor.run { onDoneSendable.closure(r) }
+                            return
+                        }
+                    }
+                }
+            } catch {
+                let s = "\(error)"
+                await MainActor.run { onErrorSendable.closure(s) }
+            }
+        }
+    }
+
+    /// Wraps a @MainActor closure so the type itself is Sendable (the
+    /// closure body still only runs on the main actor).
+    private struct MainActorClosure: @unchecked Sendable {
+        let closure: @MainActor (String) -> Void
+    }
+
+    func applyTeam(workspaceID: String, provider: String = "anthropic", model: String = "claude-sonnet-4-6") async -> Atelier_V1_ApplyTeamResponse? {
+        guard let stub else { return nil }
+        do {
+            let req = Atelier_V1_ApplyTeamRequest.with {
+                $0.workspaceID = workspaceID
+                $0.provider = provider
+                $0.model = model
+            }
+            return try await stub.applyTeam(req)
+        } catch {
+            self.lastError = "apply team: \(error)"
+            return nil
+        }
+    }
 }
