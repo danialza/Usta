@@ -33,9 +33,15 @@ final class AtelierClientModel: ObservableObject {
 
     func connect() async {
         do {
+            // grpc-swift derives ":authority" from the target; for UDS that
+            // becomes a URL-encoded path that tonic's h2 parser rejects as
+            // "malformed authority". Pin it to "localhost".
+            var config = HTTP2ClientTransport.Posix.Config.defaults
+            config.http2.authority = "localhost"
             let transport = try HTTP2ClientTransport.Posix(
                 target: .unixDomainSocket(path: socketPath),
-                transportSecurity: .plaintext
+                transportSecurity: .plaintext,
+                config: config
             )
             let client = GRPCClient(transport: transport)
             let stub = Atelier_V1_Atelier.Client(wrapping: client)
