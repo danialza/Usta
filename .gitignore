@@ -13,3 +13,5 @@ Cargo.lock.bak
 .swiftpm/
 DerivedData/
 Package.resolved
+# Built .app bundle (use scripts/build-mac.sh to regenerate)
+dist/
