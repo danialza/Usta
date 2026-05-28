@@ -15,8 +15,9 @@ use atelier_proto::v1::{
     IndexProgress as PbIndexProgress, IndexRequest, ListEventsRequest, ListRolesRequest,
     ListTerminalsRequest, ListToolsRequest, OpenWorkspaceRequest, PingRequest, PingResponse,
     ProjectProposal as PbProjectProposal, ProposeProjectRequest, ProposedRole as PbProposedRole,
-    ProviderInfo, ProviderList, PtyClientMsg, PublishEventRequest, PtyServerMsg, Role as PbRole,
-    RoleChatRequest, RoleList, ScaffoldProjectRequest, ScaffoldProjectResponse,
+    ApproveToolRequest, ProviderInfo, ProviderList, PtyClientMsg, PublishEventRequest,
+    PtyServerMsg, Role as PbRole, RoleChatRequest, RoleList, ScaffoldProjectRequest,
+    ScaffoldProjectResponse,
     SearchHit as PbSearchHit, SearchRequest, SearchResults, StackTag as PbStackTag,
     TeamChatEvent, TeamChatRequest, Terminal as PbTerminal, TerminalList, Tool as PbTool,
     ToolList, Workspace, WorkspaceAnalysis as PbAnalysis, WorkspaceList,
@@ -50,6 +51,7 @@ struct AtelierSvc {
     embedder: Arc<OnceCell<Arc<Embedder>>>,
     roles: Arc<RoleLibrary>,
     tools: Arc<ToolRegistry>,
+    approvals: Arc<tokio::sync::Mutex<std::collections::HashMap<String, tokio::sync::oneshot::Sender<bool>>>>,
 }
 
 impl AtelierSvc {
@@ -718,16 +720,42 @@ impl Atelier for AtelierSvc {
             }).await;
         }
 
-        // Executor closure captures workspace root + role for permission gating.
+        // Approval channel: exec sends (call_id, name, input) when a tool
+        // needs user approval; the mapped stream forwards it to the client.
+        let (areq_tx, mut areq_rx) =
+            tokio::sync::mpsc::unbounded_channel::<(String, String, String)>();
+        let approvals = self.approvals.clone();
+
+        // Executor closure: gate -> (run | ask | deny).
         let exec_root = ws_root.clone();
         let exec_role = role.clone();
         let exec: atelier_providers::ToolExec = std::sync::Arc::new(move |name, input| {
             let root = exec_root.clone();
             let role = exec_role.clone();
+            let approvals = approvals.clone();
+            let areq_tx = areq_tx.clone();
             Box::pin(async move {
-                match root {
-                    Some(root) => toolexec::execute(root, role, name, input).await,
-                    None => Err(anyhow::anyhow!("no workspace; tools unavailable")),
+                let root = match root {
+                    Some(r) => r,
+                    None => return Err(anyhow::anyhow!("no workspace; tools unavailable")),
+                };
+                match toolexec::gate(&role, &name) {
+                    toolexec::Gate::Denied => {
+                        Ok(format!("⛔ {name} denied by role policy"))
+                    }
+                    toolexec::Gate::Allowed => {
+                        toolexec::execute(root, role, name, input).await
+                    }
+                    toolexec::Gate::Ask => {
+                        let id = format!("call_{}", uuid::Uuid::new_v4().simple());
+                        let (tx, rx) = tokio::sync::oneshot::channel::<bool>();
+                        approvals.lock().await.insert(id.clone(), tx);
+                        let _ = areq_tx.send((id.clone(), name.clone(), input.to_string()));
+                        match rx.await {
+                            Ok(true) => toolexec::execute(root, role, name, input).await,
+                            _ => Ok(format!("⛔ {name} denied by user")),
+                        }
+                    }
                 }
             })
         });
@@ -740,52 +768,59 @@ impl Atelier for AtelierSvc {
         let mapped = async_stream::stream! {
             let mut s = inner;
             let mut full = String::new();
-            while let Some(item) = s.next().await {
-                match item {
-                    Ok(AgentDelta::Text(t)) => {
-                        full.push_str(&t);
-                        yield Ok(ChatToken { text: t, done: false, stop_reason: String::new(), error: String::new(),
-                            tool_name: String::new(), tool_input: String::new(), tool_output: String::new(), tool_result: false });
+            loop {
+                tokio::select! {
+                    biased;
+                    Some((id, name, input)) = areq_rx.recv() => {
+                        yield Ok(ChatToken {
+                            tool_name: name, tool_input: input,
+                            needs_approval: true, tool_call_id: id,
+                            ..Default::default()
+                        });
                     }
-                    Ok(AgentDelta::ToolCall { name, input, .. }) => {
-                        yield Ok(ChatToken { text: String::new(), done: false, stop_reason: String::new(), error: String::new(),
-                            tool_name: name, tool_input: input.to_string(), tool_output: String::new(), tool_result: false });
-                    }
-                    Ok(AgentDelta::ToolResult { name, output, .. }) => {
-                        yield Ok(ChatToken { text: String::new(), done: false, stop_reason: String::new(), error: String::new(),
-                            tool_name: name, tool_input: String::new(), tool_output: output, tool_result: true });
-                    }
-                    Ok(AgentDelta::Done { stop_reason }) => {
-                        if !ws_id.is_empty() {
-                            // Persist assistant reply.
-                            if !full.trim().is_empty() {
-                                let db3 = db.clone();
-                                let ws3 = ws_id.clone();
-                                let rn = role_name.clone();
-                                let body = full.clone();
-                                let _ = tokio::task::spawn_blocking(move || {
-                                    db3.insert_agent_msg(&ws3, &rn, "assistant", &body, now_ms())
-                                }).await;
+                    item = s.next() => {
+                        let Some(item) = item else { break };
+                        match item {
+                            Ok(AgentDelta::Text(t)) => {
+                                full.push_str(&t);
+                                yield Ok(ChatToken { text: t, ..Default::default() });
                             }
-                            for (topic, summary) in parse_handoffs(&full) {
-                                if allowed_pub.is_empty() || allowed_pub.iter().any(|t| t == &topic) {
-                                    let db2 = db.clone();
-                                    let ws2 = ws_id.clone();
-                                    let from = role_name.clone();
-                                    let _ = tokio::task::spawn_blocking(move || {
-                                        db2.insert_event(&ws2, &from, &topic, &summary, now_ms())
-                                    }).await;
+                            Ok(AgentDelta::ToolCall { name, input, .. }) => {
+                                yield Ok(ChatToken { tool_name: name, tool_input: input.to_string(), ..Default::default() });
+                            }
+                            Ok(AgentDelta::ToolResult { name, output, .. }) => {
+                                yield Ok(ChatToken { tool_name: name, tool_output: output, tool_result: true, ..Default::default() });
+                            }
+                            Ok(AgentDelta::Done { stop_reason }) => {
+                                if !ws_id.is_empty() {
+                                    if !full.trim().is_empty() {
+                                        let db3 = db.clone();
+                                        let ws3 = ws_id.clone();
+                                        let rn = role_name.clone();
+                                        let body = full.clone();
+                                        let _ = tokio::task::spawn_blocking(move || {
+                                            db3.insert_agent_msg(&ws3, &rn, "assistant", &body, now_ms())
+                                        }).await;
+                                    }
+                                    for (topic, summary) in parse_handoffs(&full) {
+                                        if allowed_pub.is_empty() || allowed_pub.iter().any(|t| t == &topic) {
+                                            let db2 = db.clone();
+                                            let ws2 = ws_id.clone();
+                                            let from = role_name.clone();
+                                            let _ = tokio::task::spawn_blocking(move || {
+                                                db2.insert_event(&ws2, &from, &topic, &summary, now_ms())
+                                            }).await;
+                                        }
+                                    }
                                 }
+                                yield Ok(ChatToken { done: true, stop_reason, ..Default::default() });
+                                return;
+                            }
+                            Err(e) => {
+                                yield Ok(ChatToken { done: true, error: e.to_string(), ..Default::default() });
+                                return;
                             }
                         }
-                        yield Ok(ChatToken { text: String::new(), done: true, stop_reason, error: String::new(),
-                            tool_name: String::new(), tool_input: String::new(), tool_output: String::new(), tool_result: false });
-                        return;
-                    }
-                    Err(e) => {
-                        yield Ok(ChatToken { text: String::new(), done: true, stop_reason: String::new(), error: e.to_string(),
-                            tool_name: String::new(), tool_input: String::new(), tool_output: String::new(), tool_result: false });
-                        return;
                     }
                 }
             }
@@ -1268,6 +1303,17 @@ impl Atelier for AtelierSvc {
         }))
     }
 
+    async fn approve_tool(
+        &self,
+        req: Request<ApproveToolRequest>,
+    ) -> Result<Response<Empty>, Status> {
+        let r = req.into_inner();
+        if let Some(tx) = self.approvals.lock().await.remove(&r.call_id) {
+            let _ = tx.send(r.allow);
+        }
+        Ok(Response::new(Empty {}))
+    }
+
     async fn get_history(
         &self,
         req: Request<GetHistoryRequest>,
@@ -1374,6 +1420,7 @@ async fn main() -> anyhow::Result<()> {
         embedder: Arc::new(OnceCell::new()),
         roles: Arc::new(roles),
         tools: Arc::new(ToolRegistry::with_defaults()),
+        approvals: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
     };
 
     if let Err(e) = Server::builder()

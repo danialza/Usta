@@ -155,12 +155,14 @@ final class AtelierClientModel: ObservableObject {
         model: String,
         onToken: @escaping @MainActor (String) -> Void,
         onTool: @escaping @MainActor (_ name: String, _ input: String, _ output: String, _ isResult: Bool) -> Void,
+        onApproval: @escaping @MainActor (_ callID: String, _ name: String, _ input: String) -> Void,
         onDone: @escaping @MainActor (String) -> Void,
         onError: @escaping @MainActor (String) -> Void
     ) {
         guard let stub else { onError("not connected"); return }
         let onTokenSendable = MainActorClosure(closure: onToken)
         let onToolSendable = MainActorToolClosure(closure: onTool)
+        let onApprovalSendable = MainActorToolClosure3(closure: onApproval)
         let onDoneSendable = MainActorClosure(closure: onDone)
         let onErrorSendable = MainActorClosure(closure: onError)
         Task.detached {
@@ -180,7 +182,10 @@ final class AtelierClientModel: ObservableObject {
                             await MainActor.run { onErrorSendable.closure(msg) }
                             return
                         }
-                        if !tok.toolName.isEmpty {
+                        if tok.needsApproval {
+                            let (c, n, i) = (tok.toolCallID, tok.toolName, tok.toolInput)
+                            await MainActor.run { onApprovalSendable.closure(c, n, i) }
+                        } else if !tok.toolName.isEmpty {
                             let (n, i, o, r) = (tok.toolName, tok.toolInput, tok.toolOutput, tok.toolResult)
                             await MainActor.run { onToolSendable.closure(n, i, o, r) }
                         } else if !tok.text.isEmpty {
@@ -206,6 +211,18 @@ final class AtelierClientModel: ObservableObject {
     }
     private struct MainActorToolClosure: @unchecked Sendable {
         let closure: @MainActor (String, String, String, Bool) -> Void
+    }
+    private struct MainActorToolClosure3: @unchecked Sendable {
+        let closure: @MainActor (String, String, String) -> Void
+    }
+
+    // --- Tool approval ---
+
+    func approveTool(callID: String, allow: Bool) {
+        guard let stub else { return }
+        Task.detached {
+            _ = try? await stub.approveTool(.with { $0.callID = callID; $0.allow = allow })
+        }
     }
 
     // --- History ---

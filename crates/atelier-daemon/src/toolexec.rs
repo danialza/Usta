@@ -92,11 +92,33 @@ pub fn specs_for_role(role: &Role) -> Vec<ToolSpec> {
 }
 
 fn perm_allows(p: Option<&Permission>, default_deny: bool) -> bool {
+    // Ask is treated as allow here because approval is handled upstream in
+    // the daemon (gate()); execute() only runs after the user approved.
     match p {
-        Some(Permission::Allow) | Some(Permission::AllowSafe) => true,
-        Some(Permission::Ask) => false, // interactive approval not wired yet -> deny for safety
+        Some(Permission::Allow) | Some(Permission::AllowSafe) | Some(Permission::Ask) => true,
         Some(Permission::Deny) => false,
         None => !default_deny,
+    }
+}
+
+/// Approval gate decision for a tool, before execution.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Gate { Allowed, Ask, Denied }
+
+/// Decide whether a tool needs approval / is denied, based on role perms.
+/// fs_read / list_dir / grep are always allowed (read-only).
+pub fn gate(role: &Role, tool: &str) -> Gate {
+    let perm = match tool {
+        "fs_read" | "list_dir" | "grep" => return Gate::Allowed,
+        "fs_write" | "fs_edit" => role.permissions.fs_write.as_ref(),
+        "shell" => role.permissions.exec.as_ref(),
+        _ => None,
+    };
+    match perm {
+        Some(Permission::Allow) | Some(Permission::AllowSafe) => Gate::Allowed,
+        Some(Permission::Ask) => Gate::Ask,
+        Some(Permission::Deny) => Gate::Denied,
+        None => Gate::Ask, // default: ask for destructive tools
     }
 }
 

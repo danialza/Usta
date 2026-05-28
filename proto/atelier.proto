@@ -64,6 +64,9 @@ service Atelier {
 
   // Per-assistant chat history.
   rpc GetHistory(GetHistoryRequest) returns (HistoryList);
+
+  // Approve/deny a pending tool call (for roles with 'ask' permission).
+  rpc ApproveTool(ApproveToolRequest) returns (Empty);
 }
 
 message Empty {}
@@ -118,10 +121,12 @@ message ChatToken {
   string stop_reason = 3; // set when done
   string error       = 4; // non-empty on failure
   // Agentic tool activity (mutually exclusive with text):
-  string tool_name   = 5; // non-empty => this frame is a tool call/result
-  string tool_input  = 6; // JSON args (on call)
-  string tool_output = 7; // result text (on result)
-  bool   tool_result = 8; // false = call, true = result
+  string tool_name     = 5; // non-empty => this frame is a tool call/result
+  string tool_input    = 6; // JSON args (on call)
+  string tool_output   = 7; // result text (on result)
+  bool   tool_result   = 8; // false = call, true = result
+  bool   needs_approval = 9; // true => UI must call ApproveTool(call_id)
+  string tool_call_id  = 10; // correlates approval
 }
 
 // --- Terminal ---
@@ -372,6 +377,11 @@ message HistoryMessage {
 }
 
 message HistoryList { repeated HistoryMessage items = 1; }
+
+message ApproveToolRequest {
+  string call_id = 1;
+  bool   allow   = 2;
+}
 
 message RoleChatRequest {
   string role_name = 1;

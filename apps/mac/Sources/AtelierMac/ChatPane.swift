@@ -1,7 +1,7 @@
 import SwiftUI
 import AtelierProto
 
-enum ChatItemKind { case user, assistant, tool }
+enum ChatItemKind { case user, assistant, tool, approval }
 
 struct ChatMessage: Identifiable {
     let id = UUID()
@@ -15,6 +15,8 @@ struct ChatMessage: Identifiable {
     var toolName: String = ""
     var toolInput: String = ""
     var toolOutput: String = ""
+    var callID: String = ""
+    var resolved: Bool = false  // approval acted on
 }
 
 @MainActor
@@ -32,6 +34,14 @@ final class ChatPaneModel: ObservableObject {
 
     private var activeReplyID: UUID? = nil
     private(set) var historyLoaded = false
+
+    func resolveApproval(_ msgID: UUID, callID: String, allow: Bool, client: AtelierClientModel) {
+        client.approveTool(callID: callID, allow: allow)
+        if let i = messages.firstIndex(where: { $0.id == msgID }) {
+            messages[i].resolved = true
+            messages[i].toolOutput = allow ? "approved" : "denied"
+        }
+    }
 
     func loadHistory(client: AtelierClientModel) async {
         if historyLoaded { return }
@@ -87,6 +97,16 @@ final class ChatPaneModel: ObservableObject {
                     } else {
                         self.messages.append(row)
                     }
+                }
+            },
+            onApproval: { [weak self] callID, name, input in
+                guard let self else { return }
+                var row = ChatMessage(kind: .approval, role: self.role.name, emoji: "🔐", content: "")
+                row.toolName = name; row.toolInput = input; row.callID = callID
+                if let id = self.activeReplyID, let ri = self.messages.firstIndex(where: { $0.id == id }) {
+                    self.messages.insert(row, at: ri)
+                } else {
+                    self.messages.append(row)
                 }
             },
             onDone: { [weak self] _ in
@@ -260,9 +280,39 @@ struct AssistantPane: View {
     private func bubble(_ msg: ChatMessage) -> some View {
         if msg.kind == .tool {
             toolRow(msg)
+        } else if msg.kind == .approval {
+            approvalRow(msg)
         } else {
             chatBubble(msg)
         }
+    }
+
+    private func approvalRow(_ msg: ChatMessage) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Image(systemName: "lock.shield.fill").font(.system(size: 11)).foregroundStyle(.yellow)
+                Text("Approve \(msg.toolName)?").font(.system(size: 12, weight: .semibold))
+            }
+            Text(msg.toolInput).font(.system(size: 10, design: .monospaced))
+                .foregroundStyle(AtelierTheme.dim).lineLimit(3)
+            if msg.resolved {
+                Text(msg.toolOutput == "approved" ? "✓ approved" : "✕ denied")
+                    .font(.system(size: 11))
+                    .foregroundStyle(msg.toolOutput == "approved" ? .green : .red)
+            } else {
+                HStack(spacing: 8) {
+                    Button("Allow") { model.resolveApproval(msg.id, callID: msg.callID, allow: true, client: client) }
+                        .buttonStyle(.borderedProminent).controlSize(.small)
+                    Button("Deny") { model.resolveApproval(msg.id, callID: msg.callID, allow: false, client: client) }
+                        .buttonStyle(.bordered).controlSize(.small)
+                }
+            }
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.yellow.opacity(0.08))
+        .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.yellow.opacity(0.4)))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
     }
 
     private func toolRow(_ msg: ChatMessage) -> some View {
