@@ -276,14 +276,22 @@ struct AssistantPane: View {
                 if msg.pending { ProgressView().scaleEffect(0.4) }
             }
             if !msg.toolOutput.isEmpty {
-                Text(msg.toolOutput)
-                    .font(.system(size: 10, design: .monospaced))
-                    .foregroundStyle(AtelierTheme.dim)
-                    .lineLimit(8)
-                    .padding(6)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(AtelierTheme.cell)
-                    .clipShape(RoundedRectangle(cornerRadius: 4))
+                let hasDiff = msg.toolOutput.contains("\n- ") || msg.toolOutput.contains("\n+ ")
+                    || msg.toolOutput.hasPrefix("- ") || msg.toolOutput.hasPrefix("+ ")
+                Group {
+                    if hasDiff {
+                        diffView(msg.toolOutput)
+                    } else {
+                        Text(msg.toolOutput)
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundStyle(AtelierTheme.dim)
+                            .lineLimit(10)
+                    }
+                }
+                .padding(6)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(AtelierTheme.cell)
+                .clipShape(RoundedRectangle(cornerRadius: 4))
             }
         }
         .padding(8)
@@ -291,6 +299,23 @@ struct AssistantPane: View {
         .background(Color.orange.opacity(0.08))
         .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.orange.opacity(0.3)))
         .clipShape(RoundedRectangle(cornerRadius: 6))
+    }
+
+    private func diffView(_ text: String) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(Array(text.split(separator: "\n", omittingEmptySubsequences: false).prefix(20).enumerated()), id: \.offset) { _, raw in
+                let line = String(raw)
+                let color: Color = line.hasPrefix("- ") ? .red
+                    : line.hasPrefix("+ ") ? .green : AtelierTheme.dim
+                let bg: Color = line.hasPrefix("- ") ? Color.red.opacity(0.10)
+                    : line.hasPrefix("+ ") ? Color.green.opacity(0.10) : .clear
+                Text(line.isEmpty ? " " : line)
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(color)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(bg)
+            }
+        }
     }
 
     @ViewBuilder

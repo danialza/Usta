@@ -123,6 +123,27 @@ fn resolve(root: &Path, rel: &str) -> anyhow::Result<PathBuf> {
     Ok(normalized)
 }
 
+/// Tiny line-level diff: `-` removed, `+` added (no LCS, just block-level).
+/// Good enough for surfacing what changed in a tool row.
+fn simple_diff(old: &str, new: &str) -> String {
+    let o: Vec<&str> = old.lines().collect();
+    let n: Vec<&str> = new.lines().collect();
+    // Common prefix.
+    let mut start = 0;
+    while start < o.len() && start < n.len() && o[start] == n[start] { start += 1; }
+    // Common suffix.
+    let mut o_end = o.len();
+    let mut n_end = n.len();
+    while o_end > start && n_end > start && o[o_end - 1] == n[n_end - 1] {
+        o_end -= 1; n_end -= 1;
+    }
+    let mut out = String::new();
+    for line in &o[start..o_end] { out.push_str(&format!("- {line}\n")); }
+    for line in &n[start..n_end] { out.push_str(&format!("+ {line}\n")); }
+    if out.is_empty() { out.push_str("(no line changes)"); }
+    cap(out)
+}
+
 fn cap(mut s: String) -> String {
     if s.len() > MAX_OUTPUT {
         s.truncate(MAX_OUTPUT);
@@ -178,10 +199,12 @@ pub async fn execute(root: PathBuf, role: Role, name: String, input: Value) -> a
             let rel = input["path"].as_str().unwrap_or_default();
             let content = input["content"].as_str().unwrap_or_default();
             let p = resolve(&root, rel)?;
+            let prev = tokio::fs::read_to_string(&p).await.unwrap_or_default();
             if let Some(parent) = p.parent() { tokio::fs::create_dir_all(parent).await.ok(); }
             tokio::fs::write(&p, content).await
                 .map_err(|e| anyhow::anyhow!("write {}: {e}", p.display()))?;
-            Ok(format!("wrote {} bytes to {}", content.len(), rel))
+            let verb = if prev.is_empty() { "created" } else { "overwrote" };
+            Ok(format!("{verb} {rel}\n{}", simple_diff(&prev, content)))
         }
         "fs_edit" => {
             if !perm_allows(role.permissions.fs_write.as_ref(), true) {
@@ -200,7 +223,7 @@ pub async fn execute(root: PathBuf, role: Role, name: String, input: Value) -> a
             let patched = body.replacen(old, new, 1);
             tokio::fs::write(&p, &patched).await
                 .map_err(|e| anyhow::anyhow!("write {}: {e}", p.display()))?;
-            Ok(format!("edited {rel} (-{} +{} bytes)", old.len(), new.len()))
+            Ok(format!("edited {rel}\n{}", simple_diff(old, new)))
         }
         "shell" => {
             if !perm_allows(role.permissions.exec.as_ref(), true) {
