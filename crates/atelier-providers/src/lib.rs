@@ -10,6 +10,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 pub mod anthropic;
+pub mod gemini;
 pub mod ollama;
 pub mod registry;
 

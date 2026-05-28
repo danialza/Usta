@@ -4,15 +4,18 @@ import AtelierProto
 
 struct ContentView: View {
     @EnvironmentObject var client: AtelierClientModel
+    @EnvironmentObject var settings: AppSettings
     @State private var selection: Atelier_V1_Workspace?
     @State private var showNewProject = false
+    @State private var showSettings = false
 
     var body: some View {
         Group {
             if client.workspaces.isEmpty {
                 WelcomeView(
                     onOpen: { Task { await openFolder() } },
-                    onNew: { showNewProject = true }
+                    onNew: { showNewProject = true },
+                    onSettings: { showSettings = true }
                 )
             } else {
                 NavigationSplitView { sidebar } detail: { detail }
@@ -23,6 +26,11 @@ struct ContentView: View {
         .sheet(isPresented: $showNewProject) {
             NewProjectWizard(onOpened: { ws in selection = ws })
                 .environmentObject(client)
+        }
+        .sheet(isPresented: $showSettings) {
+            SettingsView()
+                .environmentObject(client)
+                .environmentObject(settings)
         }
     }
 
@@ -47,6 +55,11 @@ struct ContentView: View {
                 .frame(width: 8, height: 8)
             Text(client.daemonVersion.map { "v\($0)" } ?? "—")
                 .font(.caption2).foregroundStyle(AtelierTheme.dim)
+            Button { showSettings = true } label: {
+                Image(systemName: "gearshape").font(.caption)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(AtelierTheme.dim)
         }
         .padding(14)
     }
@@ -170,13 +183,20 @@ struct WorkspaceRow: View {
 struct WelcomeView: View {
     var onOpen: () -> Void
     var onNew: () -> Void = {}
+    var onSettings: () -> Void = {}
 
     var body: some View {
-        ZStack {
+        ZStack(alignment: .topTrailing) {
             LinearGradient(
                 colors: [Color(red: 0.12, green: 0.10, blue: 0.18), AtelierTheme.bg],
                 startPoint: .top, endPoint: .bottom
             )
+            Button(action: onSettings) {
+                Image(systemName: "gearshape").font(.title3)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(AtelierTheme.dim)
+            .padding(20)
             VStack(spacing: 20) {
                 ZStack {
                     RoundedRectangle(cornerRadius: 18)

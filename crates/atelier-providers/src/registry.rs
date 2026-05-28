@@ -1,4 +1,6 @@
-use crate::{anthropic::AnthropicProvider, ollama::OllamaProvider, DynProvider};
+use crate::{
+    anthropic::AnthropicProvider, gemini::GeminiProvider, ollama::OllamaProvider, DynProvider,
+};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -10,8 +12,10 @@ impl ProviderRegistry {
     pub fn with_defaults() -> Self {
         let mut map: HashMap<String, DynProvider> = HashMap::new();
         let anth: DynProvider = Arc::new(AnthropicProvider::from_env());
+        let gem: DynProvider = Arc::new(GeminiProvider::from_env());
         let oll: DynProvider = Arc::new(OllamaProvider::from_env());
         map.insert(anth.name().into(), anth);
+        map.insert(gem.name().into(), gem);
         map.insert(oll.name().into(), oll);
         Self { providers: map }
     }

@@ -16,7 +16,9 @@ struct AtelierApp: App {
                     if settings.autoSpawnDaemon {
                         _ = DaemonSpawner.spawn(
                             socket: settings.socketPath,
-                            anthropicKey: settings.anthropicKey.isEmpty ? nil : settings.anthropicKey
+                            anthropicKey: settings.anthropicKey.isEmpty ? nil : settings.anthropicKey,
+                            geminiKey: settings.geminiKey.isEmpty ? nil : settings.geminiKey,
+                            ollamaHost: settings.ollamaHost.isEmpty ? nil : settings.ollamaHost
                         )
                         try? await Task.sleep(nanoseconds: 600_000_000)
                     }

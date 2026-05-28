@@ -68,9 +68,23 @@ enum DaemonSpawner {
         return result == 0
     }
 
+    /// Best-effort: if a daemon is alive on the socket, remove the file so a
+    /// fresh spawn can bind. (The daemon process is left to exit on its own
+    /// when the socket disappears / on next launch's bind.)
+    static func stopByProbe(socket: String) {
+        if isSocketAlive(socket) {
+            try? FileManager.default.removeItem(atPath: socket)
+        }
+    }
+
     /// Spawn the daemon detached. Returns the launched URL on success.
     @discardableResult
-    static func spawn(socket: String, anthropicKey: String? = nil) -> URL? {
+    static func spawn(
+        socket: String,
+        anthropicKey: String? = nil,
+        geminiKey: String? = nil,
+        ollamaHost: String? = nil
+    ) -> URL? {
         // Refuse stomping a live daemon.
         if isSocketAlive(socket) { return nil }
         guard let bin = locateBinary() else { return nil }
@@ -79,9 +93,9 @@ enum DaemonSpawner {
         proc.arguments = ["--socket", socket]
 
         var env = ProcessInfo.processInfo.environment
-        if let key = anthropicKey, !key.isEmpty {
-            env["ANTHROPIC_API_KEY"] = key
-        }
+        if let key = anthropicKey, !key.isEmpty { env["ANTHROPIC_API_KEY"] = key }
+        if let key = geminiKey, !key.isEmpty { env["GEMINI_API_KEY"] = key }
+        if let h = ollamaHost, !h.isEmpty { env["OLLAMA_HOST"] = h }
         proc.environment = env
 
         proc.standardOutput = FileHandle.nullDevice
