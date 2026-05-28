@@ -211,6 +211,7 @@ impl Provider for AnthropicProvider {
                     "model": model,
                     "max_tokens": max_tokens,
                     "messages": messages,
+                    "stream": true,
                 });
                 if let Some(s) = &system { body["system"] = json!(s); }
                 if !tools_json.is_empty() { body["tools"] = json!(tools_json); }
@@ -224,30 +225,90 @@ impl Provider for AnthropicProvider {
                     .send()
                     .await?;
                 let status = resp.status();
-                let bytes = resp.bytes().await?;
                 if !status.is_success() {
-                    Err(anyhow::anyhow!("anthropic {status}: {}", String::from_utf8_lossy(&bytes)))?;
+                    Err(anyhow::anyhow!("anthropic {status}"))?;
                 }
-                let v: serde_json::Value = serde_json::from_slice(&bytes)?;
-                let stop_reason = v["stop_reason"].as_str().unwrap_or("end_turn").to_string();
-                let content = v["content"].as_array().cloned().unwrap_or_default();
 
-                // Emit text, collect tool_use blocks.
-                let mut tool_uses: Vec<(String, String, serde_json::Value)> = Vec::new();
-                for block in &content {
-                    match block["type"].as_str() {
-                        Some("text") => {
-                            if let Some(t) = block["text"].as_str() {
-                                yield AgentDelta::Text(t.to_string());
+                // SSE accumulation for this turn.
+                // index -> (kind, text_or_json, id, name)
+                #[derive(Default, Clone)]
+                struct Blk { kind: String, text: String, json: String, id: String, name: String }
+                let mut blocks: std::collections::BTreeMap<i64, Blk> = std::collections::BTreeMap::new();
+                let mut stop_reason = String::from("end_turn");
+
+                let mut byte_stream = resp.bytes_stream();
+                let mut buf = String::new();
+                'sse: while let Some(chunk) = byte_stream.next().await {
+                    let chunk = chunk?;
+                    buf.push_str(&String::from_utf8_lossy(&chunk));
+                    while let Some(idx) = buf.find("\n\n") {
+                        let raw = buf[..idx].to_string();
+                        buf.drain(..idx + 2);
+                        let mut data = String::new();
+                        for line in raw.lines() {
+                            if let Some(rest) = line.strip_prefix("data:") {
+                                data.push_str(rest.trim_start());
                             }
                         }
-                        Some("tool_use") => {
-                            let id = block["id"].as_str().unwrap_or("").to_string();
-                            let name = block["name"].as_str().unwrap_or("").to_string();
-                            let input = block["input"].clone();
-                            tool_uses.push((id, name, input));
+                        if data.is_empty() || data == "[DONE]" { continue; }
+                        let ev: serde_json::Value = match serde_json::from_str(&data) {
+                            Ok(v) => v, Err(_) => continue,
+                        };
+                        match ev["type"].as_str() {
+                            Some("content_block_start") => {
+                                let i = ev["index"].as_i64().unwrap_or(0);
+                                let cb = &ev["content_block"];
+                                let mut b = Blk::default();
+                                b.kind = cb["type"].as_str().unwrap_or("").to_string();
+                                if b.kind == "tool_use" {
+                                    b.id = cb["id"].as_str().unwrap_or("").to_string();
+                                    b.name = cb["name"].as_str().unwrap_or("").to_string();
+                                }
+                                blocks.insert(i, b);
+                            }
+                            Some("content_block_delta") => {
+                                let i = ev["index"].as_i64().unwrap_or(0);
+                                let d = &ev["delta"];
+                                match d["type"].as_str() {
+                                    Some("text_delta") => {
+                                        if let Some(t) = d["text"].as_str() {
+                                            yield AgentDelta::Text(t.to_string());
+                                            blocks.entry(i).or_default().text.push_str(t);
+                                        }
+                                    }
+                                    Some("input_json_delta") => {
+                                        if let Some(p) = d["partial_json"].as_str() {
+                                            blocks.entry(i).or_default().json.push_str(p);
+                                        }
+                                    }
+                                    _ => {}
+                                }
+                            }
+                            Some("message_delta") => {
+                                if let Some(sr) = ev["delta"]["stop_reason"].as_str() {
+                                    stop_reason = sr.to_string();
+                                }
+                            }
+                            Some("message_stop") => { break 'sse; }
+                            _ => {}
                         }
-                        _ => {}
+                    }
+                }
+
+                // Rebuild assistant content blocks + collect tool calls.
+                let mut content: Vec<serde_json::Value> = Vec::new();
+                let mut tool_uses: Vec<(String, String, serde_json::Value)> = Vec::new();
+                for (_, b) in &blocks {
+                    if b.kind == "text" {
+                        content.push(json!({ "type": "text", "text": b.text }));
+                    } else if b.kind == "tool_use" {
+                        let input: serde_json::Value = if b.json.trim().is_empty() {
+                            json!({})
+                        } else {
+                            serde_json::from_str(&b.json).unwrap_or(json!({}))
+                        };
+                        content.push(json!({ "type": "tool_use", "id": b.id, "name": b.name, "input": input }));
+                        tool_uses.push((b.id.clone(), b.name.clone(), input));
                     }
                 }
 
@@ -256,7 +317,6 @@ impl Provider for AnthropicProvider {
                     return;
                 }
 
-                // Record the assistant turn verbatim, then run tools.
                 messages.push(json!({ "role": "assistant", "content": content }));
 
                 let mut tool_results: Vec<serde_json::Value> = Vec::new();
