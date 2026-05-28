@@ -205,7 +205,7 @@ impl Provider for AnthropicProvider {
             .collect();
 
         let stream = try_stream! {
-            let max_turns = 8;
+            let max_turns = 20;
             for _turn in 0..max_turns {
                 let mut body = json!({
                     "model": model,

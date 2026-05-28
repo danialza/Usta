@@ -1,10 +1,13 @@
 //! Ollama provider — POST /api/chat with stream:true, NDJSON response.
 
-use crate::{ChatDelta, ChatRequest, ChatStream, Provider};
+use crate::{
+    AgentDelta, AgentStream, ChatDelta, ChatRequest, ChatStream, Provider, ToolExec, ToolSpec,
+};
 use async_stream::try_stream;
 use async_trait::async_trait;
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use std::time::Duration;
 
 const DEFAULT_BASE: &str = "http://127.0.0.1:11434";
@@ -59,7 +62,13 @@ impl Provider for OllamaProvider {
     fn name(&self) -> &'static str { "ollama" }
 
     fn default_models(&self) -> Vec<String> {
-        vec!["qwen3-coder".into(), "llama3.2".into()]
+        // Coder-capable, tool-calling models. Pull with e.g.
+        //   ollama pull qwen2.5-coder:7b
+        vec![
+            "qwen2.5-coder:7b".into(),
+            "llama3.1:8b".into(),
+            "qwen3-coder".into(),
+        ]
     }
 
     async fn available(&self) -> bool {
@@ -118,6 +127,97 @@ impl Provider for OllamaProvider {
                 }
             }
             yield ChatDelta::Done { stop_reason: "eof".into() };
+        };
+
+        Ok(Box::pin(stream))
+    }
+
+    async fn chat_agentic(
+        &self,
+        req: ChatRequest,
+        tools: Vec<ToolSpec>,
+        exec: ToolExec,
+    ) -> anyhow::Result<AgentStream> {
+        let url = format!("{}/api/chat", self.base_url);
+        let http = self.http.clone();
+        let model = req.model.clone();
+
+        // Build message history (Ollama uses {role, content[, tool_calls]}).
+        let mut messages: Vec<serde_json::Value> = Vec::new();
+        if let Some(sys) = &req.system {
+            messages.push(json!({ "role": "system", "content": sys }));
+        }
+        for m in &req.messages {
+            messages.push(json!({ "role": m.role, "content": m.content }));
+        }
+
+        let tools_json: Vec<serde_json::Value> = tools
+            .iter()
+            .map(|t| json!({
+                "type": "function",
+                "function": {
+                    "name": t.name,
+                    "description": t.description,
+                    "parameters": t.input_schema,
+                }
+            }))
+            .collect();
+
+        let stream = try_stream! {
+            let max_turns = 20;
+            for _turn in 0..max_turns {
+                let mut body = json!({
+                    "model": model,
+                    "messages": messages,
+                    "stream": false,
+                });
+                if !tools_json.is_empty() { body["tools"] = json!(tools_json); }
+
+                let resp = http.post(&url).json(&body).send().await?;
+                let status = resp.status();
+                let bytes = resp.bytes().await?;
+                if !status.is_success() {
+                    Err(anyhow::anyhow!("ollama {status}: {}", String::from_utf8_lossy(&bytes)))?;
+                }
+                let v: serde_json::Value = serde_json::from_slice(&bytes)?;
+                let msg = &v["message"];
+                let text = msg["content"].as_str().unwrap_or("").to_string();
+                if !text.is_empty() {
+                    yield AgentDelta::Text(text.clone());
+                }
+
+                let calls = msg["tool_calls"].as_array().cloned().unwrap_or_default();
+                if calls.is_empty() {
+                    yield AgentDelta::Done {
+                        stop_reason: v["done_reason"].as_str().unwrap_or("stop").to_string(),
+                    };
+                    return;
+                }
+
+                // Echo assistant turn (content + tool_calls) into history.
+                messages.push(json!({
+                    "role": "assistant",
+                    "content": text,
+                    "tool_calls": calls,
+                }));
+
+                for (i, call) in calls.iter().enumerate() {
+                    let name = call["function"]["name"].as_str().unwrap_or("").to_string();
+                    let input = call["function"]["arguments"].clone();
+                    let id = format!("call_{_turn}_{i}");
+                    yield AgentDelta::ToolCall { id: id.clone(), name: name.clone(), input: input.clone() };
+                    let output = match (exec)(name.clone(), input).await {
+                        Ok(o) => o,
+                        Err(e) => format!("error: {e}"),
+                    };
+                    yield AgentDelta::ToolResult { id, name: name.clone(), output: output.clone() };
+                    messages.push(json!({
+                        "role": "tool",
+                        "content": output,
+                    }));
+                }
+            }
+            yield AgentDelta::Done { stop_reason: "max_turns".into() };
         };
 
         Ok(Box::pin(stream))

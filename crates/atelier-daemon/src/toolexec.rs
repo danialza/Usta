@@ -35,6 +35,20 @@ pub fn specs_for_role(role: &Role) -> Vec<ToolSpec> {
             }),
         });
     }
+    if allowed("fs_read") {
+        out.push(ToolSpec {
+            name: "grep".into(),
+            description: "Search for a substring across workspace text files; returns path:line matches.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "query": { "type": "string" },
+                    "path": { "type": "string", "description": "subdir to search (default '.')" }
+                },
+                "required": ["query"]
+            }),
+        });
+    }
     if allowed("fs_write") {
         out.push(ToolSpec {
             name: "fs_write".into(),
@@ -46,6 +60,20 @@ pub fn specs_for_role(role: &Role) -> Vec<ToolSpec> {
                     "content": { "type": "string" }
                 },
                 "required": ["path", "content"]
+            }),
+        });
+        out.push(ToolSpec {
+            name: "fs_edit".into(),
+            description: "Replace an exact string in a file with new text (a surgical patch). \
+                          old_string must match exactly once.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string" },
+                    "old_string": { "type": "string" },
+                    "new_string": { "type": "string" }
+                },
+                "required": ["path", "old_string", "new_string"]
             }),
         });
     }
@@ -126,6 +154,23 @@ pub async fn execute(root: PathBuf, role: Role, name: String, input: Value) -> a
             lines.sort();
             Ok(cap(lines.join("\n")))
         }
+        "grep" => {
+            let query = input["query"].as_str().unwrap_or_default();
+            if query.is_empty() { anyhow::bail!("empty query"); }
+            let rel = input["path"].as_str().unwrap_or(".");
+            let base = resolve(&root, rel)?;
+            let out = tokio::process::Command::new("grep")
+                .args(["-rIn", "--max-count=5", query])
+                .arg(&base)
+                .output()
+                .await
+                .map_err(|e| anyhow::anyhow!("grep: {e}"))?;
+            let mut s = String::from_utf8_lossy(&out.stdout).into_owned();
+            // strip the workspace prefix for readability
+            s = s.replace(&format!("{}/", root.display()), "");
+            if s.trim().is_empty() { s = "(no matches)".into(); }
+            Ok(cap(s))
+        }
         "fs_write" => {
             if !perm_allows(role.permissions.fs_write.as_ref(), true) {
                 anyhow::bail!("fs_write denied for role '{}' (set permissions.fs_write: allow)", role.name);
@@ -137,6 +182,25 @@ pub async fn execute(root: PathBuf, role: Role, name: String, input: Value) -> a
             tokio::fs::write(&p, content).await
                 .map_err(|e| anyhow::anyhow!("write {}: {e}", p.display()))?;
             Ok(format!("wrote {} bytes to {}", content.len(), rel))
+        }
+        "fs_edit" => {
+            if !perm_allows(role.permissions.fs_write.as_ref(), true) {
+                anyhow::bail!("fs_edit denied for role '{}' (set permissions.fs_write: allow)", role.name);
+            }
+            let rel = input["path"].as_str().unwrap_or_default();
+            let old = input["old_string"].as_str().unwrap_or_default();
+            let new = input["new_string"].as_str().unwrap_or_default();
+            if old.is_empty() { anyhow::bail!("old_string required"); }
+            let p = resolve(&root, rel)?;
+            let body = tokio::fs::read_to_string(&p).await
+                .map_err(|e| anyhow::anyhow!("read {}: {e}", p.display()))?;
+            let count = body.matches(old).count();
+            if count == 0 { anyhow::bail!("old_string not found in {rel}"); }
+            if count > 1 { anyhow::bail!("old_string matches {count} times in {rel}; make it unique"); }
+            let patched = body.replacen(old, new, 1);
+            tokio::fs::write(&p, &patched).await
+                .map_err(|e| anyhow::anyhow!("write {}: {e}", p.display()))?;
+            Ok(format!("edited {rel} (-{} +{} bytes)", old.len(), new.len()))
         }
         "shell" => {
             if !perm_allows(role.permissions.exec.as_ref(), true) {

@@ -135,6 +135,12 @@ struct AssistantPane: View {
                 HStack(spacing: 6) {
                     Circle().fill(AtelierTheme.roleColor(for: role.name)).frame(width: 7, height: 7)
                     Text(role.name).font(.headline)
+                    if model.isStreaming {
+                        HStack(spacing: 4) {
+                            ProgressView().scaleEffect(0.45).frame(width: 12, height: 12)
+                            Text("working").font(.system(size: 10)).foregroundStyle(.orange)
+                        }
+                    }
                 }
                 Text(role.description_p).font(.caption).foregroundStyle(AtelierTheme.dim).lineLimit(1)
             }
