@@ -57,6 +57,10 @@ service Atelier {
   // 2) Caller picks a parent dir; daemon creates <parent>/<slug>/ + writes
   //    .atelier/roles and opens it as a workspace.
   rpc ScaffoldProject(ScaffoldProjectRequest) returns (ScaffoldProjectResponse);
+
+  // Inter-agent event bus.
+  rpc PublishEvent(PublishEventRequest) returns (Event);
+  rpc ListEvents(ListEventsRequest) returns (EventList);
 }
 
 message Empty {}
@@ -317,6 +321,33 @@ message ScaffoldProjectResponse {
   Workspace workspace      = 1;
   repeated string written_paths = 2;
 }
+
+// --- Event bus ---
+
+message Event {
+  int64  id              = 1;
+  string workspace_id    = 2;
+  string from_role       = 3;
+  string topic           = 4;
+  string summary         = 5;
+  int64  created_unix_ms = 6;
+}
+
+message PublishEventRequest {
+  string workspace_id = 1;
+  string from_role    = 2;
+  string topic        = 3;
+  string summary      = 4;
+}
+
+message ListEventsRequest {
+  string workspace_id    = 1;
+  repeated string topics = 2;  // empty = all
+  int64  after_id        = 3;  // 0 = from start
+  int32  limit           = 4;  // 0 = default 50
+}
+
+message EventList { repeated Event items = 1; }
 
 message RoleChatRequest {
   string role_name = 1;

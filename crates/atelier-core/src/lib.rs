@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 pub mod db;
 pub mod pty;
+pub mod skills;
 pub mod tools;
 pub mod workspace;
 

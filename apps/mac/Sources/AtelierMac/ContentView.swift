@@ -225,7 +225,7 @@ struct WelcomeView: View {
                 Spacer(minLength: 0)
             }
             .padding(20)
-            .frame(maxWidth: .infinity, minHeight: 170, alignment: .topLeading)
+            .frame(maxWidth: .infinity, minHeight: 150, maxHeight: 180, alignment: .topLeading)
             .background(AtelierTheme.panel)
             .overlay(
                 RoundedRectangle(cornerRadius: 12)
@@ -253,18 +253,27 @@ struct WorkspaceDetailView: View {
     @State private var applyInFlight = false
     @State private var applyResult: String? = nil
     @State private var terminalsLoaded = false
+    @State private var showActivity = true
 
     var body: some View {
-        VStack(spacing: 0) {
-            header
-            Divider().overlay(AtelierTheme.border)
-            switch mode {
-            case .assistants:
-                AssistantsGrid(workspaceID: ws.id, roles: roles, focus: selectedRole?.name)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(AtelierTheme.bg)
-            case .terminals:
-                if grid.sessions.isEmpty { empty } else { terminals }
+        HStack(spacing: 0) {
+            VStack(spacing: 0) {
+                header
+                Divider().overlay(AtelierTheme.border)
+                switch mode {
+                case .assistants:
+                    AssistantsGrid(workspaceID: ws.id, roles: roles, focus: selectedRole?.name)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .background(AtelierTheme.bg)
+                case .terminals:
+                    if grid.sessions.isEmpty { empty } else { terminals }
+                }
+            }
+            .frame(maxWidth: .infinity)
+            if showActivity {
+                Divider().overlay(AtelierTheme.border)
+                ActivityFeed(workspaceID: ws.id)
+                    .frame(width: 300)
             }
         }
         .background(AtelierTheme.bg)
@@ -288,6 +297,10 @@ struct WorkspaceDetailView: View {
                 }
                 Spacer()
                 modePicker
+                toolbarButton(showActivity ? "Hide Activity" : "Activity",
+                              systemImage: "dot.radiowaves.left.and.right") {
+                    showActivity.toggle()
+                }
                 toolbarButton("Apply Team", systemImage: "person.3.sequence") {
                     showApplyTeam = true
                 }

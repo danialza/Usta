@@ -202,6 +202,23 @@ final class AtelierClientModel: ObservableObject {
         let closure: @MainActor (String) -> Void
     }
 
+    // --- Event bus ---
+
+    func listEvents(workspaceID: String, afterID: Int64 = 0, limit: Int32 = 50) async -> [Atelier_V1_Event] {
+        guard let stub else { return [] }
+        do {
+            let r = try await stub.listEvents(.with {
+                $0.workspaceID = workspaceID
+                $0.afterID = afterID
+                $0.limit = limit
+            })
+            return r.items
+        } catch {
+            self.lastError = "events: \(error)"
+            return []
+        }
+    }
+
     // --- New project ---
 
     func proposeProject(idea: String, provider: String = "anthropic", model: String = "claude-sonnet-4-6") async -> Atelier_V1_ProjectProposal? {

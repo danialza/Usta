@@ -77,6 +77,18 @@ CREATE TABLE IF NOT EXISTS chunks (
 
 CREATE INDEX IF NOT EXISTS idx_chunks_ws ON chunks(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_chunks_path ON chunks(workspace_id, path);
+
+CREATE TABLE IF NOT EXISTS events (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    workspace_id    TEXT NOT NULL,
+    from_role       TEXT NOT NULL,
+    topic           TEXT NOT NULL,
+    summary         TEXT NOT NULL,
+    created_unix_ms INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_events_ws ON events(workspace_id, id);
+CREATE INDEX IF NOT EXISTS idx_events_topic ON events(workspace_id, topic);
 "#;
 
 #[derive(Debug, Clone)]
@@ -85,6 +97,16 @@ pub struct WorkspaceRow {
     pub path: String,
     pub name: String,
     pub opened_unix_ms: i64,
+}
+
+#[derive(Debug, Clone)]
+pub struct EventRow {
+    pub id: i64,
+    pub workspace_id: String,
+    pub from_role: String,
+    pub topic: String,
+    pub summary: String,
+    pub created_unix_ms: i64,
 }
 
 #[derive(Debug, Clone)]
@@ -292,6 +314,75 @@ impl Db {
             .into_iter()
             .map(|(s, p, st, en, c)| (p, st, en, c, s))
             .collect())
+    }
+
+    // --- Events (inter-agent bus) ---
+
+    pub fn insert_event(
+        &self,
+        workspace_id: &str,
+        from_role: &str,
+        topic: &str,
+        summary: &str,
+        now: i64,
+    ) -> rusqlite::Result<i64> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO events (workspace_id, from_role, topic, summary, created_unix_ms)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![workspace_id, from_role, topic, summary, now],
+        )?;
+        Ok(conn.last_insert_rowid())
+    }
+
+    /// Recent events for a workspace, optionally filtered to a set of topics.
+    /// `after_id` returns only events with id > after_id (0 = all). Newest last.
+    pub fn list_events(
+        &self,
+        workspace_id: &str,
+        topics: &[String],
+        after_id: i64,
+        limit: usize,
+    ) -> rusqlite::Result<Vec<EventRow>> {
+        let conn = self.conn.lock().unwrap();
+        let map = |r: &rusqlite::Row| {
+            Ok(EventRow {
+                id: r.get(0)?,
+                workspace_id: r.get(1)?,
+                from_role: r.get(2)?,
+                topic: r.get(3)?,
+                summary: r.get(4)?,
+                created_unix_ms: r.get(5)?,
+            })
+        };
+        let mut rows: Vec<EventRow> = Vec::new();
+        if topics.is_empty() {
+            let mut stmt = conn.prepare(
+                "SELECT id, workspace_id, from_role, topic, summary, created_unix_ms
+                 FROM events WHERE workspace_id = ?1 AND id > ?2
+                 ORDER BY id DESC LIMIT ?3",
+            )?;
+            let it = stmt.query_map(params![workspace_id, after_id, limit as i64], map)?;
+            for row in it {
+                rows.push(row?);
+            }
+        } else {
+            let placeholders = topics.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+            let sql = format!(
+                "SELECT id, workspace_id, from_role, topic, summary, created_unix_ms
+                 FROM events WHERE workspace_id = ?1 AND id > ?2 AND topic IN ({placeholders})
+                 ORDER BY id DESC LIMIT {limit}"
+            );
+            let mut stmt = conn.prepare(&sql)?;
+            let mut params_vec: Vec<&dyn rusqlite::ToSql> = vec![&workspace_id, &after_id];
+            for t in topics { params_vec.push(t); }
+            let it = stmt.query_map(params_vec.as_slice(), map)?;
+            for row in it {
+                rows.push(row?);
+            }
+        }
+        rows.reverse(); // newest last
+        Ok(rows)
     }
 
     pub fn insert_chat(

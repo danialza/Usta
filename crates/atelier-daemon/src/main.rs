@@ -8,15 +8,15 @@ use atelier_core::{
 use atelier_proto::v1::{
     atelier_server::{Atelier, AtelierServer},
     AnalyzeRequest, ApplyTeamRequest, ApplyTeamResponse, ChatRequest as PbChatReq, ChatToken,
-    CloseTerminalRequest, CreateTerminalRequest, Empty, IndexProgress as PbIndexProgress,
-    IndexRequest, ListRolesRequest, ListTerminalsRequest, ListToolsRequest,
-    OpenWorkspaceRequest, PingRequest, PingResponse, ProjectProposal as PbProjectProposal,
-    ProposeProjectRequest, ProposedRole as PbProposedRole, ProviderInfo, ProviderList,
-    PtyClientMsg, PtyServerMsg, Role as PbRole, RoleChatRequest, RoleList,
-    ScaffoldProjectRequest, ScaffoldProjectResponse, SearchHit as PbSearchHit, SearchRequest,
-    SearchResults, StackTag as PbStackTag, TeamChatEvent, TeamChatRequest,
-    Terminal as PbTerminal, TerminalList, Tool as PbTool, ToolList, Workspace,
-    WorkspaceAnalysis as PbAnalysis, WorkspaceList,
+    CloseTerminalRequest, CreateTerminalRequest, Empty, Event as PbEvent, EventList,
+    IndexProgress as PbIndexProgress, IndexRequest, ListEventsRequest, ListRolesRequest,
+    ListTerminalsRequest, ListToolsRequest, OpenWorkspaceRequest, PingRequest, PingResponse,
+    ProjectProposal as PbProjectProposal, ProposeProjectRequest, ProposedRole as PbProposedRole,
+    ProviderInfo, ProviderList, PtyClientMsg, PublishEventRequest, PtyServerMsg, Role as PbRole,
+    RoleChatRequest, RoleList, ScaffoldProjectRequest, ScaffoldProjectResponse,
+    SearchHit as PbSearchHit, SearchRequest, SearchResults, StackTag as PbStackTag,
+    TeamChatEvent, TeamChatRequest, Terminal as PbTerminal, TerminalList, Tool as PbTool,
+    ToolList, Workspace, WorkspaceAnalysis as PbAnalysis, WorkspaceList,
 };
 use atelier_roles::{Role as RoleDef, RoleLibrary};
 use atelier_providers::{ChatDelta, ChatMessage, ChatRequest, ProviderRegistry};
@@ -114,6 +114,26 @@ fn parse_mentions(msg: &str) -> Vec<String> {
         } else {
             i += 1;
         }
+    }
+    out
+}
+
+/// Extract `[[handoff: topic | summary]]` markers from assistant text.
+fn parse_handoffs(text: &str) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    let mut rest = text;
+    while let Some(start) = rest.find("[[handoff:") {
+        let after = &rest[start + "[[handoff:".len()..];
+        let Some(end) = after.find("]]") else { break };
+        let inner = &after[..end];
+        if let Some((topic, summary)) = inner.split_once('|') {
+            let topic = topic.trim().to_string();
+            let summary = summary.trim().to_string();
+            if !topic.is_empty() && !summary.is_empty() {
+                out.push((topic, summary));
+            }
+        }
+        rest = &after[end + 2..];
     }
     out
 }
@@ -614,9 +634,41 @@ impl Atelier for AtelierSvc {
             .get(&provider_name)
             .ok_or_else(|| Status::not_found(format!("unknown provider '{provider_name}'")))?;
 
+        // Build augmented system prompt: role prompt + skills + subscribed
+        // team activity + handoff instructions.
+        let mut system = role.system_prompt.clone();
+        system.push_str(&atelier_core::skills::render_block(&role.claude_skills));
+
+        if !r.workspace_id.is_empty() && !role.handoff_topics.subscribes.is_empty() {
+            let db = self.db.clone();
+            let ws = r.workspace_id.clone();
+            let topics = role.handoff_topics.subscribes.clone();
+            let events = tokio::task::spawn_blocking(move || {
+                db.list_events(&ws, &topics, 0, 12)
+            })
+            .await
+            .unwrap()
+            .unwrap_or_default();
+            if !events.is_empty() {
+                system.push_str("\n\n## Recent team activity (you subscribe to these)\n");
+                for e in &events {
+                    system.push_str(&format!("- @{} [{}]: {}\n", e.from_role, e.topic, e.summary));
+                }
+            }
+        }
+
+        if !role.handoff_topics.publishes.is_empty() {
+            system.push_str(&format!(
+                "\n\n## Handoffs\nWhen you complete work the rest of the team must know about, \
+                 end your reply with a line of the form:\n[[handoff: <topic> | <one-line summary>]]\n\
+                 Use one of these topics you own: {}\n",
+                role.handoff_topics.publishes.join(", ")
+            ));
+        }
+
         let req = ChatRequest {
             model,
-            system: Some(role.system_prompt.clone()),
+            system: Some(system),
             messages: vec![ChatMessage { role: "user".into(), content: r.user_msg }],
             max_tokens: if r.max_tokens > 0 { Some(r.max_tokens as u32) } else { Some(1024) },
         };
@@ -626,14 +678,34 @@ impl Atelier for AtelierSvc {
             Err(e) => return Err(Status::internal(e.to_string())),
         };
 
+        let db = self.db.clone();
+        let ws_id = r.workspace_id.clone();
+        let role_name = role.name.clone();
+        let allowed_pub = role.handoff_topics.publishes.clone();
+
         let mapped = async_stream::stream! {
             let mut s = inner;
+            let mut full = String::new();
             while let Some(item) = s.next().await {
                 match item {
                     Ok(ChatDelta::Text(t)) => {
+                        full.push_str(&t);
                         yield Ok(ChatToken { text: t, done: false, stop_reason: String::new(), error: String::new() });
                     }
                     Ok(ChatDelta::Done { stop_reason }) => {
+                        // Parse + publish handoff markers before signalling done.
+                        if !ws_id.is_empty() {
+                            for (topic, summary) in parse_handoffs(&full) {
+                                if allowed_pub.is_empty() || allowed_pub.iter().any(|t| t == &topic) {
+                                    let db2 = db.clone();
+                                    let ws2 = ws_id.clone();
+                                    let from = role_name.clone();
+                                    let _ = tokio::task::spawn_blocking(move || {
+                                        db2.insert_event(&ws2, &from, &topic, &summary, now_ms())
+                                    }).await;
+                                }
+                            }
+                        }
                         yield Ok(ChatToken { text: String::new(), done: true, stop_reason, error: String::new() });
                         return;
                     }
@@ -1064,6 +1136,61 @@ impl Atelier for AtelierSvc {
         Ok(Response::new(ScaffoldProjectResponse {
             workspace: Some(ws_to_pb(&row)),
             written_paths: written,
+        }))
+    }
+
+    async fn publish_event(
+        &self,
+        req: Request<PublishEventRequest>,
+    ) -> Result<Response<PbEvent>, Status> {
+        let r = req.into_inner();
+        let db = self.db.clone();
+        let now = now_ms();
+        let (ws, from, topic, summary) = (r.workspace_id, r.from_role, r.topic, r.summary);
+        if topic.trim().is_empty() {
+            return Err(Status::invalid_argument("topic required"));
+        }
+        let (ws2, from2, topic2, summary2) = (ws.clone(), from.clone(), topic.clone(), summary.clone());
+        let id = tokio::task::spawn_blocking(move || {
+            db.insert_event(&ws2, &from2, &topic2, &summary2, now)
+        })
+        .await
+        .unwrap()
+        .map_err(|e| Status::internal(e.to_string()))?;
+        Ok(Response::new(PbEvent {
+            id,
+            workspace_id: ws,
+            from_role: from,
+            topic,
+            summary,
+            created_unix_ms: now,
+        }))
+    }
+
+    async fn list_events(
+        &self,
+        req: Request<ListEventsRequest>,
+    ) -> Result<Response<EventList>, Status> {
+        let r = req.into_inner();
+        let limit = if r.limit > 0 { r.limit as usize } else { 50 };
+        let db = self.db.clone();
+        let (ws, topics, after) = (r.workspace_id, r.topics, r.after_id);
+        let rows = tokio::task::spawn_blocking(move || db.list_events(&ws, &topics, after, limit))
+            .await
+            .unwrap()
+            .map_err(|e| Status::internal(e.to_string()))?;
+        Ok(Response::new(EventList {
+            items: rows
+                .into_iter()
+                .map(|e| PbEvent {
+                    id: e.id,
+                    workspace_id: e.workspace_id,
+                    from_role: e.from_role,
+                    topic: e.topic,
+                    summary: e.summary,
+                    created_unix_ms: e.created_unix_ms,
+                })
+                .collect(),
         }))
     }
 
