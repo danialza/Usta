@@ -10,11 +10,13 @@ use atelier_proto::v1::{
     AnalyzeRequest, ApplyTeamRequest, ApplyTeamResponse, ChatRequest as PbChatReq, ChatToken,
     CloseTerminalRequest, CreateTerminalRequest, Empty, IndexProgress as PbIndexProgress,
     IndexRequest, ListRolesRequest, ListTerminalsRequest, ListToolsRequest,
-    OpenWorkspaceRequest, PingRequest, PingResponse, ProposedRole as PbProposedRole,
-    ProviderInfo, ProviderList, PtyClientMsg, PtyServerMsg, Role as PbRole, RoleChatRequest,
-    RoleList, SearchHit as PbSearchHit, SearchRequest, SearchResults, StackTag as PbStackTag,
-    TeamChatEvent, TeamChatRequest, Terminal as PbTerminal, TerminalList, Tool as PbTool,
-    ToolList, Workspace, WorkspaceAnalysis as PbAnalysis, WorkspaceList,
+    OpenWorkspaceRequest, PingRequest, PingResponse, ProjectProposal as PbProjectProposal,
+    ProposeProjectRequest, ProposedRole as PbProposedRole, ProviderInfo, ProviderList,
+    PtyClientMsg, PtyServerMsg, Role as PbRole, RoleChatRequest, RoleList,
+    ScaffoldProjectRequest, ScaffoldProjectResponse, SearchHit as PbSearchHit, SearchRequest,
+    SearchResults, StackTag as PbStackTag, TeamChatEvent, TeamChatRequest,
+    Terminal as PbTerminal, TerminalList, Tool as PbTool, ToolList, Workspace,
+    WorkspaceAnalysis as PbAnalysis, WorkspaceList,
 };
 use atelier_roles::{Role as RoleDef, RoleLibrary};
 use atelier_providers::{ChatDelta, ChatMessage, ChatRequest, ProviderRegistry};
@@ -139,6 +141,53 @@ fn ws_to_pb(w: &WorkspaceRow) -> Workspace {
         path: w.path.clone(),
         name: w.name.clone(),
         opened_unix_ms: w.opened_unix_ms,
+    }
+}
+
+fn proposal_to_pb(p: atelier_pm::ProjectProposal) -> PbProjectProposal {
+    PbProjectProposal {
+        project_name: p.project_name,
+        project_slug: p.project_slug,
+        summary: p.summary,
+        first_steps: p.first_steps,
+        stack: p.stack.into_iter().map(|t| PbStackTag { name: t.name, category: t.category }).collect(),
+        team: p.team.into_iter().map(|r| PbProposedRole {
+            name: r.name,
+            emoji: r.emoji,
+            why: r.why,
+            recommended_model: r.recommended_model,
+            tools: r.tools,
+            system_prompt: r.system_prompt,
+            recommended_provider: r.recommended_provider,
+            claude_skills: r.claude_skills,
+            publishes: r.publishes,
+            subscribes: r.subscribes,
+        }).collect(),
+    }
+}
+
+fn role_from_proposed(pr: &PbProposedRole, roles_dir: &std::path::Path) -> RoleDef {
+    let prompt = if pr.system_prompt.trim().is_empty() {
+        format!("You are the {} specialist on this project. {}", pr.name, pr.why)
+    } else {
+        pr.system_prompt.clone()
+    };
+    RoleDef {
+        name: pr.name.clone(),
+        emoji: pr.emoji.clone(),
+        description: pr.why.clone(),
+        system_prompt: prompt,
+        default_provider: if pr.recommended_provider.is_empty() { "anthropic".into() } else { pr.recommended_provider.clone() },
+        default_model: pr.recommended_model.clone(),
+        allowed_tools: pr.tools.clone(),
+        permissions: Default::default(),
+        claude_skills: pr.claude_skills.clone(),
+        handoff_topics: atelier_roles::HandoffTopics {
+            publishes: pr.publishes.clone(),
+            subscribes: pr.subscribes.clone(),
+        },
+        source: roles_dir.join(format!("{}.yaml", pr.name)),
+        scope: atelier_roles::RoleScope::Workspace,
     }
 }
 
@@ -536,6 +585,9 @@ impl Atelier for AtelierSvc {
                 allowed_tools: r.allowed_tools.clone(),
                 source_path: r.source.to_string_lossy().into_owned(),
                 scope: r.scope.as_str().to_string(),
+                claude_skills: r.claude_skills.clone(),
+                handoff_publishes: r.handoff_topics.publishes.clone(),
+                handoff_subscribes: r.handoff_topics.subscribes.clone(),
             })
             .collect();
         Ok(Response::new(RoleList { items }))
@@ -648,6 +700,9 @@ impl Atelier for AtelierSvc {
                     tools: r.tools,
                     system_prompt: r.system_prompt,
                     recommended_provider: r.recommended_provider,
+                    claude_skills: r.claude_skills,
+                    publishes: r.publishes,
+                    subscribes: r.subscribes,
                 })
                 .collect(),
         }))
@@ -689,34 +744,22 @@ impl Atelier for AtelierSvc {
             .map_err(|e| Status::internal(format!("mkdir {}: {e}", roles_dir.display())))?;
 
         let mut written = Vec::new();
-        // Snapshot library to mutate locally (we keep daemon's Arc immutable).
         let mut local = (*self.roles).clone();
         for pr in &analysis.team {
-            let prompt = if pr.system_prompt.trim().is_empty() {
-                // Fallback if PM omitted it.
-                format!(
-                    "You are the {} specialist on this project. {}",
-                    pr.name, pr.why
-                )
-            } else {
-                pr.system_prompt.clone()
-            };
-            let role = RoleDef {
+            // Convert PM ProposedRole -> proto ProposedRole so we can reuse the helper.
+            let pb_pr = PbProposedRole {
                 name: pr.name.clone(),
                 emoji: pr.emoji.clone(),
-                description: pr.why.clone(),
-                system_prompt: prompt,
-                default_provider: if pr.recommended_provider.is_empty() {
-                    "anthropic".into()
-                } else {
-                    pr.recommended_provider.clone()
-                },
-                default_model: pr.recommended_model.clone(),
-                allowed_tools: pr.tools.clone(),
-                permissions: Default::default(),
-                source: roles_dir.join(format!("{}.yaml", pr.name)),
-                scope: atelier_roles::RoleScope::Workspace,
+                why: pr.why.clone(),
+                recommended_model: pr.recommended_model.clone(),
+                tools: pr.tools.clone(),
+                system_prompt: pr.system_prompt.clone(),
+                recommended_provider: pr.recommended_provider.clone(),
+                claude_skills: pr.claude_skills.clone(),
+                publishes: pr.publishes.clone(),
+                subscribes: pr.subscribes.clone(),
             };
+            let role = role_from_proposed(&pb_pr, &roles_dir);
             let path = local
                 .write_role(&roles_dir, &role)
                 .map_err(|e| Status::internal(format!("write role: {e}")))?;
@@ -742,6 +785,9 @@ impl Atelier for AtelierSvc {
                         tools: r.tools,
                         system_prompt: r.system_prompt,
                         recommended_provider: r.recommended_provider,
+                        claude_skills: r.claude_skills,
+                        publishes: r.publishes,
+                        subscribes: r.subscribes,
                     })
                     .collect(),
             }),
@@ -909,6 +955,116 @@ impl Atelier for AtelierSvc {
                 .collect()
         };
         Ok(Response::new(ToolList { items }))
+    }
+
+    async fn propose_project(
+        &self,
+        req: Request<ProposeProjectRequest>,
+    ) -> Result<Response<PbProjectProposal>, Status> {
+        let r = req.into_inner();
+        let provider_name = if r.provider.is_empty() { "anthropic".into() } else { r.provider };
+        let model = if r.model.is_empty() { "claude-sonnet-4-6".into() } else { r.model };
+        let provider = self
+            .providers
+            .get(&provider_name)
+            .ok_or_else(|| Status::not_found(format!("unknown provider '{provider_name}'")))?;
+
+        let pm = atelier_pm::Pm::new(provider, model);
+        let proposal = pm
+            .propose_from_idea(&r.idea)
+            .await
+            .map_err(|e| Status::internal(format!("pm propose: {e}")))?;
+
+        Ok(Response::new(proposal_to_pb(proposal)))
+    }
+
+    async fn scaffold_project(
+        &self,
+        req: Request<ScaffoldProjectRequest>,
+    ) -> Result<Response<ScaffoldProjectResponse>, Status> {
+        let r = req.into_inner();
+        let proposal = r
+            .proposal
+            .ok_or_else(|| Status::invalid_argument("missing proposal"))?;
+        if proposal.project_slug.trim().is_empty() {
+            return Err(Status::invalid_argument("proposal.project_slug required"));
+        }
+        let parent = std::path::PathBuf::from(&r.parent_dir);
+        if !parent.is_dir() {
+            return Err(Status::invalid_argument(format!(
+                "parent_dir not a directory: {}",
+                parent.display()
+            )));
+        }
+        let project_dir = parent.join(&proposal.project_slug);
+        std::fs::create_dir_all(&project_dir)
+            .map_err(|e| Status::internal(format!("mkdir {}: {e}", project_dir.display())))?;
+
+        // Drop a README so the folder isn't empty.
+        let readme = project_dir.join("README.md");
+        if !readme.exists() {
+            let mut body = String::new();
+            body.push_str(&format!("# {}\n\n", proposal.project_name));
+            body.push_str(&format!("{}\n\n", proposal.summary));
+            if !proposal.first_steps.is_empty() {
+                body.push_str("## First steps\n\n");
+                body.push_str(&proposal.first_steps);
+                body.push('\n');
+            }
+            let _ = std::fs::write(&readme, body);
+        }
+
+        // Materialize roles.
+        let roles_dir = project_dir.join(".atelier").join("roles");
+        std::fs::create_dir_all(&roles_dir)
+            .map_err(|e| Status::internal(format!("mkdir {}: {e}", roles_dir.display())))?;
+        let mut local = (*self.roles).clone();
+        let mut written = Vec::new();
+        for pr in &proposal.team {
+            let role = role_from_proposed(pr, &roles_dir);
+            let path = local
+                .write_role(&roles_dir, &role)
+                .map_err(|e| Status::internal(format!("write role: {e}")))?;
+            written.push(path.to_string_lossy().into_owned());
+        }
+
+        // Open as workspace.
+        let db = self.db.clone();
+        let project_str = project_dir.to_string_lossy().into_owned();
+        let project_str_clone = project_str.clone();
+        let existing = tokio::task::spawn_blocking(move || db.get_workspace_by_path(&project_str_clone))
+            .await
+            .unwrap()
+            .map_err(|e| Status::internal(e.to_string()))?;
+        let row = if let Some(mut r) = existing {
+            r.opened_unix_ms = now_ms();
+            let db = self.db.clone();
+            let r2 = r.clone();
+            tokio::task::spawn_blocking(move || db.upsert_workspace(&r2))
+                .await
+                .unwrap()
+                .map_err(|e| Status::internal(e.to_string()))?;
+            r
+        } else {
+            let row = atelier_core::db::WorkspaceRow {
+                id: format!("ws_{}", uuid::Uuid::new_v4().simple()),
+                path: project_str,
+                name: proposal.project_name.clone(),
+                opened_unix_ms: now_ms(),
+            };
+            let db = self.db.clone();
+            let row_clone = row.clone();
+            tokio::task::spawn_blocking(move || db.upsert_workspace(&row_clone))
+                .await
+                .unwrap()
+                .map_err(|e| Status::internal(e.to_string()))?;
+            row
+        };
+
+        Ok(Response::new(ScaffoldProjectResponse {
+            workspace: Some(ws_to_pb(&row)),
+            written_paths: written,
+        }))
     }
 
     async fn search_workspace(

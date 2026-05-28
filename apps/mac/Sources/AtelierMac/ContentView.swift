@@ -5,17 +5,25 @@ import AtelierProto
 struct ContentView: View {
     @EnvironmentObject var client: AtelierClientModel
     @State private var selection: Atelier_V1_Workspace?
+    @State private var showNewProject = false
 
     var body: some View {
         Group {
             if client.workspaces.isEmpty {
-                WelcomeView(onOpen: { Task { await openFolder() } })
+                WelcomeView(
+                    onOpen: { Task { await openFolder() } },
+                    onNew: { showNewProject = true }
+                )
             } else {
                 NavigationSplitView { sidebar } detail: { detail }
             }
         }
         .preferredColorScheme(.dark)
         .background(AtelierTheme.bg)
+        .sheet(isPresented: $showNewProject) {
+            NewProjectWizard(onOpened: { ws in selection = ws })
+                .environmentObject(client)
+        }
     }
 
     private var sidebar: some View {
@@ -63,13 +71,15 @@ struct ContentView: View {
     }
 
     private var openButton: some View {
-        Button {
-            Task { await openFolder() }
+        Menu {
+            Button { showNewProject = true } label: { Label("New Project…", systemImage: "sparkles") }
+            Button { Task { await openFolder() } } label: { Label("Open Folder…", systemImage: "folder") }
         } label: {
-            Image(systemName: "plus")
-                .font(.caption.weight(.bold))
+            Image(systemName: "plus").font(.caption.weight(.bold))
         }
-        .buttonStyle(.plain)
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
         .foregroundStyle(AtelierTheme.dim)
     }
 
@@ -159,6 +169,7 @@ struct WorkspaceRow: View {
 
 struct WelcomeView: View {
     var onOpen: () -> Void
+    var onNew: () -> Void = {}
 
     var body: some View {
         ZStack {
@@ -191,9 +202,8 @@ struct WelcomeView: View {
                     welcomeCard(
                         icon: "sparkles",
                         title: "Start From Scratch",
-                        desc: "(coming soon) Describe what you want to build, PM agent picks a stack, scaffolds the project, spawns the team.",
-                        disabled: true,
-                        action: {}
+                        desc: "Describe what you want to build. PM agent picks a stack, scaffolds the project, and spawns the assistant team.",
+                        action: onNew
                     )
                 }
                 .frame(maxWidth: 720)
@@ -230,38 +240,35 @@ struct WelcomeView: View {
     }
 }
 
+enum DetailMode { case assistants, terminals }
+
 struct WorkspaceDetailView: View {
     let ws: Atelier_V1_Workspace
     @EnvironmentObject var client: AtelierClientModel
     @StateObject private var grid = TerminalGridModel()
     @State private var roles: [Atelier_V1_Role] = []
-    @State private var selectedRole: Atelier_V1_Role? = nil
+    @State private var selectedRole: Atelier_V1_Role? = nil   // focus a single assistant
+    @State private var mode: DetailMode = .assistants
     @State private var showApplyTeam = false
     @State private var applyInFlight = false
     @State private var applyResult: String? = nil
+    @State private var terminalsLoaded = false
 
     var body: some View {
-        HStack(spacing: 0) {
-            VStack(spacing: 0) {
-                header
-                Divider().overlay(AtelierTheme.border)
-                if grid.sessions.isEmpty {
-                    empty
-                } else {
-                    terminals
-                }
-            }
-            .frame(maxWidth: .infinity)
-            .background(AtelierTheme.bg)
-            if let role = selectedRole {
-                Divider().overlay(AtelierTheme.border)
-                ChatPane(workspaceID: ws.id, role: role)
-                    .frame(minWidth: 380, idealWidth: 440)
-                    .background(AtelierTheme.panel)
+        VStack(spacing: 0) {
+            header
+            Divider().overlay(AtelierTheme.border)
+            switch mode {
+            case .assistants:
+                AssistantsGrid(workspaceID: ws.id, roles: roles, focus: selectedRole?.name)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(AtelierTheme.bg)
+            case .terminals:
+                if grid.sessions.isEmpty { empty } else { terminals }
             }
         }
+        .background(AtelierTheme.bg)
         .task(id: ws.id) {
-            await grid.load(workspaceID: ws.id, client: client)
             roles = await client.listRoles(workspaceID: ws.id)
         }
         .sheet(isPresented: $showApplyTeam) { applyTeamSheet }
@@ -280,16 +287,20 @@ struct WorkspaceDetailView: View {
                         .textSelection(.enabled).lineLimit(1)
                 }
                 Spacer()
+                modePicker
                 toolbarButton("Apply Team", systemImage: "person.3.sequence") {
                     showApplyTeam = true
                 }
-                toolbarButton("New Terminal", systemImage: "plus.rectangle.on.rectangle") {
-                    Task { await grid.newTerminal(workspaceID: ws.id, client: client) }
+                if mode == .terminals {
+                    toolbarButton("New Terminal", systemImage: "plus.rectangle.on.rectangle") {
+                        Task { await grid.newTerminal(workspaceID: ws.id, client: client) }
+                    }
                 }
             }
-            if !roles.isEmpty {
+            if !roles.isEmpty && mode == .assistants {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 6) {
+                        RoleChipAll(selected: selectedRole == nil) { selectedRole = nil }
                         ForEach(roles, id: \.name) { r in
                             RoleChip(role: r, selected: selectedRole?.name == r.name) {
                                 if selectedRole?.name == r.name { selectedRole = nil }
@@ -301,6 +312,21 @@ struct WorkspaceDetailView: View {
             }
         }
         .padding(14)
+    }
+
+    private var modePicker: some View {
+        Picker("", selection: $mode) {
+            Image(systemName: "person.3.sequence").tag(DetailMode.assistants)
+            Image(systemName: "terminal").tag(DetailMode.terminals)
+        }
+        .pickerStyle(.segmented)
+        .fixedSize()
+        .onChange(of: mode) { _, newMode in
+            if newMode == .terminals && !terminalsLoaded {
+                terminalsLoaded = true
+                Task { await grid.load(workspaceID: ws.id, client: client) }
+            }
+        }
     }
 
     private func toolbarButton(_ title: String, systemImage: String, action: @escaping () -> Void) -> some View {
@@ -386,6 +412,22 @@ struct WorkspaceDetailView: View {
         } else if let e = client.lastError {
             applyResult = e
         }
+    }
+}
+
+struct RoleChipAll: View {
+    let selected: Bool
+    var onTap: () -> Void
+    var body: some View {
+        Button(action: onTap) {
+            Text("All").font(.system(size: 11, weight: .medium))
+                .padding(.horizontal, 12).padding(.vertical, 5)
+                .background(selected ? Color.accentColor.opacity(0.3) : AtelierTheme.panel)
+                .overlay(Capsule().stroke(selected ? Color.accentColor : AtelierTheme.border,
+                                          lineWidth: selected ? 1.2 : 1))
+                .clipShape(Capsule())
+        }
+        .buttonStyle(.plain)
     }
 }
 

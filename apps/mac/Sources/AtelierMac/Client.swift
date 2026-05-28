@@ -202,6 +202,39 @@ final class AtelierClientModel: ObservableObject {
         let closure: @MainActor (String) -> Void
     }
 
+    // --- New project ---
+
+    func proposeProject(idea: String, provider: String = "anthropic", model: String = "claude-sonnet-4-6") async -> Atelier_V1_ProjectProposal? {
+        guard let stub else { return nil }
+        do {
+            let req = Atelier_V1_ProposeProjectRequest.with {
+                $0.idea = idea
+                $0.provider = provider
+                $0.model = model
+            }
+            return try await stub.proposeProject(req)
+        } catch {
+            self.lastError = "propose: \(error)"
+            return nil
+        }
+    }
+
+    func scaffoldProject(proposal: Atelier_V1_ProjectProposal, parentDir: String) async -> Atelier_V1_ScaffoldProjectResponse? {
+        guard let stub else { return nil }
+        do {
+            let req = Atelier_V1_ScaffoldProjectRequest.with {
+                $0.proposal = proposal
+                $0.parentDir = parentDir
+            }
+            let resp = try await stub.scaffoldProject(req)
+            await refreshWorkspaces()
+            return resp
+        } catch {
+            self.lastError = "scaffold: \(error)"
+            return nil
+        }
+    }
+
     func applyTeam(workspaceID: String, provider: String = "anthropic", model: String = "claude-sonnet-4-6") async -> Atelier_V1_ApplyTeamResponse? {
         guard let stub else { return nil }
         do {

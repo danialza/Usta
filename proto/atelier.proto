@@ -50,6 +50,13 @@ service Atelier {
   // Tool catalog. With a role_name, returns only tools that role is
   // allowed to invoke.
   rpc ListTools(ListToolsRequest) returns (ToolList);
+
+  // New-project flow.
+  // 1) PM turns a free-text idea into a full proposal (no fs changes yet).
+  rpc ProposeProject(ProposeProjectRequest) returns (ProjectProposal);
+  // 2) Caller picks a parent dir; daemon creates <parent>/<slug>/ + writes
+  //    .atelier/roles and opens it as a workspace.
+  rpc ScaffoldProject(ScaffoldProjectRequest) returns (ScaffoldProjectResponse);
 }
 
 message Empty {}
@@ -203,6 +210,9 @@ message ProposedRole {
   repeated string tools       = 5;
   string system_prompt        = 6;
   string recommended_provider = 7;
+  repeated string claude_skills = 8;
+  repeated string publishes     = 9;
+  repeated string subscribes    = 10;
 }
 
 message WorkspaceAnalysis {
@@ -222,6 +232,9 @@ message Role {
   repeated string allowed_tools = 6;
   string source_path       = 7;
   string scope             = 8; // "builtin" | "user" | "workspace"
+  repeated string claude_skills      = 9;
+  repeated string handoff_publishes  = 10;
+  repeated string handoff_subscribes = 11;
 }
 
 message ListRolesRequest {
@@ -277,6 +290,33 @@ message ListToolsRequest {
 }
 
 message ToolList { repeated Tool items = 1; }
+
+// --- New project ---
+
+message ProposeProjectRequest {
+  string idea     = 1;
+  string provider = 2; // default "anthropic"
+  string model    = 3; // default "claude-sonnet-4-6"
+}
+
+message ProjectProposal {
+  string project_name           = 1;
+  string project_slug           = 2;
+  string summary                = 3;
+  string first_steps            = 4;
+  repeated StackTag stack       = 5;
+  repeated ProposedRole team    = 6;
+}
+
+message ScaffoldProjectRequest {
+  ProjectProposal proposal = 1;
+  string parent_dir        = 2;
+}
+
+message ScaffoldProjectResponse {
+  Workspace workspace      = 1;
+  repeated string written_paths = 2;
+}
 
 message RoleChatRequest {
   string role_name = 1;

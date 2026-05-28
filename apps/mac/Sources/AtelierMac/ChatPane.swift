@@ -61,7 +61,10 @@ final class ChatPaneModel: ObservableObject {
     }
 }
 
-struct ChatPane: View {
+/// Backwards-compatible alias — the chat surface is the assistant pane.
+typealias ChatPane = AssistantPane
+
+struct AssistantPane: View {
     let workspaceID: String
     let role: Atelier_V1_Role
     @EnvironmentObject var client: AtelierClientModel
@@ -83,26 +86,65 @@ struct ChatPane: View {
     var body: some View {
         VStack(spacing: 0) {
             header
-            Divider()
+            capabilities
+            Divider().overlay(AtelierTheme.border)
             transcript
-            Divider()
+            Divider().overlay(AtelierTheme.border)
             composer
         }
+        .background(AtelierTheme.cell)
         .task { providers = await client.listProviders() }
     }
 
     private var header: some View {
         HStack(spacing: 10) {
-            Text(role.emoji).font(.title2)
+            let emoji = role.emoji.isEmpty
+                ? AtelierTheme.roleEmoji(for: role.name, fallback: "•") : role.emoji
+            Text(emoji).font(.title2)
             VStack(alignment: .leading, spacing: 2) {
-                Text(role.name).font(.headline)
-                Text(role.description_p).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                HStack(spacing: 6) {
+                    Circle().fill(AtelierTheme.roleColor(for: role.name)).frame(width: 7, height: 7)
+                    Text(role.name).font(.headline)
+                }
+                Text(role.description_p).font(.caption).foregroundStyle(AtelierTheme.dim).lineLimit(1)
             }
             Spacer()
             providerPicker
             modelPicker
         }
         .padding(10)
+    }
+
+    @ViewBuilder
+    private var capabilities: some View {
+        let skills = role.claudeSkills
+        let pubs = role.handoffPublishes
+        let subs = role.handoffSubscribes
+        if !skills.isEmpty || !pubs.isEmpty || !subs.isEmpty {
+            HStack(spacing: 6) {
+                ForEach(skills, id: \.self) { s in
+                    tag("skill:\(s)", color: .purple)
+                }
+                ForEach(pubs, id: \.self) { p in
+                    tag("↑\(p)", color: AtelierTheme.roleColor(for: role.name))
+                }
+                ForEach(subs, id: \.self) { s in
+                    tag("↓\(s)", color: AtelierTheme.dim)
+                }
+                Spacer()
+            }
+            .padding(.horizontal, 10)
+            .padding(.bottom, 6)
+        }
+    }
+
+    private func tag(_ text: String, color: Color) -> some View {
+        Text(text)
+            .font(.system(size: 9, weight: .medium))
+            .padding(.horizontal, 6).padding(.vertical, 2)
+            .background(color.opacity(0.18))
+            .foregroundStyle(color)
+            .clipShape(Capsule())
     }
 
     private var providerPicker: some View {

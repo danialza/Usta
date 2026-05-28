@@ -24,6 +24,14 @@ impl Default for Permission {
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct HandoffTopics {
+    #[serde(default)]
+    pub publishes: Vec<String>,
+    #[serde(default)]
+    pub subscribes: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct PermissionPolicy {
     #[serde(default)]
     pub fs_read: Option<Permission>,
@@ -69,6 +77,14 @@ pub struct Role {
     pub allowed_tools: Vec<String>,
     #[serde(default)]
     pub permissions: PermissionPolicy,
+    /// Claude skill identifiers this role should load on first launch.
+    /// Empty for builtins; populated by the PM when generating a team.
+    #[serde(default)]
+    pub claude_skills: Vec<String>,
+    /// Topics this role publishes to / subscribes from on the shared
+    /// workspace event bus (e.g. ["schema.changed", "api.added"]).
+    #[serde(default)]
+    pub handoff_topics: HandoffTopics,
     /// Source path the role was loaded from (filled in by the loader).
     #[serde(default, skip_serializing)]
     pub source: PathBuf,
