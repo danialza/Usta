@@ -143,6 +143,128 @@ fn parse_handoffs(text: &str) -> Vec<(String, String)> {
     out
 }
 
+/// Fan an event out to every workspace role that subscribes to its topic
+/// (except the publisher), running each as a headless agentic turn. Headless
+/// turns may read but not write/shell (no human to approve), and their own
+/// handoffs are recorded WITHOUT re-dispatching, to prevent storms.
+fn dispatch_event(
+    db: Arc<Db>,
+    providers: Arc<ProviderRegistry>,
+    lib: RoleLibrary,
+    ws_id: String,
+    ws_root: Option<std::path::PathBuf>,
+    from_role: String,
+    topic: String,
+    summary: String,
+) {
+    for role in lib.iter() {
+        if role.name == from_role {
+            continue;
+        }
+        if !role.handoff_topics.subscribes.iter().any(|t| t == &topic) {
+            continue;
+        }
+        let Some(provider) = providers.get(&role.default_provider) else { continue };
+        let role = role.clone();
+        let db = db.clone();
+        let ws_id = ws_id.clone();
+        let ws_root = ws_root.clone();
+        let from = from_role.clone();
+        let topic = topic.clone();
+        let summary = summary.clone();
+        tokio::spawn(async move {
+            run_role_headless(db, provider, role, ws_id, ws_root, from, topic, summary).await;
+        });
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn run_role_headless(
+    db: Arc<Db>,
+    provider: atelier_providers::DynProvider,
+    role: RoleDef,
+    ws_id: String,
+    ws_root: Option<std::path::PathBuf>,
+    from_role: String,
+    topic: String,
+    summary: String,
+) {
+    let user_msg = format!(
+        "Team update from @{from_role} [{topic}]: {summary}\n\n\
+         If this affects your area, take the necessary action now (you may read \
+         files; writes/shell need a human, so describe them). If not relevant, \
+         reply 'noted'."
+    );
+
+    let mut system = role.system_prompt.clone();
+    system.push_str(&atelier_core::skills::render_block(&role.claude_skills));
+    if !role.handoff_topics.publishes.is_empty() {
+        system.push_str(&format!(
+            "\n\n## Handoffs\nIf you complete something the team needs, end with:\n\
+             [[handoff: <topic> | <summary>]]\nYour topics: {}\n",
+            role.handoff_topics.publishes.join(", ")
+        ));
+    }
+
+    // Read-only tools for headless turns.
+    let tools = ws_root.as_ref().map(|_| toolexec::specs_for_role(&role)).unwrap_or_default();
+    let exec_root = ws_root.clone();
+    let exec_role = role.clone();
+    let exec: atelier_providers::ToolExec = std::sync::Arc::new(move |name, input| {
+        let root = exec_root.clone();
+        let role = exec_role.clone();
+        Box::pin(async move {
+            let Some(root) = root else { return Err(anyhow::anyhow!("no workspace")) };
+            match toolexec::gate(&role, &name) {
+                toolexec::Gate::Allowed => toolexec::execute(root, role, name, input).await,
+                _ => Ok(format!("⏸ {name} skipped (headless turn needs a human to approve)")),
+            }
+        })
+    });
+
+    let req = ChatRequest {
+        model: role.default_model.clone(),
+        system: Some(system),
+        messages: vec![ChatMessage { role: "user".into(), content: user_msg.clone() }],
+        max_tokens: Some(1536),
+    };
+
+    let Ok(mut stream) = provider.chat_agentic(req, tools, exec).await else { return };
+    let mut full = String::new();
+    while let Some(item) = stream.next().await {
+        match item {
+            Ok(AgentDelta::Text(t)) => full.push_str(&t),
+            Ok(AgentDelta::Done { .. }) => break,
+            Ok(_) => {}
+            Err(_) => break,
+        }
+    }
+
+    // Persist the auto turn.
+    let body = full.clone();
+    let (db1, ws1, rn1) = (db.clone(), ws_id.clone(), role.name.clone());
+    let um = user_msg.clone();
+    let _ = tokio::task::spawn_blocking(move || {
+        db1.insert_agent_msg(&ws1, &rn1, "user", &um, now_ms())
+    }).await;
+    if !body.trim().is_empty() {
+        let (db2, ws2, rn2) = (db.clone(), ws_id.clone(), role.name.clone());
+        let _ = tokio::task::spawn_blocking(move || {
+            db2.insert_agent_msg(&ws2, &rn2, "assistant", &body, now_ms())
+        }).await;
+    }
+    // Record (but do not re-dispatch) this role's own handoffs.
+    let allowed = role.handoff_topics.publishes.clone();
+    for (t, s) in parse_handoffs(&full) {
+        if allowed.is_empty() || allowed.iter().any(|x| x == &t) {
+            let (db3, ws3, rn3) = (db.clone(), ws_id.clone(), role.name.clone());
+            let _ = tokio::task::spawn_blocking(move || {
+                db3.insert_event(&ws3, &rn3, &t, &s, now_ms())
+            }).await;
+        }
+    }
+}
+
 fn probe_socket_alive(path: &std::path::Path) -> bool {
     use std::os::unix::net::UnixStream;
     use std::time::Duration;
@@ -720,6 +842,11 @@ impl Atelier for AtelierSvc {
             }).await;
         }
 
+        // For auto inter-agent dispatch on handoff.
+        let dispatch_providers = self.providers.clone();
+        let dispatch_roles = self.roles.clone();
+        let dispatch_ws_root = ws_root.clone();
+
         // Approval channel: exec sends (call_id, name, input) when a tool
         // needs user approval; the mapped stream forwards it to the client.
         let (areq_tx, mut areq_rx) =
@@ -807,9 +934,20 @@ impl Atelier for AtelierSvc {
                                             let db2 = db.clone();
                                             let ws2 = ws_id.clone();
                                             let from = role_name.clone();
+                                            let (t2, s2) = (topic.clone(), summary.clone());
                                             let _ = tokio::task::spawn_blocking(move || {
-                                                db2.insert_event(&ws2, &from, &topic, &summary, now_ms())
+                                                db2.insert_event(&ws2, &from, &t2, &s2, now_ms())
                                             }).await;
+                                            // Auto-react: fan out to subscribers.
+                                            let lib = match &dispatch_ws_root {
+                                                Some(root) => dispatch_roles.with_workspace(root),
+                                                None => (*dispatch_roles).clone(),
+                                            };
+                                            dispatch_event(
+                                                db.clone(), dispatch_providers.clone(), lib,
+                                                ws_id.clone(), dispatch_ws_root.clone(),
+                                                role_name.clone(), topic.clone(), summary.clone(),
+                                            );
                                         }
                                     }
                                 }
@@ -1260,12 +1398,33 @@ impl Atelier for AtelierSvc {
             return Err(Status::invalid_argument("topic required"));
         }
         let (ws2, from2, topic2, summary2) = (ws.clone(), from.clone(), topic.clone(), summary.clone());
+        let db_ins = self.db.clone();
         let id = tokio::task::spawn_blocking(move || {
-            db.insert_event(&ws2, &from2, &topic2, &summary2, now)
+            db_ins.insert_event(&ws2, &from2, &topic2, &summary2, now)
         })
         .await
         .unwrap()
         .map_err(|e| Status::internal(e.to_string()))?;
+
+        // Auto-react to subscribers.
+        if !ws.is_empty() {
+            let ws_root = {
+                let dbq = self.db.clone();
+                let wsq = ws.clone();
+                let workspaces = tokio::task::spawn_blocking(move || dbq.list_workspaces())
+                    .await.unwrap().unwrap_or_default();
+                workspaces.into_iter().find(|w| w.id == ws).map(|w| std::path::PathBuf::from(w.path))
+            };
+            let lib = match &ws_root {
+                Some(root) => self.roles.with_workspace(root),
+                None => (*self.roles).clone(),
+            };
+            dispatch_event(
+                self.db.clone(), self.providers.clone(), lib,
+                ws.clone(), ws_root, from.clone(), topic.clone(), summary.clone(),
+            );
+        }
+
         Ok(Response::new(PbEvent {
             id,
             workspace_id: ws,
