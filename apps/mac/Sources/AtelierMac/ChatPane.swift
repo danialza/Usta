@@ -31,6 +31,24 @@ final class ChatPaneModel: ObservableObject {
     }
 
     private var activeReplyID: UUID? = nil
+    private(set) var historyLoaded = false
+
+    func loadHistory(client: AtelierClientModel) async {
+        if historyLoaded { return }
+        historyLoaded = true
+        let items = await client.getHistory(workspaceID: workspaceID, agentRole: role.name)
+        guard !items.isEmpty else { return }
+        var restored: [ChatMessage] = []
+        for m in items {
+            if m.role == "user" {
+                restored.append(ChatMessage(kind: .user, role: "user", emoji: "🧑", content: m.content))
+            } else {
+                restored.append(ChatMessage(kind: .assistant, role: role.name, emoji: role.emoji, content: m.content))
+            }
+        }
+        // Prepend history before any in-session messages.
+        messages = restored + messages
+    }
 
     func send(_ text: String, provider: String, model: String, client: AtelierClientModel) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -123,7 +141,10 @@ struct AssistantPane: View {
             composer
         }
         .background(AtelierTheme.cell)
-        .task { providers = await client.listProviders() }
+        .task {
+            providers = await client.listProviders()
+            await model.loadHistory(client: client)
+        }
     }
 
     private var header: some View {

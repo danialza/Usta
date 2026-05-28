@@ -61,6 +61,9 @@ service Atelier {
   // Inter-agent event bus.
   rpc PublishEvent(PublishEventRequest) returns (Event);
   rpc ListEvents(ListEventsRequest) returns (EventList);
+
+  // Per-assistant chat history.
+  rpc GetHistory(GetHistoryRequest) returns (HistoryList);
 }
 
 message Empty {}
@@ -353,6 +356,22 @@ message ListEventsRequest {
 }
 
 message EventList { repeated Event items = 1; }
+
+// --- Chat history ---
+
+message GetHistoryRequest {
+  string workspace_id = 1;
+  string agent_role   = 2;
+  int32  limit        = 3; // 0 = default 200
+}
+
+message HistoryMessage {
+  string role            = 1; // "user" | "assistant"
+  string content         = 2;
+  int64  created_unix_ms = 3;
+}
+
+message HistoryList { repeated HistoryMessage items = 1; }
 
 message RoleChatRequest {
   string role_name = 1;

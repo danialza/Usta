@@ -208,6 +208,23 @@ final class AtelierClientModel: ObservableObject {
         let closure: @MainActor (String, String, String, Bool) -> Void
     }
 
+    // --- History ---
+
+    func getHistory(workspaceID: String, agentRole: String, limit: Int32 = 200) async -> [Atelier_V1_HistoryMessage] {
+        guard let stub, !workspaceID.isEmpty else { return [] }
+        do {
+            let r = try await stub.getHistory(.with {
+                $0.workspaceID = workspaceID
+                $0.agentRole = agentRole
+                $0.limit = limit
+            })
+            return r.items
+        } catch {
+            self.lastError = "history: \(error)"
+            return []
+        }
+    }
+
     // --- Event bus ---
 
     func listEvents(workspaceID: String, afterID: Int64 = 0, limit: Int32 = 50) async -> [Atelier_V1_Event] {

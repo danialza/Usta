@@ -56,6 +56,7 @@ CREATE TABLE IF NOT EXISTS chat_messages (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     terminal_id     TEXT,
     workspace_id    TEXT,
+    agent_role      TEXT NOT NULL DEFAULT '',
     role            TEXT NOT NULL,
     content         TEXT NOT NULL,
     created_unix_ms INTEGER NOT NULL
@@ -63,6 +64,7 @@ CREATE TABLE IF NOT EXISTS chat_messages (
 
 CREATE INDEX IF NOT EXISTS idx_terms_ws ON terminals(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_chat_term ON chat_messages(terminal_id);
+CREATE INDEX IF NOT EXISTS idx_chat_agent ON chat_messages(workspace_id, agent_role, id);
 
 CREATE TABLE IF NOT EXISTS chunks (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -100,6 +102,14 @@ pub struct WorkspaceRow {
 }
 
 #[derive(Debug, Clone)]
+pub struct ChatMsgRow {
+    pub agent_role: String,
+    pub role: String,    // "user" | "assistant"
+    pub content: String,
+    pub created_unix_ms: i64,
+}
+
+#[derive(Debug, Clone)]
 pub struct EventRow {
     pub id: i64,
     pub workspace_id: String,
@@ -128,6 +138,11 @@ impl Db {
         let conn = Connection::open(&path)?;
         conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
         conn.execute_batch(SCHEMA)?;
+        // Migration: add agent_role to pre-existing chat_messages tables.
+        let _ = conn.execute(
+            "ALTER TABLE chat_messages ADD COLUMN agent_role TEXT NOT NULL DEFAULT ''",
+            [],
+        );
         Ok(Self { conn: Mutex::new(conn), path })
     }
 
@@ -314,6 +329,51 @@ impl Db {
             .into_iter()
             .map(|(s, p, st, en, c)| (p, st, en, c, s))
             .collect())
+    }
+
+    // --- Per-assistant chat history ---
+
+    pub fn insert_agent_msg(
+        &self,
+        workspace_id: &str,
+        agent_role: &str,
+        role: &str,
+        content: &str,
+        now: i64,
+    ) -> rusqlite::Result<i64> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO chat_messages (workspace_id, agent_role, role, content, created_unix_ms)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![workspace_id, agent_role, role, content, now],
+        )?;
+        Ok(conn.last_insert_rowid())
+    }
+
+    pub fn list_agent_history(
+        &self,
+        workspace_id: &str,
+        agent_role: &str,
+        limit: usize,
+    ) -> rusqlite::Result<Vec<ChatMsgRow>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT agent_role, role, content, created_unix_ms
+             FROM chat_messages
+             WHERE workspace_id = ?1 AND agent_role = ?2
+             ORDER BY id ASC LIMIT ?3",
+        )?;
+        let rows = stmt
+            .query_map(params![workspace_id, agent_role, limit as i64], |r| {
+                Ok(ChatMsgRow {
+                    agent_role: r.get(0)?,
+                    role: r.get(1)?,
+                    content: r.get(2)?,
+                    created_unix_ms: r.get(3)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
     }
 
     // --- Events (inter-agent bus) ---

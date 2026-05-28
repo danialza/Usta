@@ -11,6 +11,7 @@ use atelier_proto::v1::{
     atelier_server::{Atelier, AtelierServer},
     AnalyzeRequest, ApplyTeamRequest, ApplyTeamResponse, ChatRequest as PbChatReq, ChatToken,
     CloseTerminalRequest, CreateTerminalRequest, Empty, Event as PbEvent, EventList,
+    GetHistoryRequest, HistoryList, HistoryMessage,
     IndexProgress as PbIndexProgress, IndexRequest, ListEventsRequest, ListRolesRequest,
     ListTerminalsRequest, ListToolsRequest, OpenWorkspaceRequest, PingRequest, PingResponse,
     ProjectProposal as PbProjectProposal, ProposeProjectRequest, ProposedRole as PbProposedRole,
@@ -693,6 +694,7 @@ impl Atelier for AtelierSvc {
             ));
         }
 
+        let user_msg_for_history = r.user_msg.clone();
         let req = ChatRequest {
             model,
             system: Some(system),
@@ -704,6 +706,17 @@ impl Atelier for AtelierSvc {
         let ws_id = r.workspace_id.clone();
         let role_name = role.name.clone();
         let allowed_pub = role.handoff_topics.publishes.clone();
+
+        // Persist the user message.
+        if !ws_id.is_empty() {
+            let db2 = db.clone();
+            let ws2 = ws_id.clone();
+            let rn = role_name.clone();
+            let um = user_msg_for_history.clone();
+            let _ = tokio::task::spawn_blocking(move || {
+                db2.insert_agent_msg(&ws2, &rn, "user", &um, now_ms())
+            }).await;
+        }
 
         // Executor closure captures workspace root + role for permission gating.
         let exec_root = ws_root.clone();
@@ -744,6 +757,16 @@ impl Atelier for AtelierSvc {
                     }
                     Ok(AgentDelta::Done { stop_reason }) => {
                         if !ws_id.is_empty() {
+                            // Persist assistant reply.
+                            if !full.trim().is_empty() {
+                                let db3 = db.clone();
+                                let ws3 = ws_id.clone();
+                                let rn = role_name.clone();
+                                let body = full.clone();
+                                let _ = tokio::task::spawn_blocking(move || {
+                                    db3.insert_agent_msg(&ws3, &rn, "assistant", &body, now_ms())
+                                }).await;
+                            }
                             for (topic, summary) in parse_handoffs(&full) {
                                 if allowed_pub.is_empty() || allowed_pub.iter().any(|t| t == &topic) {
                                     let db2 = db.clone();
@@ -1240,6 +1263,30 @@ impl Atelier for AtelierSvc {
                     topic: e.topic,
                     summary: e.summary,
                     created_unix_ms: e.created_unix_ms,
+                })
+                .collect(),
+        }))
+    }
+
+    async fn get_history(
+        &self,
+        req: Request<GetHistoryRequest>,
+    ) -> Result<Response<HistoryList>, Status> {
+        let r = req.into_inner();
+        let limit = if r.limit > 0 { r.limit as usize } else { 200 };
+        let db = self.db.clone();
+        let (ws, agent) = (r.workspace_id, r.agent_role);
+        let rows = tokio::task::spawn_blocking(move || db.list_agent_history(&ws, &agent, limit))
+            .await
+            .unwrap()
+            .map_err(|e| Status::internal(e.to_string()))?;
+        Ok(Response::new(HistoryList {
+            items: rows
+                .into_iter()
+                .map(|m| HistoryMessage {
+                    role: m.role,
+                    content: m.content,
+                    created_unix_ms: m.created_unix_ms,
                 })
                 .collect(),
         }))
