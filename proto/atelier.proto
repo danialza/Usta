@@ -114,6 +114,11 @@ message ChatToken {
   bool   done        = 2; // final frame
   string stop_reason = 3; // set when done
   string error       = 4; // non-empty on failure
+  // Agentic tool activity (mutually exclusive with text):
+  string tool_name   = 5; // non-empty => this frame is a tool call/result
+  string tool_input  = 6; // JSON args (on call)
+  string tool_output = 7; // result text (on result)
+  bool   tool_result = 8; // false = call, true = result
 }
 
 // --- Terminal ---

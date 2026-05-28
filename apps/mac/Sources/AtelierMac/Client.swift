@@ -154,11 +154,13 @@ final class AtelierClientModel: ObservableObject {
         provider: String,
         model: String,
         onToken: @escaping @MainActor (String) -> Void,
+        onTool: @escaping @MainActor (_ name: String, _ input: String, _ output: String, _ isResult: Bool) -> Void,
         onDone: @escaping @MainActor (String) -> Void,
         onError: @escaping @MainActor (String) -> Void
     ) {
         guard let stub else { onError("not connected"); return }
         let onTokenSendable = MainActorClosure(closure: onToken)
+        let onToolSendable = MainActorToolClosure(closure: onTool)
         let onDoneSendable = MainActorClosure(closure: onDone)
         let onErrorSendable = MainActorClosure(closure: onError)
         Task.detached {
@@ -169,7 +171,7 @@ final class AtelierClientModel: ObservableObject {
                     $0.workspaceID = workspaceID
                     $0.provider = provider
                     $0.model = model
-                    $0.maxTokens = 1024
+                    $0.maxTokens = 2048
                 }
                 try await stub.roleChat(req) { response in
                     for try await tok in response.messages {
@@ -178,7 +180,10 @@ final class AtelierClientModel: ObservableObject {
                             await MainActor.run { onErrorSendable.closure(msg) }
                             return
                         }
-                        if !tok.text.isEmpty {
+                        if !tok.toolName.isEmpty {
+                            let (n, i, o, r) = (tok.toolName, tok.toolInput, tok.toolOutput, tok.toolResult)
+                            await MainActor.run { onToolSendable.closure(n, i, o, r) }
+                        } else if !tok.text.isEmpty {
                             let t = tok.text
                             await MainActor.run { onTokenSendable.closure(t) }
                         }
@@ -196,10 +201,11 @@ final class AtelierClientModel: ObservableObject {
         }
     }
 
-    /// Wraps a @MainActor closure so the type itself is Sendable (the
-    /// closure body still only runs on the main actor).
     private struct MainActorClosure: @unchecked Sendable {
         let closure: @MainActor (String) -> Void
+    }
+    private struct MainActorToolClosure: @unchecked Sendable {
+        let closure: @MainActor (String, String, String, Bool) -> Void
     }
 
     // --- Event bus ---

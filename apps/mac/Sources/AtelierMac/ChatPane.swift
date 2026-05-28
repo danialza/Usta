@@ -1,13 +1,20 @@
 import SwiftUI
 import AtelierProto
 
+enum ChatItemKind { case user, assistant, tool }
+
 struct ChatMessage: Identifiable {
     let id = UUID()
+    var kind: ChatItemKind = .assistant
     var role: String      // "user" | "<role-name>"
     var emoji: String
     var content: String
     var pending: Bool = false
     var error: String? = nil
+    // tool fields
+    var toolName: String = ""
+    var toolInput: String = ""
+    var toolOutput: String = ""
 }
 
 @MainActor
@@ -23,12 +30,15 @@ final class ChatPaneModel: ObservableObject {
         self.workspaceID = workspaceID
     }
 
+    private var activeReplyID: UUID? = nil
+
     func send(_ text: String, provider: String, model: String, client: AtelierClientModel) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        messages.append(ChatMessage(role: "user", emoji: "🧑", content: trimmed))
-        let pendingIndex = messages.count
-        messages.append(ChatMessage(role: role.name, emoji: role.emoji, content: "", pending: true))
+        messages.append(ChatMessage(kind: .user, role: "user", emoji: "🧑", content: trimmed))
+        let reply = ChatMessage(kind: .assistant, role: role.name, emoji: role.emoji, content: "", pending: true)
+        activeReplyID = reply.id
+        messages.append(reply)
         isStreaming = true
 
         client.roleChat(
@@ -38,24 +48,44 @@ final class ChatPaneModel: ObservableObject {
             provider: provider,
             model: model,
             onToken: { [weak self] tok in
+                guard let self, let id = self.activeReplyID,
+                      let i = self.messages.firstIndex(where: { $0.id == id }) else { return }
+                self.messages[i].content.append(tok)
+            },
+            onTool: { [weak self] name, input, output, isResult in
                 guard let self else { return }
-                guard pendingIndex - 1 < self.messages.count else { return }
-                self.messages[pendingIndex - 1 + 1].content.append(tok)
+                if isResult {
+                    // Attach output to the most recent matching pending tool row.
+                    if let i = self.messages.lastIndex(where: { $0.kind == .tool && $0.toolName == name && $0.toolOutput.isEmpty }) {
+                        self.messages[i].toolOutput = output
+                        self.messages[i].pending = false
+                    }
+                } else {
+                    // New tool-call row, inserted before the active reply bubble.
+                    var row = ChatMessage(kind: .tool, role: self.role.name, emoji: "🔧", content: "", pending: true)
+                    row.toolName = name; row.toolInput = input
+                    if let id = self.activeReplyID, let ri = self.messages.firstIndex(where: { $0.id == id }) {
+                        self.messages.insert(row, at: ri)
+                    } else {
+                        self.messages.append(row)
+                    }
+                }
             },
             onDone: { [weak self] _ in
-                guard let self else { return }
-                if pendingIndex - 1 + 1 < self.messages.count {
-                    self.messages[pendingIndex - 1 + 1].pending = false
-                }
+                guard let self, let id = self.activeReplyID,
+                      let i = self.messages.firstIndex(where: { $0.id == id }) else { self?.isStreaming = false; return }
+                self.messages[i].pending = false
                 self.isStreaming = false
+                self.activeReplyID = nil
             },
             onError: { [weak self] err in
                 guard let self else { return }
-                if pendingIndex - 1 + 1 < self.messages.count {
-                    self.messages[pendingIndex - 1 + 1].pending = false
-                    self.messages[pendingIndex - 1 + 1].error = err
+                if let id = self.activeReplyID, let i = self.messages.firstIndex(where: { $0.id == id }) {
+                    self.messages[i].pending = false
+                    self.messages[i].error = err
                 }
                 self.isStreaming = false
+                self.activeReplyID = nil
             }
         )
     }
@@ -201,6 +231,43 @@ struct AssistantPane: View {
 
     @ViewBuilder
     private func bubble(_ msg: ChatMessage) -> some View {
+        if msg.kind == .tool {
+            toolRow(msg)
+        } else {
+            chatBubble(msg)
+        }
+    }
+
+    private func toolRow(_ msg: ChatMessage) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 6) {
+                Image(systemName: "wrench.and.screwdriver.fill")
+                    .font(.system(size: 10)).foregroundStyle(.orange)
+                Text(msg.toolName).font(.system(size: 11, weight: .semibold))
+                Text(msg.toolInput).font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(AtelierTheme.dim).lineLimit(1)
+                if msg.pending { ProgressView().scaleEffect(0.4) }
+            }
+            if !msg.toolOutput.isEmpty {
+                Text(msg.toolOutput)
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(AtelierTheme.dim)
+                    .lineLimit(8)
+                    .padding(6)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(AtelierTheme.cell)
+                    .clipShape(RoundedRectangle(cornerRadius: 4))
+            }
+        }
+        .padding(8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.orange.opacity(0.08))
+        .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.orange.opacity(0.3)))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+    }
+
+    @ViewBuilder
+    private func chatBubble(_ msg: ChatMessage) -> some View {
         let isUser = msg.role == "user"
         HStack(alignment: .top, spacing: 8) {
             if !isUser { Text(msg.emoji).font(.title3) }

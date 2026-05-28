@@ -5,11 +5,12 @@
 //! Stream:    SSE events. We care about `content_block_delta` (text_delta) and
 //!            `message_stop`.
 
-use crate::{ChatDelta, ChatRequest, ChatStream, Provider};
+use crate::{AgentDelta, AgentStream, ChatDelta, ChatRequest, ChatStream, Provider, ToolExec, ToolSpec};
 use async_stream::try_stream;
 use async_trait::async_trait;
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use std::time::Duration;
 
 const DEFAULT_BASE: &str = "https://api.anthropic.com";
@@ -169,6 +170,112 @@ impl Provider for AnthropicProvider {
 
             // Fallback Done if stream ended without explicit message_stop.
             yield ChatDelta::Done { stop_reason };
+        };
+
+        Ok(Box::pin(stream))
+    }
+
+    async fn chat_agentic(
+        &self,
+        req: ChatRequest,
+        tools: Vec<ToolSpec>,
+        exec: ToolExec,
+    ) -> anyhow::Result<AgentStream> {
+        let key = self.api_key.clone().ok_or_else(|| anyhow::anyhow!("ANTHROPIC_API_KEY not set"))?;
+        let url = format!("{}/v1/messages", self.base_url);
+        let http = self.http.clone();
+        let model = req.model.clone();
+        let system = req.system.clone();
+        let max_tokens = req.max_tokens.unwrap_or(2048);
+
+        // Conversation history as raw JSON content blocks.
+        let mut messages: Vec<serde_json::Value> = req
+            .messages
+            .iter()
+            .map(|m| json!({ "role": m.role, "content": m.content }))
+            .collect();
+
+        let tools_json: Vec<serde_json::Value> = tools
+            .iter()
+            .map(|t| json!({
+                "name": t.name,
+                "description": t.description,
+                "input_schema": t.input_schema,
+            }))
+            .collect();
+
+        let stream = try_stream! {
+            let max_turns = 8;
+            for _turn in 0..max_turns {
+                let mut body = json!({
+                    "model": model,
+                    "max_tokens": max_tokens,
+                    "messages": messages,
+                });
+                if let Some(s) = &system { body["system"] = json!(s); }
+                if !tools_json.is_empty() { body["tools"] = json!(tools_json); }
+
+                let resp = http
+                    .post(&url)
+                    .header("x-api-key", &key)
+                    .header("anthropic-version", API_VERSION)
+                    .header("content-type", "application/json")
+                    .json(&body)
+                    .send()
+                    .await?;
+                let status = resp.status();
+                let bytes = resp.bytes().await?;
+                if !status.is_success() {
+                    Err(anyhow::anyhow!("anthropic {status}: {}", String::from_utf8_lossy(&bytes)))?;
+                }
+                let v: serde_json::Value = serde_json::from_slice(&bytes)?;
+                let stop_reason = v["stop_reason"].as_str().unwrap_or("end_turn").to_string();
+                let content = v["content"].as_array().cloned().unwrap_or_default();
+
+                // Emit text, collect tool_use blocks.
+                let mut tool_uses: Vec<(String, String, serde_json::Value)> = Vec::new();
+                for block in &content {
+                    match block["type"].as_str() {
+                        Some("text") => {
+                            if let Some(t) = block["text"].as_str() {
+                                yield AgentDelta::Text(t.to_string());
+                            }
+                        }
+                        Some("tool_use") => {
+                            let id = block["id"].as_str().unwrap_or("").to_string();
+                            let name = block["name"].as_str().unwrap_or("").to_string();
+                            let input = block["input"].clone();
+                            tool_uses.push((id, name, input));
+                        }
+                        _ => {}
+                    }
+                }
+
+                if tool_uses.is_empty() {
+                    yield AgentDelta::Done { stop_reason };
+                    return;
+                }
+
+                // Record the assistant turn verbatim, then run tools.
+                messages.push(json!({ "role": "assistant", "content": content }));
+
+                let mut tool_results: Vec<serde_json::Value> = Vec::new();
+                for (id, name, input) in tool_uses {
+                    yield AgentDelta::ToolCall { id: id.clone(), name: name.clone(), input: input.clone() };
+                    let output = match (exec)(name.clone(), input).await {
+                        Ok(o) => o,
+                        Err(e) => format!("error: {e}"),
+                    };
+                    yield AgentDelta::ToolResult { id: id.clone(), name, output: output.clone() };
+                    tool_results.push(json!({
+                        "type": "tool_result",
+                        "tool_use_id": id,
+                        "content": output,
+                    }));
+                }
+                messages.push(json!({ "role": "user", "content": tool_results }));
+            }
+            yield AgentDelta::Done { stop_reason: "max_turns".to_string() };
         };
 
         Ok(Box::pin(stream))

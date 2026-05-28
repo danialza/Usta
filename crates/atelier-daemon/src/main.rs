@@ -1,3 +1,5 @@
+mod toolexec;
+
 use anyhow::Context;
 use atelier_core::{
     db::{Db, TerminalRow, WorkspaceRow},
@@ -19,7 +21,7 @@ use atelier_proto::v1::{
     ToolList, Workspace, WorkspaceAnalysis as PbAnalysis, WorkspaceList,
 };
 use atelier_roles::{Role as RoleDef, RoleLibrary};
-use atelier_providers::{ChatDelta, ChatMessage, ChatRequest, ProviderRegistry};
+use atelier_providers::{AgentDelta, ChatDelta, ChatMessage, ChatRequest, ProviderRegistry};
 use atelier_index::{Embedder, EmbedderConfig, Indexer};
 use tokio::sync::OnceCell;
 use clap::Parser;
@@ -346,14 +348,14 @@ impl Atelier for AtelierSvc {
             while let Some(item) = s.next().await {
                 match item {
                     Ok(ChatDelta::Text(t)) => {
-                        yield Ok(ChatToken { text: t, done: false, stop_reason: String::new(), error: String::new() });
+                        yield Ok(ChatToken { text: t, ..Default::default() });
                     }
                     Ok(ChatDelta::Done { stop_reason }) => {
-                        yield Ok(ChatToken { text: String::new(), done: true, stop_reason, error: String::new() });
+                        yield Ok(ChatToken { done: true, stop_reason, ..Default::default() });
                         return;
                     }
                     Err(e) => {
-                        yield Ok(ChatToken { text: String::new(), done: true, stop_reason: String::new(), error: e.to_string() });
+                        yield Ok(ChatToken { done: true, error: e.to_string(), ..Default::default() });
                         return;
                     }
                 }
@@ -666,16 +668,36 @@ impl Atelier for AtelierSvc {
             ));
         }
 
+        // Resolve workspace root (for tool execution) if a workspace is set.
+        let ws_root: Option<std::path::PathBuf> = if r.workspace_id.is_empty() {
+            None
+        } else {
+            let db = self.db.clone();
+            let ws_id = r.workspace_id.clone();
+            let workspaces = tokio::task::spawn_blocking(move || db.list_workspaces())
+                .await
+                .unwrap()
+                .map_err(|e| Status::internal(e.to_string()))?;
+            workspaces.into_iter().find(|w| w.id == ws_id).map(|w| std::path::PathBuf::from(w.path))
+        };
+
+        // Build tool specs + executor (only when we have a workspace root).
+        let tools = if ws_root.is_some() { toolexec::specs_for_role(&role) } else { vec![] };
+
+        if !tools.is_empty() {
+            let tool_names: Vec<String> = tools.iter().map(|t| t.name.clone()).collect();
+            system.push_str(&format!(
+                "\n\n## Tools\nYou can call these tools to act on the workspace: {}. \
+                 Paths are workspace-relative. Prefer reading before writing.\n",
+                tool_names.join(", ")
+            ));
+        }
+
         let req = ChatRequest {
             model,
             system: Some(system),
             messages: vec![ChatMessage { role: "user".into(), content: r.user_msg }],
-            max_tokens: if r.max_tokens > 0 { Some(r.max_tokens as u32) } else { Some(1024) },
-        };
-
-        let inner = match provider.chat(req).await {
-            Ok(s) => s,
-            Err(e) => return Err(Status::internal(e.to_string())),
+            max_tokens: if r.max_tokens > 0 { Some(r.max_tokens as u32) } else { Some(2048) },
         };
 
         let db = self.db.clone();
@@ -683,17 +705,44 @@ impl Atelier for AtelierSvc {
         let role_name = role.name.clone();
         let allowed_pub = role.handoff_topics.publishes.clone();
 
+        // Executor closure captures workspace root + role for permission gating.
+        let exec_root = ws_root.clone();
+        let exec_role = role.clone();
+        let exec: atelier_providers::ToolExec = std::sync::Arc::new(move |name, input| {
+            let root = exec_root.clone();
+            let role = exec_role.clone();
+            Box::pin(async move {
+                match root {
+                    Some(root) => toolexec::execute(root, role, name, input).await,
+                    None => Err(anyhow::anyhow!("no workspace; tools unavailable")),
+                }
+            })
+        });
+
+        let inner = match provider.chat_agentic(req, tools, exec).await {
+            Ok(s) => s,
+            Err(e) => return Err(Status::internal(e.to_string())),
+        };
+
         let mapped = async_stream::stream! {
             let mut s = inner;
             let mut full = String::new();
             while let Some(item) = s.next().await {
                 match item {
-                    Ok(ChatDelta::Text(t)) => {
+                    Ok(AgentDelta::Text(t)) => {
                         full.push_str(&t);
-                        yield Ok(ChatToken { text: t, done: false, stop_reason: String::new(), error: String::new() });
+                        yield Ok(ChatToken { text: t, done: false, stop_reason: String::new(), error: String::new(),
+                            tool_name: String::new(), tool_input: String::new(), tool_output: String::new(), tool_result: false });
                     }
-                    Ok(ChatDelta::Done { stop_reason }) => {
-                        // Parse + publish handoff markers before signalling done.
+                    Ok(AgentDelta::ToolCall { name, input, .. }) => {
+                        yield Ok(ChatToken { text: String::new(), done: false, stop_reason: String::new(), error: String::new(),
+                            tool_name: name, tool_input: input.to_string(), tool_output: String::new(), tool_result: false });
+                    }
+                    Ok(AgentDelta::ToolResult { name, output, .. }) => {
+                        yield Ok(ChatToken { text: String::new(), done: false, stop_reason: String::new(), error: String::new(),
+                            tool_name: name, tool_input: String::new(), tool_output: output, tool_result: true });
+                    }
+                    Ok(AgentDelta::Done { stop_reason }) => {
                         if !ws_id.is_empty() {
                             for (topic, summary) in parse_handoffs(&full) {
                                 if allowed_pub.is_empty() || allowed_pub.iter().any(|t| t == &topic) {
@@ -706,11 +755,13 @@ impl Atelier for AtelierSvc {
                                 }
                             }
                         }
-                        yield Ok(ChatToken { text: String::new(), done: true, stop_reason, error: String::new() });
+                        yield Ok(ChatToken { text: String::new(), done: true, stop_reason, error: String::new(),
+                            tool_name: String::new(), tool_input: String::new(), tool_output: String::new(), tool_result: false });
                         return;
                     }
                     Err(e) => {
-                        yield Ok(ChatToken { text: String::new(), done: true, stop_reason: String::new(), error: e.to_string() });
+                        yield Ok(ChatToken { text: String::new(), done: true, stop_reason: String::new(), error: e.to_string(),
+                            tool_name: String::new(), tool_input: String::new(), tool_output: String::new(), tool_result: false });
                         return;
                     }
                 }
