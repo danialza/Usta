@@ -16,7 +16,7 @@ APP="$DIST/Atelier.app"
 
 echo "==> Cargo release build (atelierd + ateliercli)"
 cd "$ROOT"
-cargo build --release -p atelier-daemon -p atelier-cli
+cargo build --release -p atelier-daemon -p atelier-cli -p atelier-mcp
 
 echo "==> Swift release build (AtelierMac)"
 cd "$ROOT/apps/mac"
@@ -36,6 +36,8 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$SWIFT_BIN"  "$APP/Contents/MacOS/Atelier"
 cp "$DAEMON_BIN" "$APP/Contents/MacOS/atelierd"
 [ -x "$CLI_BIN" ] && cp "$CLI_BIN" "$APP/Contents/MacOS/ateliercli" || true
+MCP_BIN="$ROOT/target/release/atelier-mcp"
+[ -x "$MCP_BIN" ] && cp "$MCP_BIN" "$APP/Contents/MacOS/atelier-mcp" || true
 
 # Bundle the role library so first-launch has the 5 builtins.
 mkdir -p "$APP/Contents/Resources/roles"

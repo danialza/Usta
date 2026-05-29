@@ -138,6 +138,7 @@ message CreateTerminalRequest {
   int32  cols         = 4;
   int32  rows         = 5;
   string command      = 6;  // optional: run this CLI instead of a shell
+  string role         = 7;  // optional: role name (for MCP bus context)
 }
 
 message Terminal {

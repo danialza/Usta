@@ -361,6 +361,7 @@ async fn main() -> Result<()> {
                     shell, cwd: String::new(),
                     cols: cols as i32, rows: rows as i32,
                     command: String::new(),
+                    role: String::new(),
                 }).await?.into_inner();
                 println!("{} {}", "✓".green(), r.id.bold());
                 println!("  {} {}", "shell".dimmed(), r.shell);

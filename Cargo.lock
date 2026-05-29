@@ -263,6 +263,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "atelier-mcp"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "atelier-proto",
+ "hyper-util",
+ "prost",
+ "serde_json",
+ "tokio",
+ "tonic",
+ "tower 0.5.3",
+]
+
+[[package]]
 name = "atelier-pm"
 version = "0.1.0"
 dependencies = [

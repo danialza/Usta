@@ -52,6 +52,7 @@ struct AtelierSvc {
     roles: Arc<RoleLibrary>,
     tools: Arc<ToolRegistry>,
     approvals: Arc<tokio::sync::Mutex<std::collections::HashMap<String, tokio::sync::oneshot::Sender<bool>>>>,
+    socket_path: String,
 }
 
 impl AtelierSvc {
@@ -262,6 +263,31 @@ async fn run_role_headless(
                 db3.insert_event(&ws3, &rn3, &t, &s, now_ms())
             }).await;
         }
+    }
+}
+
+/// Locate the atelier-mcp binary (sibling of this daemon's executable).
+fn atelier_mcp_path() -> Option<std::path::PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let dir = exe.parent()?;
+    let cand = dir.join("atelier-mcp");
+    if cand.exists() { Some(cand) } else { None }
+}
+
+/// Write a project .mcp.json registering the Atelier bus server, so
+/// MCP-capable CLI agents (Claude Code) can publish/subscribe events.
+/// Skips if a .mcp.json already exists (don't clobber user config).
+fn write_mcp_config(cwd: &str) {
+    let Some(mcp) = atelier_mcp_path() else { return };
+    let path = std::path::Path::new(cwd).join(".mcp.json");
+    if path.exists() { return; }
+    let cfg = serde_json::json!({
+        "mcpServers": {
+            "atelier": { "command": mcp.to_string_lossy() }
+        }
+    });
+    if let Ok(s) = serde_json::to_string_pretty(&cfg) {
+        let _ = std::fs::write(&path, s);
     }
 }
 
@@ -517,13 +543,28 @@ impl Atelier for AtelierSvc {
         let rows = if r.rows > 0 { r.rows as u16 } else { 32 };
 
         let id = format!("t_{}", uuid::Uuid::new_v4().simple());
+        let has_command = !r.command.trim().is_empty();
+        let mut extra_env: Vec<(String, String)> = Vec::new();
+        if has_command {
+            // Give the CLI agent + its MCP child the bus context.
+            extra_env.push(("ATELIER_SOCKET".into(), self.socket_path.clone()));
+            extra_env.push(("ATELIER_WORKSPACE_ID".into(), workspace.id.clone()));
+            if !r.role.is_empty() {
+                extra_env.push(("ATELIER_ROLE".into(), r.role.clone()));
+            }
+            // Write a project .mcp.json so MCP-capable CLIs (Claude Code) load
+            // the Atelier bus server. Points at the atelier-mcp sibling binary.
+            write_mcp_config(&cwd);
+        }
+
         let spec = TerminalSpec {
             id: id.clone(),
             shell: shell.clone(),
             cwd: cwd.clone(),
             cols,
             rows,
-            command: if r.command.trim().is_empty() { None } else { Some(r.command.clone()) },
+            command: if has_command { Some(r.command.clone()) } else { None },
+            extra_env,
         };
         self.pty
             .create(spec)
@@ -1581,6 +1622,7 @@ async fn main() -> anyhow::Result<()> {
         roles: Arc::new(roles),
         tools: Arc::new(ToolRegistry::with_defaults()),
         approvals: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
+        socket_path: socket_path.to_string_lossy().into_owned(),
     };
 
     if let Err(e) = Server::builder()

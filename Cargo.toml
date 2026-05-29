@@ -9,6 +9,7 @@ members = [
     "crates/atelier-roles",
     "crates/atelier-daemon",
     "crates/atelier-cli",
+    "crates/atelier-mcp",
 ]
 
 [workspace.package]

@@ -17,6 +17,8 @@ pub struct TerminalSpec {
     /// When set, the pty runs `$shell -lc "<command>"` instead of an
     /// interactive shell (used to launch a CLI agent like `claude`/`aider`).
     pub command: Option<String>,
+    /// Extra environment variables (e.g. ATELIER_* for the MCP bridge).
+    pub extra_env: Vec<(String, String)>,
 }
 
 /// Output channel: every reader gets each chunk. broadcast so multiple
@@ -89,6 +91,9 @@ impl PtyManager {
         cmd.env("LANG", std::env::var("LANG").unwrap_or_else(|_| "en_US.UTF-8".into()));
         cmd.env("HOME", std::env::var("HOME").unwrap_or_default());
         cmd.env("PATH", std::env::var("PATH").unwrap_or_default());
+        for (k, v) in &spec.extra_env {
+            cmd.env(k, v);
+        }
 
         let mut child = pair.slave.spawn_command(cmd).map_err(|e| anyhow::anyhow!(e))?;
         // slave is owned by child via fd; we drop ours

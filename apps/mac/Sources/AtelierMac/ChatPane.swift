@@ -215,7 +215,7 @@ struct AssistantPane: View {
     }
 
     private func launchCLI() async {
-        guard let t = await client.createTerminal(workspaceID: workspaceID, command: cliCommand) else { return }
+        guard let t = await client.createTerminal(workspaceID: workspaceID, command: cliCommand, role: role.name) else { return }
         let session = TerminalSession(id: t.id, title: cliCommand)
         session.roleName = role.name
         if let stub = client.ptyStub() { session.start(stub: stub) }
