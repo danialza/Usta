@@ -14,6 +14,9 @@ pub struct TerminalSpec {
     pub cwd: String,
     pub cols: u16,
     pub rows: u16,
+    /// When set, the pty runs `$shell -lc "<command>"` instead of an
+    /// interactive shell (used to launch a CLI agent like `claude`/`aider`).
+    pub command: Option<String>,
 }
 
 /// Output channel: every reader gets each chunk. broadcast so multiple
@@ -76,6 +79,11 @@ impl PtyManager {
 
         let mut cmd = CommandBuilder::new(&spec.shell);
         cmd.cwd(&spec.cwd);
+        // Optional: launch a CLI agent via the login shell so PATH/aliases load.
+        if let Some(command) = spec.command.as_ref().filter(|c| !c.trim().is_empty()) {
+            cmd.arg("-lc");
+            cmd.arg(command);
+        }
         // pass through a minimal env
         cmd.env("TERM", std::env::var("TERM").unwrap_or_else(|_| "xterm-256color".into()));
         cmd.env("LANG", std::env::var("LANG").unwrap_or_else(|_| "en_US.UTF-8".into()));

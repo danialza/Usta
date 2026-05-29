@@ -138,10 +138,15 @@ struct AssistantPane: View {
     @EnvironmentObject var client: AtelierClientModel
     @StateObject private var model: ChatPaneModel
 
+    enum Backend: String { case chat, cli }
+
     @State private var input: String = ""
     @State private var providers: [Atelier_V1_ProviderInfo] = []
     @State private var selectedProvider: String = ""
     @State private var selectedModel: String = ""
+    @State private var backend: Backend = .chat
+    @State private var cliCommand: String = ""
+    @State private var cliSession: TerminalSession? = nil
 
     init(workspaceID: String, role: Atelier_V1_Role) {
         self.workspaceID = workspaceID
@@ -156,15 +161,65 @@ struct AssistantPane: View {
             header
             capabilities
             Divider().overlay(AtelierTheme.border)
-            transcript
-            Divider().overlay(AtelierTheme.border)
-            composer
+            if backend == .cli {
+                cliView
+            } else {
+                transcript
+                Divider().overlay(AtelierTheme.border)
+                composer
+            }
         }
         .background(AtelierTheme.cell)
         .task {
             providers = await client.listProviders()
             await model.loadHistory(client: client)
+            cliCommand = Self.defaultCommand(provider: selectedProvider, model: selectedModel)
         }
+    }
+
+    static func defaultCommand(provider: String, model: String) -> String {
+        switch provider {
+        case "anthropic": return "claude"
+        case "gemini":    return "aider --model gemini/\(model) --yes-always"
+        case "ollama":    return "aider --model ollama_chat/\(model) --yes-always"
+        default:          return ""
+        }
+    }
+
+    @ViewBuilder
+    private var cliView: some View {
+        if let s = cliSession {
+            PtyTerminalView(session: s)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(Color.black)
+        } else {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Launch a CLI agent in this workspace").font(.callout.bold())
+                Text("Runs in the project root. Requires the tool to be installed (e.g. `claude`, `aider`).")
+                    .font(.caption).foregroundStyle(AtelierTheme.dim)
+                TextField("command", text: $cliCommand)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(size: 12, design: .monospaced))
+                Button {
+                    Task { await launchCLI() }
+                } label: {
+                    Label("Launch", systemImage: "terminal")
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(cliCommand.trimmingCharacters(in: .whitespaces).isEmpty)
+                Spacer()
+            }
+            .padding(14)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        }
+    }
+
+    private func launchCLI() async {
+        guard let t = await client.createTerminal(workspaceID: workspaceID, command: cliCommand) else { return }
+        let session = TerminalSession(id: t.id, title: cliCommand)
+        session.roleName = role.name
+        if let stub = client.ptyStub() { session.start(stub: stub) }
+        cliSession = session
     }
 
     private var header: some View {
@@ -186,6 +241,18 @@ struct AssistantPane: View {
                 Text(role.description_p).font(.caption).foregroundStyle(AtelierTheme.dim).lineLimit(1)
             }
             Spacer()
+            Picker("", selection: $backend) {
+                Image(systemName: "bubble.left.and.text.bubble.right").tag(Backend.chat)
+                Image(systemName: "terminal").tag(Backend.cli)
+            }
+            .pickerStyle(.segmented)
+            .fixedSize()
+            .onChange(of: selectedProvider) { _, p in
+                if cliSession == nil { cliCommand = Self.defaultCommand(provider: p, model: selectedModel) }
+            }
+            .onChange(of: selectedModel) { _, m in
+                if cliSession == nil { cliCommand = Self.defaultCommand(provider: selectedProvider, model: m) }
+            }
             providerPicker
             modelPicker
         }

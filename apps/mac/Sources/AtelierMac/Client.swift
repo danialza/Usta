@@ -99,13 +99,14 @@ final class AtelierClientModel: ObservableObject {
         }
     }
 
-    func createTerminal(workspaceID: String, cols: Int = 120, rows: Int = 32) async -> Atelier_V1_Terminal? {
+    func createTerminal(workspaceID: String, cols: Int = 120, rows: Int = 32, command: String = "") async -> Atelier_V1_Terminal? {
         guard let stub else { return nil }
         do {
             let req = Atelier_V1_CreateTerminalRequest.with {
                 $0.workspaceID = workspaceID
                 $0.cols = Int32(cols)
                 $0.rows = Int32(rows)
+                $0.command = command
             }
             return try await stub.createTerminal(req)
         } catch {

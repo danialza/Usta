@@ -523,6 +523,7 @@ impl Atelier for AtelierSvc {
             cwd: cwd.clone(),
             cols,
             rows,
+            command: if r.command.trim().is_empty() { None } else { Some(r.command.clone()) },
         };
         self.pty
             .create(spec)

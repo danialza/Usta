@@ -360,6 +360,7 @@ async fn main() -> Result<()> {
                     workspace_id: ws_id,
                     shell, cwd: String::new(),
                     cols: cols as i32, rows: rows as i32,
+                    command: String::new(),
                 }).await?.into_inner();
                 println!("{} {}", "✓".green(), r.id.bold());
                 println!("  {} {}", "shell".dimmed(), r.shell);
