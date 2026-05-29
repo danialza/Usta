@@ -29,6 +29,13 @@ fn norm(v: &[f32]) -> f32 {
     v.iter().map(|x| x * x).sum::<f32>().sqrt()
 }
 
+fn now_unix() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
 pub struct Db {
     conn: Mutex<Connection>,
     pub path: PathBuf,
@@ -135,7 +142,24 @@ impl Db {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).ok();
         }
-        let conn = Connection::open(&path)?;
+        let conn = match Self::open_inner(&path) {
+            Ok(c) => c,
+            Err(e) => {
+                // Corrupt / incompatible DB: back it up and start fresh rather
+                // than crashing the daemon on launch.
+                tracing::warn!(error = %e, "db open failed; recreating");
+                let bak = path.with_extension(format!("db.bak.{}", now_unix()));
+                let _ = std::fs::rename(&path, &bak);
+                let _ = std::fs::remove_file(path.with_extension("db-wal"));
+                let _ = std::fs::remove_file(path.with_extension("db-shm"));
+                Self::open_inner(&path)?
+            }
+        };
+        Ok(Self { conn: Mutex::new(conn), path })
+    }
+
+    fn open_inner(path: &Path) -> rusqlite::Result<Connection> {
+        let conn = Connection::open(path)?;
         conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
         conn.execute_batch(SCHEMA)?;
         // Migration: add agent_role to pre-existing chat_messages tables.
@@ -143,7 +167,7 @@ impl Db {
             "ALTER TABLE chat_messages ADD COLUMN agent_role TEXT NOT NULL DEFAULT ''",
             [],
         );
-        Ok(Self { conn: Mutex::new(conn), path })
+        Ok(conn)
     }
 
     pub fn upsert_workspace(&self, ws: &WorkspaceRow) -> rusqlite::Result<()> {
