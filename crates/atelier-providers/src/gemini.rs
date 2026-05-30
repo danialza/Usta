@@ -43,10 +43,16 @@ impl Provider for GeminiProvider {
     fn name(&self) -> &'static str { "gemini" }
 
     fn default_models(&self) -> Vec<String> {
+        // Current valid IDs on v1beta (mid-2025). Older bare `gemini-1.5-flash`
+        // returns 404; use suffixed variants.
         vec![
-            "gemini-2.0-flash".into(),
             "gemini-2.5-flash".into(),
-            "gemini-1.5-flash".into(),
+            "gemini-2.0-flash".into(),
+            "gemini-2.0-flash-lite".into(),
+            "gemini-1.5-flash-002".into(),
+            "gemini-1.5-flash-8b".into(),
+            "gemini-2.5-pro".into(),
+            "gemini-1.5-pro-002".into(),
         ]
     }
 
