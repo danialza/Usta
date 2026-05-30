@@ -149,6 +149,7 @@ struct AssistantPane: View {
     @State private var backend: Backend = .chat
     @State private var cliCommand: String = ""
     @State private var cliSession: TerminalSession? = nil
+    @State private var cliLaunching: Bool = false
 
     init(workspaceID: String,
          role: Atelier_V1_Role,
@@ -217,29 +218,31 @@ struct AssistantPane: View {
 
     @ViewBuilder
     private var cliView: some View {
-        if let s = cliSession {
-            PtyTerminalView(session: s)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(Color.black)
-        } else {
-            VStack(alignment: .leading, spacing: 10) {
-                Text("Launch a CLI agent in this workspace").font(.callout.bold())
-                Text("Runs in the project root. Requires the tool to be installed (e.g. `claude`, `aider`).")
-                    .font(.caption).foregroundStyle(AtelierTheme.dim)
-                TextField("command", text: $cliCommand)
-                    .textFieldStyle(.roundedBorder)
-                    .font(.system(size: 12, design: .monospaced))
-                Button {
-                    Task { await launchCLI() }
-                } label: {
-                    Label("Launch", systemImage: "terminal")
+        ZStack {
+            Color.black
+            if let s = cliSession {
+                PtyTerminalView(session: s)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                VStack(spacing: 8) {
+                    ProgressView().scaleEffect(0.7)
+                    Text(cliLaunching ? "starting \(cliCommand)…" : "preparing…")
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundStyle(AtelierTheme.dim)
                 }
-                .buttonStyle(.borderedProminent)
-                .disabled(cliCommand.trimmingCharacters(in: .whitespaces).isEmpty)
-                Spacer()
             }
-            .padding(14)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .task {
+            // Auto-launch as soon as the CLI pane appears (no manual button).
+            if cliSession == nil && !cliLaunching {
+                let cmd = cliCommand.trimmingCharacters(in: .whitespaces)
+                if !cmd.isEmpty {
+                    cliLaunching = true
+                    await launchCLI()
+                    cliLaunching = false
+                }
+            }
         }
     }
 
