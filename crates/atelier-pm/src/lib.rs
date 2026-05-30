@@ -103,15 +103,40 @@ Reply ONLY with a single fenced JSON block. The JSON must match this schema:
 }
 
 Rules:
-- 3 to 6 team members.
+- 6 to 10 team members. Build a real mid-sized engineering team, not a skeleton.
+  Cover ALL relevant disciplines for the project — examples (pick the ones that
+  apply, add others as needed):
+    frontend, backend, mobile (if mobile applies), api, ui-ux, design-system,
+    qa (manual + e2e tests), security (appsec, OWASP), devops/sre,
+    dba (schema, perf), data (analytics, pipelines), ml (if AI features),
+    payments, growth, docs, product-manager, support-tooling.
+  Split distinct concerns into separate specialists: e.g. `qa` and `security`
+  are ALWAYS separate roles, never merged with backend. Same for `dba` vs
+  `backend` on data-heavy projects, and `ui-ux` vs `frontend`.
+- For every concern actually present in the project, assign one specialist.
+  Err on the side of MORE coverage when the description implies scale
+  (commerce, multi-tenant, payments, auth, mobile, AI). Don't bundle.
+- Define rich handoff topics so the team operates like an org — e.g.
+  api.added/api.contract.changed, schema.changed/migration.applied,
+  ui.component.added, design.spec.ready, tests.failing/tests.passed,
+  security.finding/security.cleared, deploy.ready/deploy.rolled_back,
+  data.event.added. Publishers + subscribers must connect (no orphan topics).
 - `name` is short kebab-case, unique.
 - `project_slug` is kebab-case and filesystem-safe.
 - emoji is a single grapheme.
-- recommended_model is a real id (claude-opus-4-7, claude-sonnet-4-6, claude-haiku-4-5-20251001, qwen3-coder, llama3.2).
+- recommended_model is a real id (claude-opus-4-7, claude-sonnet-4-6,
+  claude-haiku-4-5-20251001, qwen3-coder, llama3.2). Use opus only for the
+  roles that need deep reasoning (security, dba, ml, product-manager); the
+  rest sonnet/haiku.
 - recommended_provider is "anthropic" or "ollama".
-- `system_prompt` is 6–20 sentences, project-specific, mentions teammates by @name when handing off.
-- tools come from this set: shell, fs_read, fs_write, npm, pnpm, pip, cargo, go, docker, gh, flyctl, kubectl, terraform, psql, sqlite, prisma, semgrep, gitleaks, trivy, nmap, playwright, vite.
-- claude_skills from: pdf, xlsx, docx, pptx, skill-creator, consolidate-memory, setup-cowork. Empty if none fit.
+- `system_prompt` is 8–25 sentences, project-specific, names real folders
+  the role owns, lists what they DO and what they DEFER to teammates by
+  @name. End with one "Output:" line about voice/format.
+- tools come from: shell, fs_read, fs_write, npm, pnpm, pip, cargo, go,
+  docker, gh, flyctl, kubectl, terraform, psql, sqlite, prisma, semgrep,
+  gitleaks, trivy, nmap, playwright, vite. Give each role its minimal set.
+- claude_skills from: pdf, xlsx, docx, pptx, skill-creator,
+  consolidate-memory, setup-cowork. Empty if none fit.
 - publishes/subscribes use dotted topic names (`area.event`).
 - output nothing outside the fenced JSON block.
 "#;
@@ -172,7 +197,7 @@ impl Pm {
         let req = ChatRequest {
             model: self.model.clone(),
             system: Some(PM_NEW_PROJECT_PROMPT.into()),
-            max_tokens: Some(8192),
+            max_tokens: Some(16384),
             messages: vec![ChatMessage { role: "user".into(), content: user_msg }],
         };
         let mut stream = self.provider.chat(req).await?;
