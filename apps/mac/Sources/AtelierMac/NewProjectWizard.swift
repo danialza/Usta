@@ -14,6 +14,7 @@ struct NewProjectWizard: View {
     @State private var model: String = "claude-sonnet-4-6"
     @State private var providers: [Atelier_V1_ProviderInfo] = []
     @State private var proposal: Atelier_V1_ProjectProposal? = nil
+    @State private var showAddRole: Bool = false
     @State private var working: Bool = false
     @State private var errorMsg: String? = nil
     @State private var openedWS: Atelier_V1_Workspace? = nil
@@ -151,10 +152,19 @@ struct NewProjectWizard: View {
                         Text(p.firstSteps).foregroundStyle(.primary).font(.callout)
                     }
 
-                    sectionLabel("Team")
+                    HStack {
+                        sectionLabel("Team")
+                        Spacer()
+                        Button {
+                            showAddRole = true
+                        } label: { Label("Add Role", systemImage: "plus") }
+                            .buttonStyle(.bordered).controlSize(.small)
+                    }
                     VStack(spacing: 8) {
                         ForEach(p.team, id: \.name) { m in
-                            ProposedRoleCard(role: m)
+                            ProposedRoleCard(role: m, onDelete: {
+                                proposal?.team.removeAll { $0.name == m.name }
+                            })
                         }
                     }
                 }
@@ -169,6 +179,11 @@ struct NewProjectWizard: View {
                     .buttonStyle(.borderedProminent)
             }
             .padding(14)
+            .sheet(isPresented: $showAddRole) {
+                RoleEditor(onSave: { newRole in
+                    proposal?.team.append(newRole)
+                })
+            }
         } else {
             Text("(no proposal)").padding()
         }
@@ -265,6 +280,7 @@ struct NewProjectWizard: View {
 
 struct ProposedRoleCard: View {
     let role: Atelier_V1_ProposedRole
+    var onDelete: (() -> Void)? = nil
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
@@ -273,6 +289,10 @@ struct ProposedRoleCard: View {
                 Spacer()
                 Text(role.recommendedModel)
                     .font(.caption2).foregroundStyle(AtelierTheme.dim)
+                if let onDelete {
+                    Button(action: onDelete) { Image(systemName: "trash") }
+                        .buttonStyle(.borderless).foregroundStyle(.red)
+                }
             }
             Text(role.why).font(.caption).foregroundStyle(AtelierTheme.dim)
             if !role.tools.isEmpty {

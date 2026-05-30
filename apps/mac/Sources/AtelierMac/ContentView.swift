@@ -270,6 +270,7 @@ struct WorkspaceDetailView: View {
     @State private var selectedRole: Atelier_V1_Role? = nil   // focus a single assistant
     @State private var mode: DetailMode = .assistants
     @State private var showApplyTeam = false
+    @State private var showAddRole = false
     @State private var applyInFlight = false
     @State private var applyResult: String? = nil
     @State private var terminalsLoaded = false
@@ -301,6 +302,15 @@ struct WorkspaceDetailView: View {
             roles = await client.listRoles(workspaceID: ws.id)
         }
         .sheet(isPresented: $showApplyTeam) { applyTeamSheet }
+        .sheet(isPresented: $showAddRole) {
+            RoleEditor(onSave: { newRole in
+                Task {
+                    if let added = await client.addRole(workspaceID: ws.id, role: newRole) {
+                        roles.append(added)
+                    }
+                }
+            })
+        }
     }
 
     private var header: some View {
@@ -321,6 +331,9 @@ struct WorkspaceDetailView: View {
                               systemImage: "dot.radiowaves.left.and.right") {
                     showActivity.toggle()
                 }
+                toolbarButton("Add Role", systemImage: "plus") {
+                    showAddRole = true
+                }
                 toolbarButton("Apply Team", systemImage: "person.3.sequence") {
                     showApplyTeam = true
                 }
@@ -338,6 +351,16 @@ struct WorkspaceDetailView: View {
                             RoleChip(role: r, selected: selectedRole?.name == r.name) {
                                 if selectedRole?.name == r.name { selectedRole = nil }
                                 else { selectedRole = r }
+                            }
+                            .contextMenu {
+                                Button(role: .destructive) {
+                                    let name = r.name
+                                    Task {
+                                        await client.deleteRole(workspaceID: ws.id, name: name)
+                                        roles.removeAll { $0.name == name }
+                                        if selectedRole?.name == name { selectedRole = nil }
+                                    }
+                                } label: { Label("Delete role", systemImage: "trash") }
                             }
                         }
                     }

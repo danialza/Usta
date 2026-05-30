@@ -43,6 +43,10 @@ service Atelier {
   // (<ws>/.atelier/roles/*.yaml). Reloads the daemon's library.
   rpc ApplyTeam(ApplyTeamRequest) returns (ApplyTeamResponse);
 
+  // Add or remove a single role on a workspace (writes/removes the yaml).
+  rpc AddRole(AddRoleRequest) returns (AddRoleResponse);
+  rpc DeleteRole(DeleteRoleRequest) returns (Empty);
+
   // Multi-agent chat. @mentions route the message to one or more roles
   // (in parallel). Each role's tokens stream back tagged by role name.
   rpc TeamChat(TeamChatRequest) returns (stream TeamChatEvent);
@@ -272,6 +276,21 @@ message ApplyTeamRequest {
 message ApplyTeamResponse {
   WorkspaceAnalysis analysis = 1;
   repeated string written_paths = 2;
+}
+
+message AddRoleRequest {
+  string workspace_id = 1;
+  ProposedRole role   = 2;
+}
+
+message AddRoleResponse {
+  Role role         = 1;
+  string written_path = 2;
+}
+
+message DeleteRoleRequest {
+  string workspace_id = 1;
+  string role_name    = 2;
 }
 
 // --- Team chat ---

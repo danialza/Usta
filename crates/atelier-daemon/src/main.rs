@@ -10,6 +10,7 @@ use atelier_core::{
 use atelier_proto::v1::{
     atelier_server::{Atelier, AtelierServer},
     AnalyzeRequest, ApplyTeamRequest, ApplyTeamResponse, ChatRequest as PbChatReq, ChatToken,
+    AddRoleRequest, AddRoleResponse, DeleteRoleRequest,
     CloseTerminalRequest, CreateTerminalRequest, Empty, Event as PbEvent, EventList,
     GetHistoryRequest, HistoryList, HistoryMessage,
     IndexProgress as PbIndexProgress, IndexRequest, ListEventsRequest, ListRolesRequest,
@@ -1154,6 +1155,71 @@ impl Atelier for AtelierSvc {
             }),
             written_paths: written,
         }))
+    }
+
+    async fn add_role(
+        &self,
+        req: Request<AddRoleRequest>,
+    ) -> Result<Response<AddRoleResponse>, Status> {
+        let r = req.into_inner();
+        let pr = r.role.ok_or_else(|| Status::invalid_argument("role required"))?;
+        if pr.name.trim().is_empty() {
+            return Err(Status::invalid_argument("role.name required"));
+        }
+        // Resolve workspace path.
+        let db = self.db.clone();
+        let ws_id = r.workspace_id.clone();
+        let workspaces = tokio::task::spawn_blocking(move || db.list_workspaces())
+            .await.unwrap().map_err(|e| Status::internal(e.to_string()))?;
+        let ws = workspaces.into_iter().find(|w| w.id == ws_id)
+            .ok_or_else(|| Status::not_found(format!("workspace '{ws_id}' not found")))?;
+        let roles_dir = std::path::PathBuf::from(&ws.path).join(".atelier").join("roles");
+        std::fs::create_dir_all(&roles_dir)
+            .map_err(|e| Status::internal(format!("mkdir: {e}")))?;
+        let mut lib = (*self.roles).clone();
+        let role = role_from_proposed(&pr, &roles_dir);
+        let path = lib.write_role(&roles_dir, &role)
+            .map_err(|e| Status::internal(format!("write role: {e}")))?;
+        Ok(Response::new(AddRoleResponse {
+            role: Some(PbRole {
+                name: role.name.clone(),
+                emoji: role.emoji.clone(),
+                description: role.description.clone(),
+                default_provider: role.default_provider.clone(),
+                default_model: role.default_model.clone(),
+                allowed_tools: role.allowed_tools.clone(),
+                source_path: path.to_string_lossy().into_owned(),
+                scope: "workspace".into(),
+                claude_skills: role.claude_skills.clone(),
+                handoff_publishes: role.handoff_topics.publishes.clone(),
+                handoff_subscribes: role.handoff_topics.subscribes.clone(),
+            }),
+            written_path: path.to_string_lossy().into_owned(),
+        }))
+    }
+
+    async fn delete_role(
+        &self,
+        req: Request<DeleteRoleRequest>,
+    ) -> Result<Response<Empty>, Status> {
+        let r = req.into_inner();
+        let name = r.role_name.trim().to_string();
+        if name.is_empty() {
+            return Err(Status::invalid_argument("role_name required"));
+        }
+        let db = self.db.clone();
+        let ws_id = r.workspace_id.clone();
+        let workspaces = tokio::task::spawn_blocking(move || db.list_workspaces())
+            .await.unwrap().map_err(|e| Status::internal(e.to_string()))?;
+        let ws = workspaces.into_iter().find(|w| w.id == ws_id)
+            .ok_or_else(|| Status::not_found(format!("workspace '{ws_id}' not found")))?;
+        let roles_dir = std::path::PathBuf::from(&ws.path).join(".atelier").join("roles");
+        // Try both .yaml and .yml; ignore not-found.
+        for ext in ["yaml", "yml"] {
+            let p = roles_dir.join(format!("{name}.{ext}"));
+            let _ = std::fs::remove_file(&p);
+        }
+        Ok(Response::new(Empty {}))
     }
 
     type TeamChatStream = TeamStream;

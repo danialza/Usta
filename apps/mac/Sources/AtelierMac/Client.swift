@@ -261,6 +261,30 @@ final class AtelierClientModel: ObservableObject {
         }
     }
 
+    // --- Role mgmt ---
+
+    func addRole(workspaceID: String, role: Atelier_V1_ProposedRole) async -> Atelier_V1_Role? {
+        guard let stub else { return nil }
+        do {
+            let r = try await stub.addRole(.with {
+                $0.workspaceID = workspaceID
+                $0.role = role
+            })
+            return r.hasRole ? r.role : nil
+        } catch {
+            self.lastError = "add role: \(error)"
+            return nil
+        }
+    }
+
+    func deleteRole(workspaceID: String, name: String) async {
+        guard let stub else { return }
+        _ = try? await stub.deleteRole(.with {
+            $0.workspaceID = workspaceID
+            $0.roleName = name
+        })
+    }
+
     // --- New project ---
 
     func proposeProject(idea: String, provider: String = "anthropic", model: String = "claude-sonnet-4-6") async -> Atelier_V1_ProjectProposal? {
