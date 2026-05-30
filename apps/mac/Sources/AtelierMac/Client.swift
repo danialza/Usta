@@ -261,6 +261,12 @@ final class AtelierClientModel: ObservableObject {
         }
     }
 
+    func closeWorkspace(id: String) async {
+        guard let stub else { return }
+        _ = try? await stub.closeWorkspace(.with { $0.id = id })
+        await refreshWorkspaces()
+    }
+
     // --- Role mgmt ---
 
     func addRole(workspaceID: String, role: Atelier_V1_ProposedRole) async -> Atelier_V1_Role? {

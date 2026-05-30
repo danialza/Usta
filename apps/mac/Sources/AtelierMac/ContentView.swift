@@ -75,6 +75,15 @@ struct ContentView: View {
                         WorkspaceRow(ws: ws, selected: selection?.id == ws.id) {
                             selection = ws
                         }
+                        .contextMenu {
+                            Button(role: .destructive) {
+                                let id = ws.id
+                                Task {
+                                    await client.closeWorkspace(id: id)
+                                    if selection?.id == id { selection = nil }
+                                }
+                            } label: { Label("Remove from list", systemImage: "minus.circle") }
+                        }
                     }
                 }
             }
@@ -344,30 +353,39 @@ struct WorkspaceDetailView: View {
                 }
             }
             if !roles.isEmpty && mode == .assistants {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 6) {
-                        RoleChipAll(selected: selectedRole == nil) { selectedRole = nil }
-                        ForEach(roles, id: \.name) { r in
-                            RoleChip(role: r, selected: selectedRole?.name == r.name) {
-                                if selectedRole?.name == r.name { selectedRole = nil }
-                                else { selectedRole = r }
-                            }
-                            .contextMenu {
-                                Button(role: .destructive) {
-                                    let name = r.name
-                                    Task {
-                                        await client.deleteRole(workspaceID: ws.id, name: name)
-                                        roles.removeAll { $0.name == name }
-                                        if selectedRole?.name == name { selectedRole = nil }
-                                    }
-                                } label: { Label("Delete role", systemImage: "trash") }
-                            }
-                        }
-                    }
-                }
+                roleChipsStrip
             }
         }
         .padding(14)
+    }
+
+    private var roleChipsStrip: some View {
+        FlowLayout(spacing: 6) {
+            RoleChipAll(selected: selectedRole == nil) { selectedRole = nil }
+            ForEach(roles, id: \.name) { r in
+                chip(for: r)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func chip(for r: Atelier_V1_Role) -> some View {
+        let isSel = selectedRole?.name == r.name
+        let tip: String = r.description_p.isEmpty ? r.name : "\(r.name) — \(r.description_p)"
+        RoleChip(role: r, selected: isSel) {
+            if isSel { selectedRole = nil } else { selectedRole = r }
+        }
+        .help(tip)
+        .contextMenu {
+            Button(role: .destructive) {
+                let name = r.name
+                Task {
+                    await client.deleteRole(workspaceID: ws.id, name: name)
+                    roles.removeAll { $0.name == name }
+                    if selectedRole?.name == name { selectedRole = nil }
+                }
+            } label: { Label("Delete role", systemImage: "trash") }
+        }
     }
 
     private var modePicker: some View {
@@ -500,7 +518,11 @@ struct RoleChip: View {
                 let emoji = role.emoji.isEmpty
                     ? AtelierTheme.roleEmoji(for: role.name, fallback: "•")
                     : role.emoji
-                Text("\(emoji) \(role.name)").font(.system(size: 11, weight: .medium))
+                Text("\(emoji) \(role.name)")
+                    .font(.system(size: 11, weight: .medium))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .fixedSize(horizontal: true, vertical: false)
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 5)

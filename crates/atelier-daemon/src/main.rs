@@ -11,7 +11,7 @@ use atelier_proto::v1::{
     atelier_server::{Atelier, AtelierServer},
     AnalyzeRequest, ApplyTeamRequest, ApplyTeamResponse, ChatRequest as PbChatReq, ChatToken,
     AddRoleRequest, AddRoleResponse, DeleteRoleRequest,
-    CloseTerminalRequest, CreateTerminalRequest, Empty, Event as PbEvent, EventList,
+    CloseTerminalRequest, CloseWorkspaceRequest, CreateTerminalRequest, Empty, Event as PbEvent, EventList,
     GetHistoryRequest, HistoryList, HistoryMessage,
     IndexProgress as PbIndexProgress, IndexRequest, ListEventsRequest, ListRolesRequest,
     ListTerminalsRequest, ListToolsRequest, OpenWorkspaceRequest, PingRequest, PingResponse,
@@ -501,6 +501,22 @@ impl Atelier for AtelierSvc {
         Ok(Response::new(WorkspaceList {
             items: rows.iter().map(ws_to_pb).collect(),
         }))
+    }
+
+    async fn close_workspace(
+        &self,
+        req: Request<CloseWorkspaceRequest>,
+    ) -> Result<Response<Empty>, Status> {
+        let id = req.into_inner().id;
+        if id.is_empty() {
+            return Err(Status::invalid_argument("id required"));
+        }
+        let db = self.db.clone();
+        tokio::task::spawn_blocking(move || db.delete_workspace(&id))
+            .await
+            .unwrap()
+            .map_err(|e| Status::internal(e.to_string()))?;
+        Ok(Response::new(Empty {}))
     }
 
     async fn list_providers(

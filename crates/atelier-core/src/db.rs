@@ -198,6 +198,13 @@ impl Db {
         Ok(rows)
     }
 
+    pub fn delete_workspace(&self, id: &str) -> rusqlite::Result<usize> {
+        self.conn.lock().unwrap().execute(
+            "DELETE FROM workspaces WHERE id = ?1",
+            params![id],
+        )
+    }
+
     pub fn get_workspace_by_path(&self, path: &str) -> rusqlite::Result<Option<WorkspaceRow>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(

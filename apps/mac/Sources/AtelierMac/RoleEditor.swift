@@ -5,6 +5,7 @@ import AtelierProto
 /// ProposedRole on Save and decides where to send it.
 struct RoleEditor: View {
     @Environment(\.dismiss) private var dismiss
+    var existing: Atelier_V1_Role? = nil
     var onSave: (Atelier_V1_ProposedRole) -> Void
 
     @State private var name: String = ""
@@ -19,10 +20,31 @@ struct RoleEditor: View {
     @State private var systemPrompt: String = ""
     @State private var cliCommand: String = ""
 
+    init(existing: Atelier_V1_Role? = nil,
+         onSave: @escaping (Atelier_V1_ProposedRole) -> Void) {
+        self.existing = existing
+        self.onSave = onSave
+        if let r = existing {
+            _name = State(initialValue: r.name)
+            _emoji = State(initialValue: r.emoji.isEmpty ? "🧩" : r.emoji)
+            _why = State(initialValue: r.description_p)
+            _provider = State(initialValue: r.defaultProvider)
+            _modelId = State(initialValue: r.defaultModel)
+            _tools = State(initialValue: r.allowedTools.joined(separator: ", "))
+            _skills = State(initialValue: r.claudeSkills.joined(separator: ", "))
+            _publishes = State(initialValue: r.handoffPublishes.joined(separator: ", "))
+            _subscribes = State(initialValue: r.handoffSubscribes.joined(separator: ", "))
+            _cliCommand = State(initialValue: r.cliCommand)
+            // systemPrompt not exposed in Atelier_V1_Role; leave blank — editing
+            // it would require a GetRoleDetail RPC. For now keep blank and
+            // append edits via the wizard pass.
+        }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Text("Add Role").font(.title2.bold())
+                Text(existing == nil ? "Add Role" : "Edit Role").font(.title2.bold())
                 Spacer()
                 Button("Cancel") { dismiss() }
             }

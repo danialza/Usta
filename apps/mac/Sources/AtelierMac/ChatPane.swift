@@ -150,6 +150,7 @@ struct AssistantPane: View {
     @State private var cliCommand: String = ""
     @State private var cliSession: TerminalSession? = nil
     @State private var cliLaunching: Bool = false
+    @State private var showRoleEditor: Bool = false
 
     init(workspaceID: String,
          role: Atelier_V1_Role,
@@ -289,6 +290,12 @@ struct AssistantPane: View {
                 providerPicker
                 modelPicker
             }
+            Button { showRoleEditor = true } label: {
+                Image(systemName: "gearshape").font(.caption)
+            }
+            .buttonStyle(.borderless)
+            .foregroundStyle(AtelierTheme.dim)
+            .help("Edit role")
             if let toggle = onToggleCollapse {
                 Button(action: toggle) {
                     Image(systemName: collapsed ? "chevron.down" : "chevron.up")
@@ -299,6 +306,13 @@ struct AssistantPane: View {
             }
         }
         .padding(10)
+        .sheet(isPresented: $showRoleEditor) {
+            RoleEditor(existing: role, onSave: { updated in
+                Task {
+                    _ = await client.addRole(workspaceID: workspaceID, role: updated)
+                }
+            })
+        }
     }
 
     @ViewBuilder
@@ -307,30 +321,96 @@ struct AssistantPane: View {
         let pubs = role.handoffPublishes
         let subs = role.handoffSubscribes
         if !skills.isEmpty || !pubs.isEmpty || !subs.isEmpty {
-            HStack(spacing: 6) {
+            FlowLayout(spacing: 6) {
                 ForEach(skills, id: \.self) { s in
-                    tag("skill:\(s)", color: .purple)
+                    tag("skill:\(s)", color: .purple, full: "Claude skill: \(s) — \(Self.skillDescribe(s))")
                 }
                 ForEach(pubs, id: \.self) { p in
-                    tag("↑\(p)", color: AtelierTheme.roleColor(for: role.name))
+                    tag("↑\(p)", color: AtelierTheme.roleColor(for: role.name), full: "publishes \(p) — \(Self.topicDescribe(p))")
                 }
                 ForEach(subs, id: \.self) { s in
-                    tag("↓\(s)", color: AtelierTheme.dim)
+                    tag("↓\(s)", color: AtelierTheme.dim, full: "subscribes \(s) — \(Self.topicDescribe(s))")
                 }
-                Spacer()
             }
             .padding(.horizontal, 10)
             .padding(.bottom, 6)
         }
     }
 
-    private func tag(_ text: String, color: Color) -> some View {
-        Text(text)
+    private func tag(_ text: String, color: Color, full: String) -> some View {
+        let short = text.count > 22 ? (String(text.prefix(20)) + "…") : text
+        return Text(short)
             .font(.system(size: 9, weight: .medium))
+            .lineLimit(1)
             .padding(.horizontal, 6).padding(.vertical, 2)
             .background(color.opacity(0.18))
             .foregroundStyle(color)
             .clipShape(Capsule())
+            .help(full)
+    }
+
+    /// 1-line plain description for a dotted topic name.
+    static func topicDescribe(_ topic: String) -> String {
+        switch topic {
+        case "api.added":              return "a new HTTP/RPC endpoint shipped"
+        case "api.changed":            return "an existing endpoint's contract changed"
+        case "schema.changed":         return "the database schema was updated"
+        case "schema.proposed":        return "a schema change is proposed and needs review"
+        case "schema.ready":           return "the schema is approved and ready to apply"
+        case "migration.applied":      return "a DB migration was applied"
+        case "auth.implemented":       return "authentication is implemented"
+        case "auth.flows.defined":     return "auth flows have been defined"
+        case "auth.guidelines":        return "security guidelines for auth shipped"
+        case "tests.failing":          return "tests are failing"
+        case "tests.passed":           return "tests pass"
+        case "tests.needed":           return "new tests are needed"
+        case "security.finding":       return "a security issue was found"
+        case "security.cleared":       return "the area was cleared by security"
+        case "security.vulnerability.found": return "a vulnerability was found"
+        case "security.review.complete":     return "security review is complete"
+        case "deploy.ready":           return "the build is ready to deploy"
+        case "deploy.rolled_back":     return "a deploy was rolled back"
+        case "ui.component.added":     return "a new UI component shipped"
+        case "ui.page.created":        return "a new page shipped"
+        case "design.spec.ready":      return "design spec is ready"
+        case "data.event.added":       return "a new data event/stream"
+        case "data.model.defined":     return "data models defined"
+        case "data.processed":         return "data was processed/transformed"
+        case "payments.setup":         return "payments are configured"
+        case "payment.integration.setup": return "payment integration set up"
+        case "release.readiness.report":  return "release readiness report"
+        case "test.report.generated":     return "test report generated"
+        case "bug.found":                 return "a bug was found"
+        case "code.pushed":               return "code pushed to the repo"
+        case "code.committed":            return "code committed"
+        case "ci.pipeline.configured":    return "CI pipeline configured"
+        case "environment.ready":         return "environment is ready"
+        case "app.deployed":              return "app deployed"
+        case "data.migration.completed":  return "data migration completed"
+        case "ui.form.validated":         return "form validation passed"
+        case "ui.page.created":           return "UI page created"
+        case "requirements.updated":      return "requirements were updated"
+        case "requirements.defined":      return "requirements defined"
+        case "feature.request":           return "a new feature request"
+        case "data.proposal":             return "a data proposal"
+        case "data.model.define":         return "data model definition"
+        case "devops.infra.ready":        return "infra is ready"
+        case "payments.integrated":       return "payments integrated"
+        default:                          return "team event"
+        }
+    }
+
+    static func skillDescribe(_ s: String) -> String {
+        switch s {
+        case "pdf":                return "read/extract/fill/create PDFs"
+        case "xlsx":               return "read/edit/create spreadsheets"
+        case "docx":               return "create/edit Word docs"
+        case "pptx":               return "create/edit PowerPoint decks"
+        case "skill-creator":      return "author new Claude skills"
+        case "consolidate-memory": return "merge/prune long-term memory"
+        case "setup-cowork":       return "guided Cowork setup"
+        default:                   return "custom skill"
+        }
     }
 
     private var providerPicker: some View {

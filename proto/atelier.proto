@@ -10,6 +10,7 @@ service Atelier {
   // Workspace management.
   rpc OpenWorkspace(OpenWorkspaceRequest) returns (Workspace);
   rpc ListWorkspaces(Empty) returns (WorkspaceList);
+  rpc CloseWorkspace(CloseWorkspaceRequest) returns (Empty);
 
   // Provider / model introspection.
   rpc ListProviders(Empty) returns (ProviderList);
@@ -94,6 +95,7 @@ message Workspace {
   int64  opened_unix_ms = 4;
 }
 message WorkspaceList { repeated Workspace items = 1; }
+message CloseWorkspaceRequest { string id = 1; }
 
 // --- Providers ---
 
