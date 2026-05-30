@@ -161,10 +161,14 @@ struct AssistantPane: View {
         _model = StateObject(wrappedValue: ChatPaneModel(role: role, workspaceID: workspaceID))
         _selectedProvider = State(initialValue: role.defaultProvider)
         _selectedModel = State(initialValue: role.defaultModel)
-        // Default to CLI backend when the role ships with a CLI command.
-        if !role.cliCommand.isEmpty {
+        // Default to CLI: explicit role.cliCommand wins, else derive from
+        // provider (legacy role yamls without cli_command still get CLI mode).
+        let derived = !role.cliCommand.isEmpty
+            ? role.cliCommand
+            : Self.defaultCommand(provider: role.defaultProvider, model: role.defaultModel)
+        if !derived.isEmpty {
             _backend = State(initialValue: .cli)
-            _cliCommand = State(initialValue: role.cliCommand)
+            _cliCommand = State(initialValue: derived)
         }
     }
 
