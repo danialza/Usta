@@ -135,6 +135,8 @@ typealias ChatPane = AssistantPane
 struct AssistantPane: View {
     let workspaceID: String
     let role: Atelier_V1_Role
+    var collapsed: Bool = false
+    var onToggleCollapse: (() -> Void)? = nil
     @EnvironmentObject var client: AtelierClientModel
     @StateObject private var model: ChatPaneModel
 
@@ -148,19 +150,48 @@ struct AssistantPane: View {
     @State private var cliCommand: String = ""
     @State private var cliSession: TerminalSession? = nil
 
-    init(workspaceID: String, role: Atelier_V1_Role) {
+    init(workspaceID: String,
+         role: Atelier_V1_Role,
+         collapsed: Bool = false,
+         onToggleCollapse: (() -> Void)? = nil) {
         self.workspaceID = workspaceID
         self.role = role
+        self.collapsed = collapsed
+        self.onToggleCollapse = onToggleCollapse
         _model = StateObject(wrappedValue: ChatPaneModel(role: role, workspaceID: workspaceID))
         _selectedProvider = State(initialValue: role.defaultProvider)
         _selectedModel = State(initialValue: role.defaultModel)
+        // Default to CLI backend when the role ships with a CLI command.
+        if !role.cliCommand.isEmpty {
+            _backend = State(initialValue: .cli)
+            _cliCommand = State(initialValue: role.cliCommand)
+        }
     }
 
     var body: some View {
         VStack(spacing: 0) {
             header
-            capabilities
-            Divider().overlay(AtelierTheme.border)
+            if !collapsed {
+                capabilities
+                Divider().overlay(AtelierTheme.border)
+                bodyContent
+            }
+        }
+        .background(AtelierTheme.cell)
+        .task {
+            providers = await client.listProviders()
+            await model.loadHistory(client: client)
+            if cliCommand.isEmpty {
+                cliCommand = !role.cliCommand.isEmpty
+                    ? role.cliCommand
+                    : Self.defaultCommand(provider: selectedProvider, model: selectedModel)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var bodyContent: some View {
+        Group {
             if backend == .cli {
                 cliView
             } else {
@@ -169,18 +200,12 @@ struct AssistantPane: View {
                 composer
             }
         }
-        .background(AtelierTheme.cell)
-        .task {
-            providers = await client.listProviders()
-            await model.loadHistory(client: client)
-            cliCommand = Self.defaultCommand(provider: selectedProvider, model: selectedModel)
-        }
     }
 
     static func defaultCommand(provider: String, model: String) -> String {
         switch provider {
         case "anthropic": return "claude"
-        case "gemini":    return "aider --model gemini/\(model) --yes-always"
+        case "gemini":    return "gemini"
         case "ollama":    return "aider --model ollama_chat/\(model) --yes-always"
         default:          return ""
         }
@@ -241,20 +266,30 @@ struct AssistantPane: View {
                 Text(role.description_p).font(.caption).foregroundStyle(AtelierTheme.dim).lineLimit(1)
             }
             Spacer()
-            Picker("", selection: $backend) {
-                Image(systemName: "bubble.left.and.text.bubble.right").tag(Backend.chat)
-                Image(systemName: "terminal").tag(Backend.cli)
+            if !collapsed {
+                Picker("", selection: $backend) {
+                    Image(systemName: "bubble.left.and.text.bubble.right").tag(Backend.chat)
+                    Image(systemName: "terminal").tag(Backend.cli)
+                }
+                .pickerStyle(.segmented)
+                .fixedSize()
+                .onChange(of: selectedProvider) { _, p in
+                    if cliSession == nil { cliCommand = !role.cliCommand.isEmpty ? role.cliCommand : Self.defaultCommand(provider: p, model: selectedModel) }
+                }
+                .onChange(of: selectedModel) { _, m in
+                    if cliSession == nil { cliCommand = !role.cliCommand.isEmpty ? role.cliCommand : Self.defaultCommand(provider: selectedProvider, model: m) }
+                }
+                providerPicker
+                modelPicker
             }
-            .pickerStyle(.segmented)
-            .fixedSize()
-            .onChange(of: selectedProvider) { _, p in
-                if cliSession == nil { cliCommand = Self.defaultCommand(provider: p, model: selectedModel) }
+            if let toggle = onToggleCollapse {
+                Button(action: toggle) {
+                    Image(systemName: collapsed ? "chevron.down" : "chevron.up")
+                        .font(.caption)
+                }
+                .buttonStyle(.borderless)
+                .foregroundStyle(AtelierTheme.dim)
             }
-            .onChange(of: selectedModel) { _, m in
-                if cliSession == nil { cliCommand = Self.defaultCommand(provider: selectedProvider, model: m) }
-            }
-            providerPicker
-            modelPicker
         }
         .padding(10)
     }

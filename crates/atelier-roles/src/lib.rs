@@ -85,6 +85,11 @@ pub struct Role {
     /// workspace event bus (e.g. ["schema.changed", "api.added"]).
     #[serde(default)]
     pub handoff_topics: HandoffTopics,
+    /// Optional CLI to spawn for this role (e.g. "claude", "gemini",
+    /// "aider --model gemini/x"). When non-empty, the assistant pane
+    /// defaults to CLI mode for this role.
+    #[serde(default)]
+    pub cli_command: String,
     /// Source path the role was loaded from (filled in by the loader).
     #[serde(default, skip_serializing)]
     pub source: PathBuf,

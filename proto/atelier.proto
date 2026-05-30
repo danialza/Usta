@@ -236,6 +236,7 @@ message ProposedRole {
   repeated string claude_skills = 8;
   repeated string publishes     = 9;
   repeated string subscribes    = 10;
+  string cli_command            = 11;
 }
 
 message WorkspaceAnalysis {
@@ -258,6 +259,10 @@ message Role {
   repeated string claude_skills      = 9;
   repeated string handoff_publishes  = 10;
   repeated string handoff_subscribes = 11;
+  // Optional CLI to spawn for this role (e.g. "claude", "gemini",
+  // "aider --model ...", "codex"). When set, the assistant pane defaults
+  // to CLI backend.
+  string cli_command       = 12;
 }
 
 message ListRolesRequest {

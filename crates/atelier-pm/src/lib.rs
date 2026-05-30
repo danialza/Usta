@@ -43,6 +43,10 @@ pub struct ProposedRole {
     pub publishes: Vec<String>,
     #[serde(default)]
     pub subscribes: Vec<String>,
+    /// Optional CLI to launch in the role's pane (real Claude Code / Gemini
+    /// CLI / aider / codex / etc.). Empty = use native chat backend.
+    #[serde(default)]
+    pub cli_command: String,
 }
 
 fn default_provider() -> String { "anthropic".into() }
@@ -97,7 +101,8 @@ Reply ONLY with a single fenced JSON block. The JSON must match this schema:
       "claude_skills": ["docx", "pdf"],
       "publishes": ["ui.component.added"],
       "subscribes": ["api.added", "schema.changed"],
-      "system_prompt": "You are the frontend engineer on the TaskHive project. Stack is Next.js 14 + Tailwind. When @backend ships a new endpoint, wire it into the dashboard. Defer auth questions to @security..."
+      "system_prompt": "You are the frontend engineer on the TaskHive project. Stack is Next.js 14 + Tailwind. When @backend ships a new endpoint, wire it into the dashboard. Defer auth questions to @security...",
+      "cli_command": "claude"
     }
   ]
 }
@@ -138,6 +143,13 @@ Rules:
 - claude_skills from: pdf, xlsx, docx, pptx, skill-creator,
   consolidate-memory, setup-cowork. Empty if none fit.
 - publishes/subscribes use dotted topic names (`area.event`).
+- cli_command: pick the real coding-agent CLI the role should drive,
+  based on its recommended_provider:
+    anthropic -> "claude"
+    gemini    -> "gemini" (Google's official Gemini CLI)
+    ollama    -> "aider --model ollama_chat/<model> --yes-always"
+  For non-engineering roles (product-manager, ui-ux, docs) leave
+  cli_command as "" so the pane uses the native chat.
 - output nothing outside the fenced JSON block.
 "#;
 

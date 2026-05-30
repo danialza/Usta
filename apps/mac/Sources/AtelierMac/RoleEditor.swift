@@ -17,6 +17,7 @@ struct RoleEditor: View {
     @State private var publishes: String = ""
     @State private var subscribes: String = ""
     @State private var systemPrompt: String = ""
+    @State private var cliCommand: String = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -38,6 +39,7 @@ struct RoleEditor: View {
                     pair("Skills (comma)", "pdf, docx", $skills)
                     pair("Publishes (comma)", "tests.passed", $publishes)
                     pair("Subscribes (comma)", "api.added", $subscribes)
+                    pair("CLI command (empty = native chat)", "claude  /  gemini  /  aider --model ...", $cliCommand)
                     VStack(alignment: .leading, spacing: 4) {
                         Text("System prompt").font(.caption).foregroundStyle(.secondary)
                         TextEditor(text: $systemPrompt)
@@ -101,6 +103,7 @@ struct RoleEditor: View {
         r.publishes = split(publishes)
         r.subscribes = split(subscribes)
         r.systemPrompt = systemPrompt
+        r.cliCommand = cliCommand
         onSave(r)
         dismiss()
     }

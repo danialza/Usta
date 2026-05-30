@@ -336,6 +336,7 @@ fn proposal_to_pb(p: atelier_pm::ProjectProposal) -> PbProjectProposal {
             claude_skills: r.claude_skills,
             publishes: r.publishes,
             subscribes: r.subscribes,
+            cli_command: r.cli_command,
         }).collect(),
     }
 }
@@ -360,6 +361,7 @@ fn role_from_proposed(pr: &PbProposedRole, roles_dir: &std::path::Path) -> RoleD
             publishes: pr.publishes.clone(),
             subscribes: pr.subscribes.clone(),
         },
+        cli_command: pr.cli_command.clone(),
         source: roles_dir.join(format!("{}.yaml", pr.name)),
         scope: atelier_roles::RoleScope::Workspace,
     }
@@ -778,6 +780,7 @@ impl Atelier for AtelierSvc {
                 claude_skills: r.claude_skills.clone(),
                 handoff_publishes: r.handoff_topics.publishes.clone(),
                 handoff_subscribes: r.handoff_topics.subscribes.clone(),
+                cli_command: r.cli_command.clone(),
             })
             .collect();
         Ok(Response::new(RoleList { items }))
@@ -1065,6 +1068,7 @@ impl Atelier for AtelierSvc {
                     claude_skills: r.claude_skills,
                     publishes: r.publishes,
                     subscribes: r.subscribes,
+                    cli_command: r.cli_command,
                 })
                 .collect(),
         }))
@@ -1120,6 +1124,7 @@ impl Atelier for AtelierSvc {
                 claude_skills: pr.claude_skills.clone(),
                 publishes: pr.publishes.clone(),
                 subscribes: pr.subscribes.clone(),
+                cli_command: pr.cli_command.clone(),
             };
             let role = role_from_proposed(&pb_pr, &roles_dir);
             let path = local
@@ -1150,6 +1155,7 @@ impl Atelier for AtelierSvc {
                         claude_skills: r.claude_skills,
                         publishes: r.publishes,
                         subscribes: r.subscribes,
+                        cli_command: r.cli_command,
                     })
                     .collect(),
             }),
@@ -1193,6 +1199,7 @@ impl Atelier for AtelierSvc {
                 claude_skills: role.claude_skills.clone(),
                 handoff_publishes: role.handoff_topics.publishes.clone(),
                 handoff_subscribes: role.handoff_topics.subscribes.clone(),
+                cli_command: role.cli_command.clone(),
             }),
             written_path: path.to_string_lossy().into_owned(),
         }))
