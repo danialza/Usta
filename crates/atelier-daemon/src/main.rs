@@ -292,6 +292,56 @@ fn write_mcp_config(cwd: &str) {
     }
 }
 
+/// Pre-approve project MCP servers so Claude Code doesn't prompt every launch.
+fn write_claude_settings(cwd: &str) {
+    let dir = std::path::Path::new(cwd).join(".claude");
+    let _ = std::fs::create_dir_all(&dir);
+    let path = dir.join("settings.local.json");
+    if path.exists() { return; }
+    let cfg = serde_json::json!({ "enableAllProjectMcpServers": true });
+    if let Ok(s) = serde_json::to_string_pretty(&cfg) {
+        let _ = std::fs::write(&path, s);
+    }
+}
+
+fn sanitize_role_name(s: &str) -> String {
+    s.chars()
+        .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '-' })
+        .collect()
+}
+
+/// Build the system-prompt brief injected into `claude --append-system-prompt`.
+fn render_role_brief(role: &RoleDef, workspace_path: &str) -> String {
+    let mut out = String::new();
+    out.push_str(&format!(
+        "You are the @{name} specialist on the Atelier team working in {ws}.\n\n",
+        name = role.name,
+        ws = workspace_path
+    ));
+    out.push_str(&role.system_prompt);
+    out.push_str("\n\n## Your handoff topics\n");
+    if !role.handoff_topics.publishes.is_empty() {
+        out.push_str(&format!("You publish: {}\n", role.handoff_topics.publishes.join(", ")));
+    }
+    if !role.handoff_topics.subscribes.is_empty() {
+        out.push_str(&format!("You subscribe: {}\n", role.handoff_topics.subscribes.join(", ")));
+    }
+    out.push_str(
+        "\n## Atelier MCP tools (you are connected to the team event bus)\n\
+         - publish_event(topic, summary): announce when you finish a milestone.\n\
+         - list_events(topics?, limit?): see recent team activity.\n\
+         - wait_for_event(topics, timeout_seconds?): block until upstream work lands.\n\
+         Always publish_event when you complete a task that affects others.\n",
+    );
+    if !role.claude_skills.is_empty() {
+        out.push_str(&format!(
+            "\n## Claude skills available\n{}\n",
+            role.claude_skills.iter().map(|s| format!("- {s}")).collect::<Vec<_>>().join("\n")
+        ));
+    }
+    out
+}
+
 fn probe_socket_alive(path: &std::path::Path) -> bool {
     use std::os::unix::net::UnixStream;
     use std::time::Duration;
@@ -548,6 +598,9 @@ impl Atelier for AtelierSvc {
         let id = format!("t_{}", uuid::Uuid::new_v4().simple());
         let has_command = !r.command.trim().is_empty();
         let mut extra_env: Vec<(String, String)> = Vec::new();
+        // We may rewrite the launch command below to inject the role's
+        // system prompt into `claude --append-system-prompt ...`.
+        let mut effective_command = r.command.clone();
         if has_command {
             // Give the CLI agent + its MCP child the bus context.
             extra_env.push(("ATELIER_SOCKET".into(), self.socket_path.clone()));
@@ -558,6 +611,34 @@ impl Atelier for AtelierSvc {
             // Write a project .mcp.json so MCP-capable CLIs (Claude Code) load
             // the Atelier bus server. Points at the atelier-mcp sibling binary.
             write_mcp_config(&cwd);
+            // Allow MCP servers from this project without prompting.
+            write_claude_settings(&cwd);
+
+            // For claude (Claude Code) launches with a role: write a per-role
+            // brief and append it to the system prompt so the CLI knows who it
+            // is, what it owns, and how to use the Atelier bus.
+            if !r.role.is_empty() && effective_command.trim_start().starts_with("claude") {
+                let lib = self.roles.with_workspace(std::path::Path::new(&workspace.path));
+                if let Some(role) = lib.get(&r.role) {
+                    let brief = render_role_brief(role, &workspace.path);
+                    let rel_brief =
+                        format!(".atelier/agents/{}.md", sanitize_role_name(&r.role));
+                    let abs_brief = std::path::PathBuf::from(&workspace.path).join(&rel_brief);
+                    if let Some(parent) = abs_brief.parent() {
+                        let _ = std::fs::create_dir_all(parent);
+                    }
+                    let _ = std::fs::write(&abs_brief, brief);
+                    // Rewrite: `claude [args]` -> `claude --append-system-prompt "$(cat .atelier/agents/<role>.md)" [args]`
+                    let trimmed = effective_command.trim_start();
+                    let (head, tail) = trimmed.split_once(char::is_whitespace).unwrap_or((trimmed, ""));
+                    effective_command = format!(
+                        "{head} --append-system-prompt \"$(cat {rel})\" {tail}",
+                        head = head,
+                        rel = rel_brief,
+                        tail = tail
+                    );
+                }
+            }
         }
 
         let spec = TerminalSpec {
@@ -566,7 +647,7 @@ impl Atelier for AtelierSvc {
             cwd: cwd.clone(),
             cols,
             rows,
-            command: if has_command { Some(r.command.clone()) } else { None },
+            command: if has_command { Some(effective_command.clone()) } else { None },
             extra_env,
         };
         self.pty
