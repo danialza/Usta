@@ -90,6 +90,10 @@ pub struct Role {
     /// defaults to CLI mode for this role.
     #[serde(default)]
     pub cli_command: String,
+    /// One-shot kickoff message that should be sent to this role on the
+    /// first pane launch (typed into the CLI / prefilled in the chat).
+    #[serde(default)]
+    pub kickoff: String,
     /// Source path the role was loaded from (filled in by the loader).
     #[serde(default, skip_serializing)]
     pub source: PathBuf,

@@ -304,6 +304,20 @@ fn write_claude_settings(cwd: &str) {
     }
 }
 
+/// Remove every .yaml/.yml in the workspace roles dir so a fresh team
+/// replaces (not merges with) the old one.
+fn purge_role_yamls(dir: &std::path::Path) {
+    let Ok(rd) = std::fs::read_dir(dir) else { return };
+    for entry in rd.flatten() {
+        let p = entry.path();
+        if let Some(ext) = p.extension().and_then(|s| s.to_str()) {
+            if ext == "yaml" || ext == "yml" {
+                let _ = std::fs::remove_file(&p);
+            }
+        }
+    }
+}
+
 fn sanitize_role_name(s: &str) -> String {
     s.chars()
         .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '-' })
@@ -387,6 +401,7 @@ fn proposal_to_pb(p: atelier_pm::ProjectProposal) -> PbProjectProposal {
             publishes: r.publishes,
             subscribes: r.subscribes,
             cli_command: r.cli_command,
+            kickoff: r.kickoff,
         }).collect(),
     }
 }
@@ -412,6 +427,7 @@ fn role_from_proposed(pr: &PbProposedRole, roles_dir: &std::path::Path) -> RoleD
             subscribes: pr.subscribes.clone(),
         },
         cli_command: pr.cli_command.clone(),
+        kickoff: pr.kickoff.clone(),
         source: roles_dir.join(format!("{}.yaml", pr.name)),
         scope: atelier_roles::RoleScope::Workspace,
     }
@@ -883,6 +899,7 @@ impl Atelier for AtelierSvc {
                 handoff_publishes: r.handoff_topics.publishes.clone(),
                 handoff_subscribes: r.handoff_topics.subscribes.clone(),
                 cli_command: r.cli_command.clone(),
+                kickoff: r.kickoff.clone(),
             })
             .collect();
         Ok(Response::new(RoleList { items }))
@@ -1171,6 +1188,7 @@ impl Atelier for AtelierSvc {
                     publishes: r.publishes,
                     subscribes: r.subscribes,
                     cli_command: r.cli_command,
+                    kickoff: r.kickoff,
                 })
                 .collect(),
         }))
@@ -1208,6 +1226,7 @@ impl Atelier for AtelierSvc {
 
         // Materialize each proposed role into <ws>/.atelier/roles/
         let roles_dir = root.join(".atelier").join("roles");
+        purge_role_yamls(&roles_dir);
         std::fs::create_dir_all(&roles_dir)
             .map_err(|e| Status::internal(format!("mkdir {}: {e}", roles_dir.display())))?;
 
@@ -1227,6 +1246,7 @@ impl Atelier for AtelierSvc {
                 publishes: pr.publishes.clone(),
                 subscribes: pr.subscribes.clone(),
                 cli_command: pr.cli_command.clone(),
+                kickoff: pr.kickoff.clone(),
             };
             let role = role_from_proposed(&pb_pr, &roles_dir);
             let path = local
@@ -1258,6 +1278,7 @@ impl Atelier for AtelierSvc {
                         publishes: r.publishes,
                         subscribes: r.subscribes,
                         cli_command: r.cli_command,
+                        kickoff: r.kickoff,
                     })
                     .collect(),
             }),
@@ -1302,6 +1323,7 @@ impl Atelier for AtelierSvc {
                 handoff_publishes: role.handoff_topics.publishes.clone(),
                 handoff_subscribes: role.handoff_topics.subscribes.clone(),
                 cli_command: role.cli_command.clone(),
+                kickoff: role.kickoff.clone(),
             }),
             written_path: path.to_string_lossy().into_owned(),
         }))
@@ -1552,6 +1574,7 @@ impl Atelier for AtelierSvc {
 
         // Materialize roles.
         let roles_dir = project_dir.join(".atelier").join("roles");
+        purge_role_yamls(&roles_dir);
         std::fs::create_dir_all(&roles_dir)
             .map_err(|e| Status::internal(format!("mkdir {}: {e}", roles_dir.display())))?;
         let mut local = (*self.roles).clone();

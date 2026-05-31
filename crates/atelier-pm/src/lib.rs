@@ -47,6 +47,9 @@ pub struct ProposedRole {
     /// CLI / aider / codex / etc.). Empty = use native chat backend.
     #[serde(default)]
     pub cli_command: String,
+    /// First task prompt the team conductor sends to this role on launch.
+    #[serde(default)]
+    pub kickoff: String,
 }
 
 fn default_provider() -> String { "anthropic".into() }
@@ -102,7 +105,8 @@ Reply ONLY with a single fenced JSON block. The JSON must match this schema:
       "publishes": ["ui.component.added"],
       "subscribes": ["api.added", "schema.changed"],
       "system_prompt": "You are the frontend engineer on the TaskHive project. Stack is Next.js 14 + Tailwind. When @backend ships a new endpoint, wire it into the dashboard. Defer auth questions to @security...",
-      "cli_command": "claude"
+      "cli_command": "claude",
+      "kickoff": "Hi @frontend — please scaffold the marketing site at app/(marketing)/. Use server components by default. When done, publish ui.page.created. Read PLAN.md first."
     }
   ]
 }
@@ -143,6 +147,11 @@ Rules:
 - claude_skills from: pdf, xlsx, docx, pptx, skill-creator,
   consolidate-memory, setup-cowork. Empty if none fit.
 - publishes/subscribes use dotted topic names (`area.event`).
+- kickoff: a concrete first task this role should do RIGHT NOW. 2-5
+  sentences, project-specific, references real folders/files. Acts as
+  the start-of-project prompt the conductor sends to this role. End with
+  the topic they should publish when done. This is the message that
+  shows up in their pane on first launch.
 - cli_command: pick the real coding-agent CLI the role should drive,
   based on its recommended_provider and recommended_model:
     anthropic -> "claude"

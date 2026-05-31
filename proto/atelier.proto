@@ -239,6 +239,7 @@ message ProposedRole {
   repeated string publishes     = 9;
   repeated string subscribes    = 10;
   string cli_command            = 11;
+  string kickoff                = 12;
 }
 
 message WorkspaceAnalysis {
@@ -265,6 +266,7 @@ message Role {
   // "aider --model ...", "codex"). When set, the assistant pane defaults
   // to CLI backend.
   string cli_command       = 12;
+  string kickoff           = 13;
 }
 
 message ListRolesRequest {

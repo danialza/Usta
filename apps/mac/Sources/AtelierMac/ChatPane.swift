@@ -151,6 +151,7 @@ struct AssistantPane: View {
     @State private var cliSession: TerminalSession? = nil
     @State private var cliLaunching: Bool = false
     @State private var showRoleEditor: Bool = false
+    @State private var kickoffSent: Bool = false
 
     init(workspaceID: String,
          role: Atelier_V1_Role,
@@ -179,6 +180,7 @@ struct AssistantPane: View {
             header
             if !collapsed {
                 capabilities
+                kickoffBanner
                 Divider().overlay(AtelierTheme.border)
                 bodyContent
             }
@@ -349,6 +351,63 @@ struct AssistantPane: View {
             }
             .padding(.horizontal, 10)
             .padding(.bottom, 6)
+        }
+    }
+
+    @ViewBuilder
+    private var kickoffBanner: some View {
+        if !role.kickoff.isEmpty && !kickoffSent {
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: "paperplane.fill")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.orange)
+                    .padding(.top, 2)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Kickoff from conductor")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.orange)
+                    Text(role.kickoff)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.primary)
+                        .lineLimit(4)
+                }
+                Spacer(minLength: 0)
+                Button("Send") {
+                    Task { await sendKickoff() }
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+                Button {
+                    kickoffSent = true
+                } label: {
+                    Image(systemName: "xmark").font(.caption2)
+                }
+                .buttonStyle(.borderless)
+                .foregroundStyle(AtelierTheme.dim)
+            }
+            .padding(8)
+            .background(Color.orange.opacity(0.10))
+            .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.orange.opacity(0.35)))
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+            .padding(.horizontal, 10)
+            .padding(.bottom, 6)
+        }
+    }
+
+    private func sendKickoff() async {
+        let text = role.kickoff
+        if text.isEmpty { return }
+        kickoffSent = true
+        if backend == .cli {
+            // Wait briefly so a freshly-launched CLI has its prompt up.
+            if cliSession == nil { try? await Task.sleep(nanoseconds: 1_200_000_000) }
+            guard let s = cliSession else { return }
+            // Type text + Enter.
+            if let data = (text + "\n").data(using: .utf8) {
+                await s.sendInput(data)
+            }
+        } else {
+            input = text
         }
     }
 
