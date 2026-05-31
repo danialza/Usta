@@ -161,10 +161,17 @@ struct NewProjectWizard: View {
                             .buttonStyle(.bordered).controlSize(.small)
                     }
                     VStack(spacing: 8) {
-                        ForEach(p.team, id: \.name) { m in
-                            ProposedRoleCard(role: m, onDelete: {
-                                proposal?.team.removeAll { $0.name == m.name }
-                            })
+                        ForEach(p.team.indices, id: \.self) { i in
+                            ProposedRoleCard(
+                                role: Binding(
+                                    get: { proposal?.team[i] ?? p.team[i] },
+                                    set: { newVal in proposal?.team[i] = newVal }
+                                ),
+                                onDelete: {
+                                    let name = p.team[i].name
+                                    proposal?.team.removeAll { $0.name == name }
+                                }
+                            )
                         }
                     }
                 }
@@ -262,6 +269,7 @@ struct NewProjectWizard: View {
         let panel = NSOpenPanel()
         panel.canChooseFiles = false
         panel.canChooseDirectories = true
+        panel.canCreateDirectories = true
         panel.allowsMultipleSelection = false
         panel.prompt = "Choose Parent Folder"
         panel.message = "Project '\(p.projectSlug)' will be created inside the folder you pick."
@@ -279,16 +287,24 @@ struct NewProjectWizard: View {
 }
 
 struct ProposedRoleCard: View {
-    let role: Atelier_V1_ProposedRole
+    @Binding var role: Atelier_V1_ProposedRole
+    var providers: [String] = ["anthropic", "gemini", "ollama"]
+    var modelsByProvider: [String: [String]] = [
+        "anthropic": ["claude-opus-4-7", "claude-sonnet-4-6", "claude-haiku-4-5-20251001"],
+        "gemini":    ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-2.0-flash-lite",
+                      "gemini-1.5-flash-002", "gemini-2.5-pro", "gemini-1.5-pro-002"],
+        "ollama":    ["qwen2.5-coder:7b", "llama3.1:8b", "qwen3-coder"],
+    ]
     var onDelete: (() -> Void)? = nil
+
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
                 Text(role.emoji.isEmpty ? AtelierTheme.roleEmoji(for: role.name, fallback: "•") : role.emoji)
                 Text(role.name).font(.body.bold())
                 Spacer()
-                Text(role.recommendedModel)
-                    .font(.caption2).foregroundStyle(AtelierTheme.dim)
+                providerMenu
+                modelMenu
                 if let onDelete {
                     Button(action: onDelete) { Image(systemName: "trash") }
                         .buttonStyle(.borderless).foregroundStyle(.red)
@@ -312,6 +328,35 @@ struct ProposedRoleCard: View {
                 .stroke(AtelierTheme.roleColor(for: role.name).opacity(0.5))
         )
         .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+
+    private var providerMenu: some View {
+        Menu(role.recommendedProvider.isEmpty ? "provider" : role.recommendedProvider) {
+            ForEach(providers, id: \.self) { p in
+                Button(p) {
+                    role.recommendedProvider = p
+                    let models = modelsByProvider[p] ?? []
+                    if !models.contains(role.recommendedModel), let first = models.first {
+                        role.recommendedModel = first
+                    }
+                }
+            }
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .font(.caption2)
+    }
+
+    private var modelMenu: some View {
+        let models = modelsByProvider[role.recommendedProvider] ?? [role.recommendedModel]
+        return Menu(role.recommendedModel.isEmpty ? "model" : role.recommendedModel) {
+            ForEach(models, id: \.self) { m in
+                Button(m) { role.recommendedModel = m }
+            }
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .font(.caption2)
     }
 }
 
