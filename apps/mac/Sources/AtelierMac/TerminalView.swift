@@ -43,11 +43,20 @@ struct PtyTerminalView: NSViewRepresentable {
             Task { await session?.sendResize(cols: cols, rows: rows) }
         }
         session.attach(view: term)
+        // Grab keyboard focus once attached to a window.
+        DispatchQueue.main.async { [weak term] in
+            term?.window?.makeFirstResponder(term)
+        }
         return term
     }
 
     func updateNSView(_ nsView: TerminalView, context: Context) {
-        // Drain any pending bytes queued before the view existed.
         session.flushPending(to: nsView)
+        // Re-focus on each update too (cheap; no-op if already first responder).
+        if let win = nsView.window, win.firstResponder !== nsView {
+            DispatchQueue.main.async {
+                win.makeFirstResponder(nsView)
+            }
+        }
     }
 }

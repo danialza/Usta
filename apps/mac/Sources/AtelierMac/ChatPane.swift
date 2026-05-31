@@ -290,6 +290,20 @@ struct AssistantPane: View {
                 providerPicker
                 modelPicker
             }
+            if backend == .cli {
+                Button {
+                    cliSession?.stop()
+                    cliSession = nil
+                    // Refresh derived command from current provider/model.
+                    cliCommand = !role.cliCommand.isEmpty ? role.cliCommand
+                        : Self.defaultCommand(provider: selectedProvider, model: selectedModel)
+                } label: {
+                    Image(systemName: "arrow.clockwise").font(.caption)
+                }
+                .buttonStyle(.borderless)
+                .foregroundStyle(AtelierTheme.dim)
+                .help("Relaunch CLI with current provider/model")
+            }
             Button { showRoleEditor = true } label: {
                 Image(systemName: "gearshape").font(.caption)
             }
