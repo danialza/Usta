@@ -144,10 +144,10 @@ Rules:
   consolidate-memory, setup-cowork. Empty if none fit.
 - publishes/subscribes use dotted topic names (`area.event`).
 - cli_command: pick the real coding-agent CLI the role should drive,
-  based on its recommended_provider:
+  based on its recommended_provider and recommended_model:
     anthropic -> "claude"
-    gemini    -> "gemini" (Google's official Gemini CLI)
-    ollama    -> "aider --model ollama_chat/<model> --yes-always"
+    gemini    -> "gemini --model <recommended_model>"
+    ollama    -> "aider --model ollama_chat/<recommended_model> --yes-always"
   For non-engineering roles (product-manager, ui-ux, docs) leave
   cli_command as "" so the pane uses the native chat.
 - output nothing outside the fenced JSON block.

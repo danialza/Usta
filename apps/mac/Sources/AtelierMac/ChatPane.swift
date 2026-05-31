@@ -211,7 +211,8 @@ struct AssistantPane: View {
     static func defaultCommand(provider: String, model: String) -> String {
         switch provider {
         case "anthropic": return "claude"
-        case "gemini":    return "gemini"
+        case "gemini":
+            return model.isEmpty ? "gemini" : "gemini --model \(model)"
         case "ollama":    return "aider --model ollama_chat/\(model) --yes-always"
         default:          return ""
         }

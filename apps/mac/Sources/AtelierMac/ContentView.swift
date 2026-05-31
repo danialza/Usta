@@ -72,18 +72,18 @@ struct ContentView: View {
                         sidebarPlaceholder("No projects open.")
                     }
                     ForEach(client.workspaces, id: \.id) { ws in
-                        WorkspaceRow(ws: ws, selected: selection?.id == ws.id) {
-                            selection = ws
-                        }
-                        .contextMenu {
-                            Button(role: .destructive) {
+                        WorkspaceRow(
+                            ws: ws,
+                            selected: selection?.id == ws.id,
+                            onTap: { selection = ws },
+                            onRemove: {
                                 let id = ws.id
                                 Task {
                                     await client.closeWorkspace(id: id)
                                     if selection?.id == id { selection = nil }
                                 }
-                            } label: { Label("Remove from list", systemImage: "minus.circle") }
-                        }
+                            }
+                        )
                     }
                 }
             }
@@ -167,26 +167,42 @@ struct WorkspaceRow: View {
     let ws: Atelier_V1_Workspace
     let selected: Bool
     var onTap: () -> Void
+    var onRemove: (() -> Void)? = nil
+    @State private var hover: Bool = false
 
     var body: some View {
-        Button(action: onTap) {
-            HStack(spacing: 10) {
-                Image(systemName: "folder.fill")
-                    .foregroundStyle(.tint)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(ws.name).font(.system(size: 13, weight: .medium))
-                    Text(ws.path).font(.system(size: 11))
-                        .foregroundStyle(AtelierTheme.dim).lineLimit(1)
-                }
-                Spacer(minLength: 0)
+        HStack(spacing: 10) {
+            Image(systemName: "folder.fill").foregroundStyle(.tint)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(ws.name).font(.system(size: 13, weight: .medium))
+                Text(ws.path).font(.system(size: 11))
+                    .foregroundStyle(AtelierTheme.dim).lineLimit(1)
             }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 6)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(selected ? AtelierTheme.border : Color.clear)
-            .clipShape(RoundedRectangle(cornerRadius: 6))
+            Spacer(minLength: 0)
+            if hover, let onRemove {
+                Button(action: onRemove) {
+                    Image(systemName: "xmark.circle.fill").font(.caption)
+                }
+                .buttonStyle(.borderless)
+                .foregroundStyle(AtelierTheme.dim)
+                .help("Remove from list")
+            }
         }
-        .buttonStyle(.plain)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(selected ? AtelierTheme.border : Color.clear)
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .contentShape(Rectangle())
+        .onTapGesture { onTap() }
+        .onHover { hover = $0 }
+        .contextMenu {
+            if let onRemove {
+                Button(role: .destructive, action: onRemove) {
+                    Label("Remove from list", systemImage: "minus.circle")
+                }
+            }
+        }
     }
 }
 

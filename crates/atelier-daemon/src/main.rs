@@ -863,8 +863,13 @@ impl Atelier for AtelierSvc {
     ) -> Result<Response<RoleList>, Status> {
         let ws_id = req.into_inner().workspace_id;
         let lib = self.effective_roles(&ws_id).await?;
+        // If the workspace has its own roles, hide the builtin/user library
+        // so the team view shows only THIS project's specialists.
+        let has_ws_roles = !ws_id.is_empty()
+            && lib.iter().any(|r| matches!(r.scope, atelier_roles::RoleScope::Workspace));
         let items = lib
             .iter()
+            .filter(|r| !has_ws_roles || matches!(r.scope, atelier_roles::RoleScope::Workspace))
             .map(|r| PbRole {
                 name: r.name.clone(),
                 emoji: r.emoji.clone(),
