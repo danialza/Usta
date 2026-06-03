@@ -459,11 +459,12 @@ struct WorkspaceDetailView: View {
         let done    = roles.filter { bus.state(of: $0.name) == .done }.map { $0.name }
         let total   = roles.count
 
-        // Pick the role the user should focus.
+        // Pick the role the user should focus. Pin lives in the bus and is
+        // refreshed only when state meaningfully changes — bar stays steady.
         let focusName: String? = {
             if let w = working.first { return w }
             if let r = ready.first { return r }
-            return bus.bottleneck()?.name
+            return bus.pinnedBottleneckName
         }()
 
         let (icon, color, title, body): (String, Color, String, String) = {

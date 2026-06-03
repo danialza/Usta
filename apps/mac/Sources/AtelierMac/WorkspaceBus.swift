@@ -11,6 +11,9 @@ final class WorkspaceBus: ObservableObject {
     @Published var roles: [Atelier_V1_Role] = []
     /// Event ids newly observed since last poll (UI highlights them).
     @Published var freshIds: Set<Int64> = []
+    /// Sticky bottleneck pick recomputed by `refresh()`. Used by Next-Action
+    /// bar to stop flickering between equal-scored candidates each poll.
+    @Published var pinnedBottleneckName: String? = nil
     /// In-window toast queue (auto-clears after a few seconds).
     @Published var toasts: [ToastItem] = []
     /// Last set of "ready" role names — used to detect changes.
@@ -145,8 +148,14 @@ final class WorkspaceBus: ObservableObject {
             let miss = missingFor(p.name).map { $0.from }
             return miss.contains(where: { from in pending.contains { $0.name == from } })
         }
-        let best = score.max(by: { $0.value < $1.value })
-            ?? (key: pending[0].name, value: 0)
+        // Deterministic tie-break: higher score first, then alphabetic name asc.
+        // Without this, swift Dictionary iteration order changes between polls
+        // and the bar flickers between equal-scored candidates.
+        let ranked = score.sorted { a, b in
+            if a.value != b.value { return a.value > b.value }
+            return a.key < b.key
+        }
+        let best = ranked.first ?? (key: pending[0].name, value: 0)
         return (best.key, best.value, allDownstream)
     }
 
@@ -250,5 +259,15 @@ final class WorkspaceBus: ObservableObject {
             return !(pubs.isSubset(of: mine) && !pubs.isEmpty)
         }
         if stillWorking != working { working = stillWorking }
+        // Recompute sticky bottleneck. Keep the current pin if it's still a
+        // valid pending role; only switch when the existing pick goes away.
+        let bn = bottleneck()
+        if let current = pinnedBottleneckName,
+           roles.contains(where: { $0.name == current && state(of: current) == .pending }) {
+            // pin is still valid — keep it
+        } else {
+            let next = bn?.name
+            if next != pinnedBottleneckName { pinnedBottleneckName = next }
+        }
     }
 }

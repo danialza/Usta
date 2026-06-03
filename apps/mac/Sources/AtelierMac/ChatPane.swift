@@ -502,75 +502,84 @@ struct AssistantPane: View {
     @ViewBuilder
     private var kickoffBanner: some View {
         let s = bus.state(of: role.name)
-        if s == .done {
+        // User explicitly generated a fresh prompt — show it even if state is
+        // still pending/done, so they can Send it.
+        if regeneratedKickoff != nil && !kickoffSent {
+            kickoffBannerCore
+        } else if s == .done {
             doneBanner
         } else if s == .pending {
             blockedBanner
         } else if !effectiveKickoff.isEmpty && !kickoffSent {
-            HStack(alignment: .top, spacing: 8) {
-                Image(systemName: "paperplane.fill")
-                    .font(.system(size: 10))
-                    .foregroundStyle(.orange)
-                    .padding(.top, 2)
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack(spacing: 4) {
-                        Text(regeneratedKickoff != nil ? "Next task (regenerated)" : "Kickoff from conductor")
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundStyle(.orange)
-                        if regeneratedKickoff != nil {
-                            Text("NEW").font(.system(size: 8, weight: .bold))
-                                .padding(.horizontal, 4).padding(.vertical, 1)
-                                .background(Color.orange).foregroundStyle(.white)
-                                .clipShape(Capsule())
-                        }
-                    }
-                    Text(effectiveKickoff)
-                        .font(.system(size: 11))
-                        .foregroundStyle(.primary)
-                        .lineLimit(4)
-                }
-                Spacer(minLength: 0)
-                VStack(spacing: 4) {
-                    Button("Send") {
-                        Task { await sendKickoff() }
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.small)
-                    Button {
-                        Task {
-                            regenInFlight = true
-                            if let k = await client.regenerateKickoff(workspaceID: workspaceID, roleName: role.name) {
-                                regeneratedKickoff = k
-                            }
-                            regenInFlight = false
-                        }
-                    } label: {
-                        HStack(spacing: 3) {
-                            if regenInFlight { ProgressView().scaleEffect(0.5).frame(width: 9, height: 9) }
-                            else { Image(systemName: "arrow.clockwise").font(.system(size: 9)) }
-                            Text("Next task").font(.system(size: 9))
-                        }
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                    .disabled(regenInFlight)
-                    .help("Ask PM to regenerate this kickoff based on event log")
-                }
-                Button {
-                    kickoffSent = true
-                } label: {
-                    Image(systemName: "xmark").font(.caption2)
-                }
-                .buttonStyle(.borderless)
-                .foregroundStyle(AtelierTheme.dim)
-            }
-            .padding(8)
-            .background(Color.orange.opacity(0.10))
-            .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.orange.opacity(0.35)))
-            .clipShape(RoundedRectangle(cornerRadius: 6))
-            .padding(.horizontal, 10)
-            .padding(.bottom, 6)
+            kickoffBannerCore
         }
+    }
+
+    @ViewBuilder
+    private var kickoffBannerCore: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "paperplane.fill")
+                .font(.system(size: 10))
+                .foregroundStyle(.orange)
+                .padding(.top, 2)
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 4) {
+                    Text(regeneratedKickoff != nil ? "Next task (regenerated)" : "Kickoff from conductor")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.orange)
+                    if regeneratedKickoff != nil {
+                        Text("NEW").font(.system(size: 8, weight: .bold))
+                            .padding(.horizontal, 4).padding(.vertical, 1)
+                            .background(Color.orange).foregroundStyle(.white)
+                            .clipShape(Capsule())
+                    }
+                }
+                Text(effectiveKickoff)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.primary)
+                    .lineLimit(4)
+            }
+            Spacer(minLength: 0)
+            VStack(spacing: 4) {
+                Button("Send") {
+                    Task { await sendKickoff() }
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+                Button {
+                    Task {
+                        regenInFlight = true
+                        if let k = await client.regenerateKickoff(workspaceID: workspaceID, roleName: role.name) {
+                            regeneratedKickoff = k
+                        }
+                        regenInFlight = false
+                    }
+                } label: {
+                    HStack(spacing: 3) {
+                        if regenInFlight { ProgressView().scaleEffect(0.5).frame(width: 9, height: 9) }
+                        else { Image(systemName: "arrow.clockwise").font(.system(size: 9)) }
+                        Text("Next task").font(.system(size: 9))
+                    }
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(regenInFlight)
+                .help("Ask PM to regenerate this kickoff based on event log")
+            }
+            Button {
+                kickoffSent = true
+            } label: {
+                Image(systemName: "xmark").font(.caption2)
+            }
+            .buttonStyle(.borderless)
+            .foregroundStyle(AtelierTheme.dim)
+        }
+        .padding(8)
+        .background(Color.orange.opacity(0.10))
+        .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.orange.opacity(0.35)))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .padding(.horizontal, 10)
+        .padding(.bottom, 6)
     }
 
     @ViewBuilder
@@ -626,6 +635,33 @@ struct AssistantPane: View {
                 }
             }
             Spacer(minLength: 0)
+            VStack(spacing: 4) {
+                Button {
+                    Task {
+                        regenInFlight = true
+                        if let k = await client.regenerateKickoff(workspaceID: workspaceID, roleName: role.name) {
+                            regeneratedKickoff = k
+                            kickoffSent = false
+                        }
+                        regenInFlight = false
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        if regenInFlight { ProgressView().scaleEffect(0.5).frame(width: 9, height: 9) }
+                        else { Image(systemName: "sparkles").font(.system(size: 10)) }
+                        Text("Generate prompt").font(.system(size: 10, weight: .medium))
+                    }
+                    .padding(.horizontal, 8).padding(.vertical, 4)
+                    .background(Color.accentColor.opacity(0.85))
+                    .foregroundStyle(.white)
+                    .clipShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .disabled(regenInFlight)
+                .help("Ask PM to write the next task even though upstream isn't ready (best-effort).")
+                Text("or type freely in terminal ↓").font(.system(size: 9))
+                    .foregroundStyle(AtelierTheme.dim)
+            }
         }
         .padding(8)
         .background(Color.gray.opacity(0.10))
