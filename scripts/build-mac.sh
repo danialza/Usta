@@ -64,6 +64,16 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 </plist>
 PLIST
 
+# Ad-hoc codesign so the binary's code identity is stable across builds.
+# macOS uses the code identity to decide whether to re-prompt for keychain
+# access. Without a stable signature each rebuild is "a new app" → password
+# prompt every launch (sometimes multiple times). `--sign -` is the special
+# identity meaning "self-sign with a hash-only identity" (no developer cert
+# needed), but it gives the binary a stable identity hash so macOS treats
+# subsequent launches as the SAME app once user clicks Always Allow once.
+echo "==> Ad-hoc codesign (stable identity for keychain)"
+codesign --force --deep --sign - "$APP" 2>&1 | tail -3 || true
+
 echo
 echo "==> Done."
 echo "Run:  open $APP"

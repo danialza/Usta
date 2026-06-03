@@ -14,6 +14,13 @@ struct AssistantsGrid: View {
     @State private var maximized: String? = nil
     @EnvironmentObject var bus: WorkspaceBus
 
+    // Drop a stale maximize when the user filters to a different role / All.
+    private func reconcileMaximize() {
+        guard let m = maximized else { return }
+        if let f = focus, m != f { maximized = nil }
+        if focus == nil && !roles.contains(where: { $0.name == m }) { maximized = nil }
+    }
+
     /// Map role.name -> 1-based step tier from topo sort over handoff topics.
     /// Roles with no upstream = step 1, downstream tiers increment.
     private var stepFor: [String: Int] {
@@ -54,11 +61,11 @@ struct AssistantsGrid: View {
 
     var body: some View {
         let baseShown = focus == nil ? roles : roles.filter { $0.name == focus }
-        // If user is in "All" view (focus == nil), maximize should NOT pin
-        // a single pane — clear it so the grid shows everything.
-        let activeMax: String? = (focus == nil) ? nil : maximized
+        // Maximize works in any view (All or focused). When user navigates
+        // to a chip with a different role, ContentView clears `selectedRole`
+        // and we honour `maximized` directly here.
         let shown: [Atelier_V1_Role] = {
-            if let m = activeMax, let r = baseShown.first(where: { $0.name == m }) { return [r] }
+            if let m = maximized, let r = baseShown.first(where: { $0.name == m }) { return [r] }
             return baseShown
         }()
         let steps = stepFor
@@ -69,11 +76,11 @@ struct AssistantsGrid: View {
                 AssistantPane(
                     workspaceID: workspaceID,
                     role: shown[0],
-                    collapsed: false,
-                    onToggleCollapse: nil,
+                    collapsed: collapsed.contains(shown[0].name),
+                    onToggleCollapse: { toggle(shown[0].name) },
                     isMaximized: maximized == shown[0].name,
                     onToggleMaximize: { toggleMax(shown[0].name) },
-                    step: steps[shown[0].name],
+                    step: 1,
                     stateColor: stateColor(bus.state(of: shown[0].name))
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -88,6 +95,7 @@ struct AssistantsGrid: View {
                 grid(shown)
             }
         }
+        .onChange(of: focus) { _, _ in reconcileMaximize() }
     }
 
     /// Compute column count from available width with a min pane width.

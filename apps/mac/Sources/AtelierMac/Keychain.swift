@@ -6,10 +6,15 @@ import Security
 /// service + per-key account name.
 enum Keychain {
     private static let service = "dev.atelier.Atelier"
+    /// In-process cache so repeated reads of the same account don't re-hit
+    /// SecItem (each call can pop a password prompt for unsigned binaries).
+    nonisolated(unsafe) private static var cache: [String: String] = [:]
+    private static let cacheLock = NSLock()
 
     /// Store (or overwrite) a secret for `account`. Empty value deletes it.
     @discardableResult
     static func set(_ value: String, account: String) -> Bool {
+        cacheLock.lock(); cache[account] = value.isEmpty ? nil : value; cacheLock.unlock()
         if value.isEmpty { return delete(account: account) }
         let data = Data(value.utf8)
         // Try update first.
@@ -30,8 +35,12 @@ enum Keychain {
         return false
     }
 
-    /// Read a secret. Returns nil if absent.
+    /// Read a secret. Returns nil if absent. Cached after first hit so
+    /// repeated reads don't re-prompt the keychain on each call.
     static func get(account: String) -> String? {
+        cacheLock.lock()
+        if let v = cache[account] { cacheLock.unlock(); return v }
+        cacheLock.unlock()
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -42,11 +51,16 @@ enum Keychain {
         var item: CFTypeRef?
         let status = SecItemCopyMatching(query as CFDictionary, &item)
         guard status == errSecSuccess, let data = item as? Data else { return nil }
-        return String(data: data, encoding: .utf8)
+        let s = String(data: data, encoding: .utf8)
+        if let s {
+            cacheLock.lock(); cache[account] = s; cacheLock.unlock()
+        }
+        return s
     }
 
     @discardableResult
     static func delete(account: String) -> Bool {
+        cacheLock.lock(); cache.removeValue(forKey: account); cacheLock.unlock()
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
