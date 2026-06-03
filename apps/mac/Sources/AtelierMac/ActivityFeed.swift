@@ -43,26 +43,90 @@ struct ActivityFeed: View {
 
     private var nextBanner: some View {
         let ready = bus.readyNow
+        let working = bus.roles.first(where: { bus.state(of: $0.name) == .working })?.name
+        let allDone = !bus.roles.isEmpty && bus.roles.allSatisfy { bus.state(of: $0.name) == .done }
         return VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .top, spacing: 6) {
-                Image(systemName: ready.isEmpty ? "checkmark.circle" : "arrow.right.circle.fill")
-                    .foregroundStyle(ready.isEmpty ? Color.green : Color.accentColor)
-                Text(ready.isEmpty ? "All caught up" : "Next ready")
+                Image(systemName: headerIcon(ready: ready, working: working, allDone: allDone))
+                    .foregroundStyle(headerColor(ready: ready, working: working, allDone: allDone))
+                Text(headerTitle(ready: ready, working: working, allDone: allDone))
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(AtelierTheme.dim)
                 Spacer()
             }
-            if ready.isEmpty {
-                Text("No role waiting on a fresh event")
+            if let w = working {
+                Text("@\(w) is running. Open its pane to watch.")
                     .font(.system(size: 11)).foregroundStyle(.secondary)
-            } else {
+            } else if !ready.isEmpty {
                 ForEach(ready, id: \.self) { name in
                     readyRow(name)
                 }
+            } else if allDone {
+                Text("All roles finished. Project at a clean checkpoint.")
+                    .font(.system(size: 11)).foregroundStyle(.secondary)
+            } else if let bn = bus.bottleneck() {
+                bottleneckRow(bn)
+            } else {
+                Text("No role waiting on a fresh event")
+                    .font(.system(size: 11)).foregroundStyle(.secondary)
             }
         }
         .padding(.horizontal, 10).padding(.vertical, 8)
         .background(AtelierTheme.cell.opacity(0.4))
+    }
+
+    private func headerIcon(ready: [String], working: String?, allDone: Bool) -> String {
+        if working != nil { return "clock.arrow.circlepath" }
+        if !ready.isEmpty { return "arrow.right.circle.fill" }
+        if allDone { return "checkmark.circle.fill" }
+        if bus.bottleneck()?.cycle == true { return "arrow.triangle.2.circlepath" }
+        return "hand.point.right.fill"
+    }
+    private func headerColor(ready: [String], working: String?, allDone: Bool) -> Color {
+        if working != nil { return .orange }
+        if !ready.isEmpty { return Color.accentColor }
+        if allDone { return .green }
+        return .yellow
+    }
+    private func headerTitle(ready: [String], working: String?, allDone: Bool) -> String {
+        if working != nil { return "Working" }
+        if !ready.isEmpty { return "Next ready" }
+        if allDone { return "All done" }
+        if bus.bottleneck()?.cycle == true { return "Cycle — break it" }
+        return "Unblock"
+    }
+
+    private func bottleneckRow(_ bn: (name: String, dependents: Int, cycle: Bool)) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Circle().fill(AtelierTheme.roleColor(for: bn.name)).frame(width: 6, height: 6)
+                Text("@\(bn.name)").font(.system(size: 12, weight: .semibold))
+                Text("blocks \(bn.dependents)").font(.system(size: 9))
+                    .padding(.horizontal, 4).padding(.vertical, 1)
+                    .background(Color.yellow.opacity(0.25))
+                    .clipShape(Capsule())
+                Spacer()
+                Button {
+                    NotificationCenter.default.post(name: .atelierAutoRegenerate, object: bn.name)
+                } label: {
+                    HStack(spacing: 3) {
+                        Image(systemName: "sparkles").font(.system(size: 9))
+                        Text("Gen").font(.system(size: 10, weight: .medium))
+                    }
+                    .padding(.horizontal, 8).padding(.vertical, 3)
+                    .background(Color.accentColor)
+                    .foregroundStyle(.white)
+                    .clipShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .help("Generate a fresh prompt for @\(bn.name)")
+            }
+            Text(bn.cycle
+                 ? "Cycle: every pending role waits on another. Open @\(bn.name), Generate, Send."
+                 : "Open @\(bn.name), Generate prompt, Send to unblock downstream roles.")
+                .font(.system(size: 10)).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
     }
 
     private func readyRow(_ name: String) -> some View {

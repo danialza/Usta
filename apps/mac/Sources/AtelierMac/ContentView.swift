@@ -532,14 +532,8 @@ struct WorkspaceDetailView: View {
     }
 
     private var roleChipsStrip: some View {
-        // Sort by state priority so the working role is first, then ready,
-        // pending, done. Stable within tier (alpha).
-        let ordered = roles.sorted { a, b in
-            let pa = chipPriority(bus.state(of: a.name))
-            let pb = chipPriority(bus.state(of: b.name))
-            if pa != pb { return pa < pb }
-            return a.name < b.name
-        }
+        // Canonical bus ordering: working > ready > bottleneck > pending > done.
+        let ordered = bus.orderedRoles(roles)
         return FlowLayout(spacing: 6) {
             RoleChipAll(selected: selectedRole == nil) { selectedRole = nil }
             ForEach(ordered, id: \.name) { r in
@@ -547,15 +541,6 @@ struct WorkspaceDetailView: View {
             }
         }
         .animation(.easeInOut(duration: 0.3), value: ordered.map(\.name))
-    }
-
-    private func chipPriority(_ s: WorkspaceBus.RoleState) -> Int {
-        switch s {
-        case .working: return 0
-        case .ready:   return 1
-        case .pending: return 2
-        case .done:    return 3
-        }
     }
 
     @ViewBuilder

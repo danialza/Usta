@@ -113,14 +113,8 @@ struct AssistantsGrid: View {
     }
 
     private func grid(_ shown: [Atelier_V1_Role]) -> some View {
-        let steps = stepFor
-        let ordered = shown.sorted { a, b in
-            let pa = priority(bus.state(of: a.name))
-            let pb = priority(bus.state(of: b.name))
-            if pa != pb { return pa < pb }
-            return (steps[a.name] ?? 99) < (steps[b.name] ?? 99)
-        }
-        // Map role.name -> 1-based current display index (matches sort order).
+        // Use canonical bus ordering (working > ready > bottleneck > pending > done).
+        let ordered = bus.orderedRoles(shown)
         let displayStep: [String: Int] = Dictionary(uniqueKeysWithValues:
             ordered.enumerated().map { ($1.name, $0 + 1) }
         )

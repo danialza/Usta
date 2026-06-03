@@ -118,6 +118,49 @@ final class WorkspaceBus: ObservableObject {
 
     /// For a pending role, list its missing-upstream topics + which role
     /// would publish each. Used by the UI to explain "blocked on …".
+    /// Single canonical priority used by chip strip, grid, step badge.
+    /// Lower = higher visual priority (do this first).
+    /// working(0) > ready(1) > bottleneck-pending(2) > pending(3) > done(4)
+    func priority(of name: String) -> Int {
+        let s = state(of: name)
+        switch s {
+        case .working: return 0
+        case .ready:   return 1
+        case .pending: return (name == pinnedBottleneckName) ? 2 : 3
+        case .done:    return 4
+        }
+    }
+
+    /// Stable ordering for all role-list UI. Sorts by priority, tie-breaks
+    /// by topological tier (upstream first), then alphabetic.
+    func orderedRoles(_ all: [Atelier_V1_Role]) -> [Atelier_V1_Role] {
+        // Cheap topo tier — same algo as AssistantsGrid stepFor but reusable.
+        var producers: [String: Set<String>] = [:]
+        for r in all { for t in r.handoffPublishes { producers[t, default: []].insert(r.name) } }
+        var tier: [String: Int] = [:]
+        var remaining = all
+        var t = 1
+        while !remaining.isEmpty {
+            let ready = remaining.filter { r in
+                r.handoffSubscribes.allSatisfy { topic in
+                    (producers[topic] ?? []).allSatisfy { p in p == r.name || tier[p] != nil }
+                }
+            }
+            if ready.isEmpty { for r in remaining { tier[r.name] = t }; break }
+            for r in ready { tier[r.name] = t }
+            let done = Set(ready.map { $0.name })
+            remaining.removeAll { done.contains($0.name) }
+            t += 1
+        }
+        return all.sorted { a, b in
+            let pa = priority(of: a.name), pb = priority(of: b.name)
+            if pa != pb { return pa < pb }
+            let ta = tier[a.name] ?? 99, tb = tier[b.name] ?? 99
+            if ta != tb { return ta < tb }
+            return a.name < b.name
+        }
+    }
+
     /// Pending role that's blocking the most others. Count how many pending
     /// roles transitively wait on each pending role's outputs; pick the max.
     /// Used when the bus is deadlocked — UI tells user where to type.
