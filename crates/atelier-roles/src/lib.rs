@@ -94,6 +94,11 @@ pub struct Role {
     /// first pane launch (typed into the CLI / prefilled in the chat).
     #[serde(default)]
     pub kickoff: String,
+    /// How this role behaves on auto-dispatched (headless) turns triggered by
+    /// the event bus. "manual" (default) = read-only, describe writes;
+    /// "auto" = allowed to write/exec without a human (use with care).
+    #[serde(default = "default_autonomy")]
+    pub autonomy: String,
     /// Source path the role was loaded from (filled in by the loader).
     #[serde(default, skip_serializing)]
     pub source: PathBuf,
@@ -105,6 +110,8 @@ pub struct Role {
 fn default_scope() -> RoleScope { RoleScope::Builtin }
 
 fn default_provider() -> String { "anthropic".into() }
+
+fn default_autonomy() -> String { "manual".into() }
 
 #[derive(Debug, Default, Clone)]
 pub struct RoleLibrary {

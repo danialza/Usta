@@ -5,18 +5,20 @@ import SwiftUI
 @MainActor
 final class AppSettings: ObservableObject {
     @Published var socketPath: String { didSet { save(Self.socketKey, socketPath) } }
+    // API keys live in the Keychain, NOT UserDefaults. The published value is
+    // an in-memory mirror; didSet writes through to the Keychain.
     @Published var anthropicKey: String {
         didSet {
             let t = anthropicKey.trimmingCharacters(in: .whitespacesAndNewlines)
             if t != anthropicKey { anthropicKey = t; return } // re-trigger w/ trimmed
-            save(Self.anthKey, anthropicKey)
+            Keychain.set(anthropicKey, account: Self.anthKey)
         }
     }
     @Published var geminiKey: String {
         didSet {
             let t = geminiKey.trimmingCharacters(in: .whitespacesAndNewlines)
             if t != geminiKey { geminiKey = t; return }
-            save(Self.gemKey, geminiKey)
+            Keychain.set(geminiKey, account: Self.gemKey)
         }
     }
     @Published var ollamaHost: String { didSet { save(Self.ollamaKey, ollamaHost) } }
@@ -34,12 +36,28 @@ final class AppSettings: ObservableObject {
         let d = UserDefaults.standard
         let env = ProcessInfo.processInfo.environment
         self.socketPath = d.string(forKey: Self.socketKey) ?? Self.defaultSocketPath()
-        let rawA = d.string(forKey: Self.anthKey) ?? (env["ANTHROPIC_API_KEY"] ?? "")
-        let rawG = d.string(forKey: Self.gemKey) ?? (env["GEMINI_API_KEY"] ?? "")
+        // Keys: prefer Keychain, then migrate any legacy plaintext UserDefaults
+        // value into the Keychain and scrub it from defaults.
+        let kcA = Keychain.get(account: Self.anthKey)
+        let kcG = Keychain.get(account: Self.gemKey)
+        let legacyA = d.string(forKey: Self.anthKey)
+        let legacyG = d.string(forKey: Self.gemKey)
+        let rawA = kcA ?? legacyA ?? (env["ANTHROPIC_API_KEY"] ?? "")
+        let rawG = kcG ?? legacyG ?? (env["GEMINI_API_KEY"] ?? "")
         self.anthropicKey = rawA.trimmingCharacters(in: .whitespacesAndNewlines)
         self.geminiKey    = rawG.trimmingCharacters(in: .whitespacesAndNewlines)
         self.ollamaHost = d.string(forKey: Self.ollamaKey) ?? (env["OLLAMA_HOST"] ?? "http://127.0.0.1:11434")
         self.autoSpawnDaemon = d.object(forKey: Self.autoSpawnKey) as? Bool ?? true
+        // One-time migration: if a legacy plaintext key existed, persist it to
+        // the Keychain and remove the cleartext copy.
+        if kcA == nil, let l = legacyA, !l.isEmpty {
+            Keychain.set(l.trimmingCharacters(in: .whitespacesAndNewlines), account: Self.anthKey)
+            d.removeObject(forKey: Self.anthKey)
+        }
+        if kcG == nil, let l = legacyG, !l.isEmpty {
+            Keychain.set(l.trimmingCharacters(in: .whitespacesAndNewlines), account: Self.gemKey)
+            d.removeObject(forKey: Self.gemKey)
+        }
     }
 
     static func defaultSocketPath() -> String {

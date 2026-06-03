@@ -563,3 +563,93 @@ impl Db {
         Ok(conn.last_insert_rowid())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tmp_db() -> Db {
+        let p = std::env::temp_dir().join(format!("atelier-test-{}.db", uuid::Uuid::new_v4().simple()));
+        Db::open(&p).expect("open db")
+    }
+
+    fn seed_ws_and_term(db: &Db, ws: &str, role: &str) -> String {
+        db.upsert_workspace(&WorkspaceRow {
+            id: ws.into(), path: format!("/tmp/{ws}"), name: ws.into(), opened_unix_ms: 1,
+        }).unwrap();
+        let tid = format!("t_{role}");
+        db.insert_terminal(&TerminalRow {
+            id: tid.clone(), workspace_id: ws.into(), shell: "zsh".into(),
+            cwd: format!("/tmp/{ws}"), created_unix_ms: 10, closed_unix_ms: None,
+            role: role.into(),
+        }).unwrap();
+        tid
+    }
+
+    #[test]
+    fn schema_applies_and_is_idempotent() {
+        // open() runs SCHEMA + ALTER migrations. Re-running open_inner on the
+        // same file must not error (ALTERs are best-effort, CREATEs IF NOT EXISTS).
+        let p = std::env::temp_dir().join(format!("atelier-idem-{}.db", uuid::Uuid::new_v4().simple()));
+        let _a = Db::open(&p).expect("first open");
+        let _b = Db::open(&p).expect("second open (idempotent)");
+    }
+
+    #[test]
+    fn term_log_roundtrip_and_cap() {
+        let db = tmp_db();
+        let tid = seed_ws_and_term(&db, "ws1", "backend");
+        db.append_term_log(&tid, b"hello ", 1).unwrap();
+        db.append_term_log(&tid, b"world", 2).unwrap();
+        let all = db.read_term_log(&tid, 1024).unwrap();
+        assert_eq!(all, b"hello world");
+        // Cap keeps the tail.
+        let capped = db.read_term_log(&tid, 5).unwrap();
+        assert_eq!(capped, b"world");
+    }
+
+    #[test]
+    fn previous_terminal_id_picks_latest() {
+        let db = tmp_db();
+        db.upsert_workspace(&WorkspaceRow {
+            id: "ws2".into(), path: "/tmp/ws2".into(), name: "ws2".into(), opened_unix_ms: 1,
+        }).unwrap();
+        for (i, t) in ["old", "new"].iter().enumerate() {
+            db.insert_terminal(&TerminalRow {
+                id: format!("t_{t}"), workspace_id: "ws2".into(), shell: "zsh".into(),
+                cwd: "/tmp/ws2".into(), created_unix_ms: (i as i64) * 100,
+                closed_unix_ms: None, role: "frontend".into(),
+            }).unwrap();
+        }
+        let prev = db.previous_terminal_id("ws2", "frontend").unwrap();
+        assert_eq!(prev, Some("t_new".into()));
+        assert_eq!(db.previous_terminal_id("ws2", "nobody").unwrap(), None);
+    }
+
+    #[test]
+    fn events_persist_files_changed() {
+        let db = tmp_db();
+        db.upsert_workspace(&WorkspaceRow {
+            id: "ws3".into(), path: "/tmp/ws3".into(), name: "ws3".into(), opened_unix_ms: 1,
+        }).unwrap();
+        let files = vec!["src/a.rs".to_string(), "src/b.rs".to_string()];
+        db.insert_event("ws3", "backend", "api.contract.defined", "spec", 5, &files).unwrap();
+        let rows = db.list_events("ws3", &[], 0, 50).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].files_changed, files);
+        assert_eq!(rows[0].topic, "api.contract.defined");
+    }
+
+    #[test]
+    fn list_events_filters_by_topic() {
+        let db = tmp_db();
+        db.upsert_workspace(&WorkspaceRow {
+            id: "ws4".into(), path: "/tmp/ws4".into(), name: "ws4".into(), opened_unix_ms: 1,
+        }).unwrap();
+        db.insert_event("ws4", "a", "topic.one", "s1", 1, &[]).unwrap();
+        db.insert_event("ws4", "b", "topic.two", "s2", 2, &[]).unwrap();
+        let only = db.list_events("ws4", &["topic.two".to_string()], 0, 50).unwrap();
+        assert_eq!(only.len(), 1);
+        assert_eq!(only[0].from_role, "b");
+    }
+}

@@ -215,19 +215,14 @@ struct WorkspaceRow: View {
         }
     }
 
-    /// Best-effort opener: try `open -a "<app>" <path>`, fall back to launching
-    /// the editor's CLI on PATH if `open -a` fails (no app installed).
+    /// Open `path` in `name` (e.g. "Visual Studio Code"). Uses `/usr/bin/open
+    /// -a` with an argument array — no shell, so paths with quotes/spaces are
+    /// safe (no injection). If the app isn't installed, open fails silently.
     private func openInEditor(name: String, path: String) {
         let task = Process()
-        task.launchPath = "/usr/bin/open"
-        task.arguments = ["-a", name, path]
-        do { try task.run() } catch {
-            // Fallback: try CLI binary (e.g. `code` / `cursor`).
-            let cli = Process()
-            cli.launchPath = "/bin/zsh"
-            cli.arguments = ["-lc", "command -v \(name.lowercased() == "visual studio code" ? "code" : name.lowercased()) >/dev/null && \(name.lowercased() == "visual studio code" ? "code" : name.lowercased()) '\(path)'"]
-            try? cli.run()
-        }
+        task.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+        task.arguments = ["-a", name, path]   // argv, not a shell string
+        try? task.run()
     }
 }
 

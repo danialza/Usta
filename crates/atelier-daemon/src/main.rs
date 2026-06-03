@@ -244,12 +244,22 @@ async fn run_role_headless(
     topic: String,
     summary: String,
 ) {
-    let user_msg = format!(
-        "Team update from @{from_role} [{topic}]: {summary}\n\n\
-         If this affects your area, take the necessary action now (you may read \
-         files; writes/shell need a human, so describe them). If not relevant, \
-         reply 'noted'."
-    );
+    let auto = role.autonomy.eq_ignore_ascii_case("auto");
+    let user_msg = if auto {
+        format!(
+            "Team update from @{from_role} [{topic}]: {summary}\n\n\
+             If this affects your area, DO the work now — you may read, write \
+             files, and run shell. When you finish something the team needs, \
+             end with [[handoff: <topic> | <summary>]]. If not relevant, reply 'noted'."
+        )
+    } else {
+        format!(
+            "Team update from @{from_role} [{topic}]: {summary}\n\n\
+             If this affects your area, take the necessary action now (you may read \
+             files; writes/shell need a human, so describe them). If not relevant, \
+             reply 'noted'."
+        )
+    };
 
     let mut system = role.system_prompt.clone();
     system.push_str(&atelier_core::skills::render_block(&role.claude_skills));
@@ -261,18 +271,23 @@ async fn run_role_headless(
         ));
     }
 
-    // Read-only tools for headless turns.
+    // Tools for headless turns. In "manual" autonomy only Allowed (read-only)
+    // tools run; "auto" roles also run Ask-gated tools (write/exec) without a
+    // human — the trade is power vs. safety, opt-in per role.
     let tools = ws_root.as_ref().map(|_| toolexec::specs_for_role(&role)).unwrap_or_default();
     let exec_root = ws_root.clone();
     let exec_role = role.clone();
     let exec: atelier_providers::ToolExec = std::sync::Arc::new(move |name, input| {
         let root = exec_root.clone();
         let role = exec_role.clone();
+        let auto = auto;
         Box::pin(async move {
             let Some(root) = root else { return Err(anyhow::anyhow!("no workspace")) };
             match toolexec::gate(&role, &name) {
                 toolexec::Gate::Allowed => toolexec::execute(root, role, name, input).await,
-                _ => Ok(format!("⏸ {name} skipped (headless turn needs a human to approve)")),
+                toolexec::Gate::Ask if auto => toolexec::execute(root, role, name, input).await,
+                toolexec::Gate::Denied => Ok(format!("⛔ {name} denied by role policy")),
+                _ => Ok(format!("⏸ {name} skipped (headless manual role needs a human to approve)")),
             }
         })
     });
@@ -481,6 +496,7 @@ fn role_from_proposed(pr: &PbProposedRole, roles_dir: &std::path::Path) -> RoleD
         },
         cli_command: pr.cli_command.clone(),
         kickoff: pr.kickoff.clone(),
+        autonomy: "manual".into(),
         source: roles_dir.join(format!("{}.yaml", pr.name)),
         scope: atelier_roles::RoleScope::Workspace,
     }
@@ -720,9 +736,21 @@ impl Atelier for AtelierSvc {
                     // from claude.ai login should win for CLI sessions.
                     let trimmed = effective_command.trim_start();
                     let (head, tail) = trimmed.split_once(char::is_whitespace).unwrap_or((trimmed, ""));
+                    // If this role had a prior terminal in this workspace, add
+                    // --continue so claude resumes its last session (real memory)
+                    // instead of starting cold. First launch omits it.
+                    let cont = {
+                        let dbq = self.db.clone();
+                        let wsq = workspace.id.clone();
+                        let roleq = r.role.clone();
+                        let prev = tokio::task::spawn_blocking(move || dbq.previous_terminal_id(&wsq, &roleq))
+                            .await.ok().and_then(|x| x.ok()).flatten();
+                        if prev.is_some() { " --continue" } else { "" }
+                    };
                     effective_command = format!(
-                        "unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN; {head} --append-system-prompt \"$(cat {rel})\" {tail}",
+                        "unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN; {head}{cont} --append-system-prompt \"$(cat {rel})\" {tail}",
                         head = head,
+                        cont = cont,
                         rel = rel_brief,
                         tail = tail
                     );
