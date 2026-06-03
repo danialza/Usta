@@ -93,6 +93,19 @@ final class WorkspaceBus: ObservableObject {
             .sorted()
     }
 
+    /// For a pending role, list its missing-upstream topics + which role
+    /// would publish each. Used by the UI to explain "blocked on …".
+    func missingFor(_ name: String) -> [(topic: String, from: String)] {
+        guard let r = roles.first(where: { $0.name == name }) else { return [] }
+        let published = Set(events.map { $0.topic })
+        return r.handoffSubscribes
+            .filter { !published.contains($0) }
+            .map { topic in
+                let pub = roles.first(where: { $0.handoffPublishes.contains(topic) })?.name ?? "?"
+                return (topic, pub)
+            }
+    }
+
     /// Roles currently ready to act (have all upstream events) but not done.
     var readyNow: [String] {
         roles.map { $0.name }
@@ -116,7 +129,7 @@ final class WorkspaceBus: ObservableObject {
         pollTask = Task { [weak self] in
             await self?.refresh(workspaceID: workspaceID)
             while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 2_500_000_000)
+                try? await Task.sleep(nanoseconds: 1_200_000_000)
                 if Task.isCancelled { break }
                 await self?.refresh(workspaceID: workspaceID)
             }

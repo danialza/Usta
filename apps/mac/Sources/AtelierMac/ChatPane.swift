@@ -501,7 +501,12 @@ struct AssistantPane: View {
 
     @ViewBuilder
     private var kickoffBanner: some View {
-        if !effectiveKickoff.isEmpty && !kickoffSent {
+        let s = bus.state(of: role.name)
+        if s == .done {
+            doneBanner
+        } else if s == .pending {
+            blockedBanner
+        } else if !effectiveKickoff.isEmpty && !kickoffSent {
             HStack(alignment: .top, spacing: 8) {
                 Image(systemName: "paperplane.fill")
                     .font(.system(size: 10))
@@ -566,6 +571,67 @@ struct AssistantPane: View {
             .padding(.horizontal, 10)
             .padding(.bottom, 6)
         }
+    }
+
+    @ViewBuilder
+    private var doneBanner: some View {
+        let pubs = role.handoffPublishes
+        let nextReady = bus.readyNow.filter { $0 != role.name }
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "checkmark.circle.fill")
+                .font(.system(size: 12)).foregroundStyle(.green).padding(.top, 1)
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Done").font(.system(size: 10, weight: .semibold)).foregroundStyle(.green)
+                if !pubs.isEmpty {
+                    Text("Published: " + pubs.map { "↑\($0)" }.joined(separator: ", "))
+                        .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(2)
+                }
+                if !nextReady.isEmpty {
+                    Text("Next ready: " + nextReady.map { "@\($0)" }.joined(separator: ", "))
+                        .font(.system(size: 11, weight: .medium)).foregroundStyle(.tint)
+                } else {
+                    Text("Wait for upstream events, or type follow-up in terminal below.")
+                        .font(.system(size: 10)).foregroundStyle(AtelierTheme.dim)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(8)
+        .background(Color.green.opacity(0.10))
+        .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.green.opacity(0.35)))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .padding(.horizontal, 10).padding(.bottom, 6)
+    }
+
+    @ViewBuilder
+    private var blockedBanner: some View {
+        let missing = bus.missingFor(role.name)
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "hourglass")
+                .font(.system(size: 11)).foregroundStyle(.gray).padding(.top, 2)
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Waiting on upstream")
+                    .font(.system(size: 10, weight: .semibold)).foregroundStyle(.gray)
+                ForEach(missing.prefix(4), id: \.topic) { m in
+                    HStack(spacing: 4) {
+                        Image(systemName: "arrow.down").font(.system(size: 8))
+                            .foregroundStyle(.gray)
+                        Text("\(m.topic)").font(.system(size: 10, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                        Text("from @\(m.from)").font(.system(size: 10)).foregroundStyle(AtelierTheme.dim)
+                    }
+                }
+                if missing.count > 4 {
+                    Text("…+\(missing.count - 4) more").font(.system(size: 9)).foregroundStyle(AtelierTheme.dim)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(8)
+        .background(Color.gray.opacity(0.10))
+        .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.gray.opacity(0.30)))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .padding(.horizontal, 10).padding(.bottom, 6)
     }
 
     private func stateLabel() -> String {
