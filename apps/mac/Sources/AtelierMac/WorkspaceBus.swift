@@ -267,7 +267,19 @@ final class WorkspaceBus: ObservableObject {
             // pin is still valid — keep it
         } else {
             let next = bn?.name
-            if next != pinnedBottleneckName { pinnedBottleneckName = next }
+            if next != pinnedBottleneckName {
+                pinnedBottleneckName = next
+                // Notify the new bottleneck pane to auto-regenerate so user
+                // opens it to a ready-to-Send prompt (no extra click).
+                if let n = next {
+                    NotificationCenter.default.post(name: .atelierAutoRegenerate, object: n)
+                }
+            }
+        }
+        // Also auto-regen for any role that just became .ready and has no
+        // regenerated kickoff yet — keep prompts fresh as state changes.
+        for r in roles where state(of: r.name) == .ready {
+            NotificationCenter.default.post(name: .atelierAutoRegenerate, object: r.name)
         }
     }
 }

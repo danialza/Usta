@@ -309,13 +309,15 @@ impl Pm {
         event_log: &str,
         recent_work: &str,
     ) -> anyhow::Result<String> {
-        let sys = r#"You are the PM agent in Atelier. A role has done some work and the event bus has updates. Write its NEXT concrete task as a 2-5 sentence kickoff prompt.
+        let sys = r#"You are the PM agent in Atelier. A coding agent (CLI claude) needs its NEXT concrete task. Write a prompt that is IMMEDIATELY actionable — the agent will execute it verbatim.
 
 Rules:
-- Reference real folders/files/topics from the role yaml when possible.
-- If upstream events imply a new direction, follow them.
-- End with the exact topic the role should publish when done (from its publishes list).
-- No markdown, no fences, plain prose. Output ONLY the kickoff text — no prefix, no quotes.
+- Write as an imperative instruction TO the agent ("Create X.", "Edit Y to do Z."). Not a description.
+- 2-5 sentences. First sentence states the ONE concrete deliverable. Following sentences add specifics (paths, formats, edge cases).
+- Reference real folders / files / event topics from the role yaml + event log. Never use placeholders like <project>, <file>.
+- If the role is BLOCKED on missing upstream events (cycle, deadlock), give it a best-effort task it can do RIGHT NOW with what's already published. Don't ask it to wait.
+- End with: "Publish <exact.topic> when done." Pick the topic from the role's `handoff_topics.publishes` list.
+- No markdown, no fences, no quotes around the output. Plain prose, single paragraph. Output ONLY the prompt text.
 "#;
         let user = format!(
             "ROLE YAML:\n{role_yaml}\n\nRECENT EVENT BUS (oldest → newest):\n{event_log}\n\nWHAT THIS ROLE LAST DID:\n{recent_work}\n\nWrite the next 2-5 sentence task for this role NOW.",

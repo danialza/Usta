@@ -7,6 +7,10 @@ extension Notification.Name {
     /// Posted with `object: subscriberRoleName` when a new event lands
     /// whose topic that role subscribes to. Pane reacts by regenerating.
     static let atelierEventForRole = Notification.Name("AtelierEventForRole")
+    /// Posted with `object: roleName` by the bus when a role should have
+    /// its kickoff auto-regenerated (becomes bottleneck or newly ready).
+    /// Pane dedups: only runs if regeneratedKickoff is nil.
+    static let atelierAutoRegenerate = Notification.Name("AtelierAutoRegenerate")
 }
 
 enum ChatItemKind { case user, assistant, tool, approval }
@@ -225,6 +229,20 @@ struct AssistantPane: View {
                 if let k = await client.regenerateKickoff(workspaceID: workspaceID, roleName: role.name) {
                     regeneratedKickoff = k
                     kickoffSent = false   // surface new banner
+                }
+                regenInFlight = false
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .atelierAutoRegenerate)) { note in
+            guard let name = note.object as? String, name == role.name else { return }
+            // Dedup: only auto-fire when we don't already have a regenerated
+            // prompt waiting, no in-flight call, and the user hasn't sent yet.
+            if regeneratedKickoff != nil || regenInFlight || kickoffSent { return }
+            Task {
+                regenInFlight = true
+                if let k = await client.regenerateKickoff(workspaceID: workspaceID, roleName: role.name) {
+                    regeneratedKickoff = k
+                    kickoffSent = false
                 }
                 regenInFlight = false
             }
@@ -616,11 +634,14 @@ struct AssistantPane: View {
     private var blockedBanner: some View {
         let missing = bus.missingFor(role.name)
         HStack(alignment: .top, spacing: 8) {
-            Image(systemName: "hourglass")
-                .font(.system(size: 11)).foregroundStyle(.gray).padding(.top, 2)
+            Image(systemName: regenInFlight ? "sparkles" : "hourglass")
+                .font(.system(size: 11))
+                .foregroundStyle(regenInFlight ? Color.accentColor : .gray)
+                .padding(.top, 2)
             VStack(alignment: .leading, spacing: 3) {
-                Text("Waiting on upstream")
-                    .font(.system(size: 10, weight: .semibold)).foregroundStyle(.gray)
+                Text(regenInFlight ? "Generating next prompt…" : "Waiting on upstream")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(regenInFlight ? Color.accentColor : .gray)
                 ForEach(missing.prefix(4), id: \.topic) { m in
                     HStack(spacing: 4) {
                         Image(systemName: "arrow.down").font(.system(size: 8))
