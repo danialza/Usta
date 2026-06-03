@@ -59,6 +59,24 @@ final class WorkspaceBus: ObservableObject {
 
     func markWorking(_ name: String) { working.insert(name) }
 
+    /// Loose topic match — `tests.passing` satisfies `qa.tests.passing` and
+    /// vice-versa. Tolerates PM-side prefix mistakes so orchestration
+    /// doesn't deadlock on naming drift.
+    private static func topicMatches(_ wanted: String, in published: Set<String>) -> Bool {
+        if published.contains(wanted) { return true }
+        let suffix = wanted.split(separator: ".").last.map(String.init) ?? wanted
+        for p in published {
+            if p == wanted { return true }
+            if p == suffix { return true }
+            if p.hasSuffix("." + wanted) { return true }
+            if wanted.hasSuffix("." + p) { return true }
+            // last two segments must match (allow `ui.page.created` ~ `page.created`)
+            let last2 = wanted.split(separator: ".").suffix(2).joined(separator: ".")
+            if !last2.isEmpty && (p.hasSuffix(last2) || p == last2) { return true }
+        }
+        return false
+    }
+
     /// Role lifecycle inferred from event log + working set.
     /// - .working if user fired its kickoff but it hasn't published all yet
     /// - .done if role published every topic in its `handoffPublishes` set
@@ -68,11 +86,13 @@ final class WorkspaceBus: ObservableObject {
         guard let r = roles.first(where: { $0.name == name }) else { return .pending }
         let allTopics = Set(events.map { $0.topic })
         let mineTopics = Set(events.filter { $0.fromRole == name }.map { $0.topic })
-        let pubs = Set(r.handoffPublishes)
-        let subs = Set(r.handoffSubscribes)
-        if !pubs.isEmpty && pubs.isSubset(of: mineTopics) { return .done }
+        let pubs = r.handoffPublishes
+        let subs = r.handoffSubscribes
+        let pubsDone = !pubs.isEmpty && pubs.allSatisfy { Self.topicMatches($0, in: mineTopics) }
+        if pubsDone { return .done }
         if working.contains(name) { return .working }
-        if subs.isEmpty || subs.isSubset(of: allTopics) { return .ready }
+        let subsMet = subs.isEmpty || subs.allSatisfy { Self.topicMatches($0, in: allTopics) }
+        if subsMet { return .ready }
         return .pending
     }
 
@@ -99,9 +119,12 @@ final class WorkspaceBus: ObservableObject {
         guard let r = roles.first(where: { $0.name == name }) else { return [] }
         let published = Set(events.map { $0.topic })
         return r.handoffSubscribes
-            .filter { !published.contains($0) }
+            .filter { !Self.topicMatches($0, in: published) }
             .map { topic in
-                let pub = roles.first(where: { $0.handoffPublishes.contains(topic) })?.name ?? "?"
+                // Find producer with fuzzy match too.
+                let pub = roles.first(where: { r in
+                    r.handoffPublishes.contains(where: { Self.topicMatches(topic, in: [$0]) })
+                })?.name ?? "?"
                 return (topic, pub)
             }
     }
@@ -139,6 +162,11 @@ final class WorkspaceBus: ObservableObject {
     func stop() { pollTask?.cancel(); pollTask = nil }
 
     func updateRoles(_ rs: [Atelier_V1_Role]) { self.roles = rs }
+
+    /// Trigger an immediate refresh outside the poll cadence (Refresh button).
+    func refreshNow(workspaceID: String) {
+        Task { await self.refresh(workspaceID: workspaceID) }
+    }
 
     private func refresh(workspaceID: String) async {
         guard let client else { return }

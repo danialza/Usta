@@ -413,6 +413,13 @@ struct WorkspaceDetailView: View {
                 }
                 Spacer()
                 modePicker
+                toolbarButton("Refresh", systemImage: "arrow.clockwise") {
+                    Task {
+                        roles = await client.listRoles(workspaceID: ws.id)
+                        bus.updateRoles(roles)
+                        bus.refreshNow(workspaceID: ws.id)
+                    }
+                }
                 toolbarButton(showActivity ? "Hide Activity" : "Activity",
                               systemImage: "dot.radiowaves.left.and.right") {
                     showActivity.toggle()
@@ -439,9 +446,76 @@ struct WorkspaceDetailView: View {
             }
             if !roles.isEmpty && mode == .assistants {
                 roleChipsStrip
+                nextActionBar
             }
         }
         .padding(14)
+    }
+
+    /// Single-line "what to do RIGHT NOW" computed from bus state.
+    private var nextActionBar: some View {
+        let working = roles.filter { bus.state(of: $0.name) == .working }.map { $0.name }
+        let ready   = bus.readyNow
+        let pending = roles.filter { bus.state(of: $0.name) == .pending }.map { $0.name }
+        let done    = roles.filter { bus.state(of: $0.name) == .done }.map { $0.name }
+        let total   = roles.count
+
+        let (icon, color, title, body): (String, Color, String, String) = {
+            if !working.isEmpty {
+                return ("clock.arrow.circlepath", .orange,
+                        "Working", "@\(working.joined(separator: ", @"))  is running — wait or open its pane.")
+            }
+            if !ready.isEmpty {
+                return ("arrow.right.circle.fill", .accentColor,
+                        "Do next", "Click ▶ Run on @\(ready[0]) (or open its pane and Send).")
+            }
+            if done.count == total {
+                return ("checkmark.seal.fill", .green,
+                        "All done", "Every role published its outputs. Project is at a clean checkpoint.")
+            }
+            // All remaining are pending → deadlock or upstream missing. Suggest the
+            // pending role whose upstream is "closest" (fewest missing topics).
+            let best = pending
+                .map { ($0, bus.missingFor($0).count) }
+                .min(by: { $0.1 < $1.1 })
+            if let (name, miss) = best {
+                let publisher = bus.missingFor(name).first?.from ?? "?"
+                let pubName = publisher == "?" ? "manual input" : "@\(publisher)"
+                return ("hand.point.right.fill", .yellow,
+                        "Unblock",
+                        "@\(name) blocked on \(miss) topic(s). Open \(pubName)'s pane and type the next prompt, or click its Send.")
+            }
+            return ("ellipsis.circle", .gray, "Idle", "Nothing ready. Click Refresh.")
+        }()
+
+        return HStack(spacing: 10) {
+            Image(systemName: icon).foregroundStyle(color).font(.system(size: 16))
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title).font(.system(size: 10, weight: .bold)).foregroundStyle(color)
+                Text(body).font(.system(size: 12)).foregroundStyle(.primary).lineLimit(2)
+            }
+            Spacer()
+            if !ready.isEmpty {
+                Button {
+                    NotificationCenter.default.post(name: .atelierKickoffRole, object: ready[0])
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "play.fill").font(.system(size: 10))
+                        Text("Run @\(ready[0])").font(.system(size: 11, weight: .medium))
+                    }
+                    .padding(.horizontal, 10).padding(.vertical, 5)
+                    .background(Color.accentColor).foregroundStyle(.white)
+                    .clipShape(Capsule())
+                }
+                .buttonStyle(.plain)
+            }
+            Text("\(done.count)/\(total) done")
+                .font(.system(size: 10)).foregroundStyle(AtelierTheme.dim)
+        }
+        .padding(.horizontal, 12).padding(.vertical, 8)
+        .background(color.opacity(0.08))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(color.opacity(0.35)))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 
     private var roleChipsStrip: some View {
