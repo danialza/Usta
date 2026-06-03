@@ -460,6 +460,17 @@ impl Db {
         Ok(all)
     }
 
+    /// Last write timestamp for a terminal's pty log, or None if empty.
+    /// Used by idle-detector to tell when an agent has gone quiet.
+    pub fn last_term_log_ms(&self, terminal_id: &str) -> rusqlite::Result<Option<i64>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT MAX(created_unix_ms) FROM term_log WHERE terminal_id = ?1",
+        )?;
+        let mut rows = stmt.query_map(params![terminal_id], |r| r.get::<_, Option<i64>>(0))?;
+        if let Some(r) = rows.next() { Ok(r?) } else { Ok(None) }
+    }
+
     /// Most recent terminal id for a (workspace, role) pair, if any.
     /// Used to preload pty history into a freshly spawned session after
     /// daemon restart.

@@ -146,6 +146,118 @@ fn parse_handoffs(text: &str) -> Vec<(String, String)> {
     out
 }
 
+/// Background watcher: every 10s look for role-tagged terminals that have
+/// been idle (no pty output for IDLE_SECS) AND whose last pty bytes contain
+/// completion keywords (Done/Finished/Published/✓ etc) AND whose role has
+/// unpublished handoff topics. Auto-publishes those topics with an
+/// "auto-detected completion" summary so downstream roles unblock without
+/// the user clicking "Mark done".
+fn spawn_idle_watcher(
+    db: Arc<Db>,
+    roles: Arc<RoleLibrary>,
+    _providers: Arc<ProviderRegistry>,
+) {
+    const POLL_SECS: u64 = 10;
+    const IDLE_SECS: i64 = 30;
+    const TAIL_BYTES: usize = 4096;
+    // Match Done, Finished, Complete[d], Published, Ready, Wrote, ✓, ✅,
+    // "task complete", "all set". Case-insensitive via lower().
+    let needles: &[&str] = &[
+        " done", " done.", "all done", "task complete", "task done",
+        " finished", "finished.", " complete", "completed",
+        " published", "published.", "published api", "published the",
+        "✓", "✅",
+    ];
+    tokio::spawn(async move {
+        // De-dupe: don't republish same topic twice within a short window.
+        let mut last_fired: std::collections::HashMap<(String, String), i64> =
+            std::collections::HashMap::new();
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(POLL_SECS)).await;
+            let now = now_ms();
+            // List all known terminals (db source of truth).
+            let dbq = db.clone();
+            let terms = match tokio::task::spawn_blocking(move || dbq.list_terminals(None)).await {
+                Ok(Ok(t)) => t, _ => continue,
+            };
+            for t in terms {
+                if t.closed_unix_ms.is_some() { continue; }
+                if t.role.is_empty() { continue; }
+                // Idle check
+                let dbq = db.clone();
+                let tid = t.id.clone();
+                let last = tokio::task::spawn_blocking(move || dbq.last_term_log_ms(&tid))
+                    .await.ok().and_then(|r| r.ok()).flatten();
+                let last_ms = match last { Some(v) => v, None => continue };
+                if now - last_ms < IDLE_SECS * 1000 { continue; }
+                // Read tail of pty log + check for completion keywords
+                let dbq = db.clone();
+                let tid = t.id.clone();
+                let tail = tokio::task::spawn_blocking(move || dbq.read_term_log(&tid, TAIL_BYTES))
+                    .await.ok().and_then(|r| r.ok()).unwrap_or_default();
+                let lower = String::from_utf8_lossy(&tail).to_lowercase();
+                let hit = needles.iter().any(|n| lower.contains(n));
+                if !hit { continue; }
+                // Find role + its unpublished topics
+                let ws_root = {
+                    let dbq = db.clone();
+                    let wsq = t.workspace_id.clone();
+                    let workspaces = tokio::task::spawn_blocking(move || dbq.list_workspaces())
+                        .await.ok().and_then(|r| r.ok()).unwrap_or_default();
+                    workspaces.into_iter().find(|w| w.id == wsq).map(|w| std::path::PathBuf::from(w.path))
+                };
+                let lib = match &ws_root {
+                    Some(root) => roles.with_workspace(root),
+                    None => (*roles).clone(),
+                };
+                let Some(role_def) = lib.get(&t.role).cloned() else { continue };
+                if role_def.handoff_topics.publishes.is_empty() { continue; }
+                // Which topics has this role already published?
+                let dbq = db.clone();
+                let wsq = t.workspace_id.clone();
+                let mine_events = tokio::task::spawn_blocking(move || dbq.list_events(&wsq, &[], 0, 200))
+                    .await.ok().and_then(|r| r.ok()).unwrap_or_default();
+                let mine_topics: std::collections::HashSet<String> = mine_events.iter()
+                    .filter(|e| e.from_role == role_def.name)
+                    .map(|e| e.topic.clone()).collect();
+                let mut unpub: Vec<String> = role_def.handoff_topics.publishes.iter()
+                    .filter(|t| !mine_topics.contains(*t))
+                    .cloned().collect();
+                if unpub.is_empty() { continue; }
+                // De-dupe per topic (skip if fired in last 5 min)
+                unpub.retain(|topic| {
+                    let key = (t.id.clone(), topic.clone());
+                    let prev = last_fired.get(&key).copied().unwrap_or(0);
+                    if now - prev < 5 * 60 * 1000 { return false; }
+                    last_fired.insert(key, now);
+                    true
+                });
+                if unpub.is_empty() { continue; }
+                let files = ws_root.as_ref().map(|r| collect_changed_files(r)).unwrap_or_default();
+                for topic in unpub {
+                    let summary = format!("auto-detected completion (idle {}s + keyword in pty tail)", (now - last_ms) / 1000);
+                    let dbq = db.clone();
+                    let wsq = t.workspace_id.clone();
+                    let from = role_def.name.clone();
+                    let topic_c = topic.clone();
+                    let summary_c = summary.clone();
+                    let files_c = files.clone();
+                    let _ = tokio::task::spawn_blocking(move || {
+                        dbq.insert_event(&wsq, &from, &topic_c, &summary_c, now, &files_c)
+                    }).await;
+                    tracing::info!(role = %role_def.name, topic = %topic, "idle-watcher: auto-published");
+                    // Fan out to subscribers headless.
+                    dispatch_event(
+                        db.clone(), _providers.clone(), lib.clone(),
+                        t.workspace_id.clone(), ws_root.clone(),
+                        role_def.name.clone(), topic, summary,
+                    );
+                }
+            }
+        }
+    });
+}
+
 /// Best-effort list of files changed in `root` "recently".
 /// 1) If `.git` dir: run `git status --porcelain` and parse paths.
 /// 2) Else: walk `root` for files modified in the last 5 minutes.
@@ -2067,6 +2179,10 @@ async fn main() -> anyhow::Result<()> {
         approvals: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
         socket_path: socket_path.to_string_lossy().into_owned(),
     };
+
+    // Auto-completion watcher: detects when a role's CLI agent went idle
+    // after finishing work but forgot to call publish_event via MCP.
+    spawn_idle_watcher(svc.db.clone(), svc.roles.clone(), svc.providers.clone());
 
     if let Err(e) = Server::builder()
         .add_service(AtelierServer::new(svc))
