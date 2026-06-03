@@ -68,11 +68,22 @@ enum DaemonSpawner {
         return result == 0
     }
 
-    /// Best-effort: if a daemon is alive on the socket, remove the file so a
-    /// fresh spawn can bind. (The daemon process is left to exit on its own
-    /// when the socket disappears / on next launch's bind.)
+    /// Best-effort: kill any atelierd process bound to `socket`, then remove
+    /// the socket file so a fresh spawn can bind. We pkill by full arg match
+    /// so we don't touch unrelated daemons.
     static func stopByProbe(socket: String) {
-        if isSocketAlive(socket) {
+        // pkill -f "atelierd --socket <path>" — matches the daemon launched
+        // by either this app or a previous run.
+        let task = Process()
+        task.launchPath = "/usr/bin/pkill"
+        task.arguments = ["-f", "atelierd --socket \(socket)"]
+        task.standardOutput = FileHandle.nullDevice
+        task.standardError = FileHandle.nullDevice
+        try? task.run()
+        task.waitUntilExit()
+        // give it ~250ms to release the socket
+        Thread.sleep(forTimeInterval: 0.25)
+        if FileManager.default.fileExists(atPath: socket) {
             try? FileManager.default.removeItem(atPath: socket)
         }
     }

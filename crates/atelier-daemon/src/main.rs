@@ -17,6 +17,7 @@ use atelier_proto::v1::{
     ListTerminalsRequest, ListToolsRequest, OpenWorkspaceRequest, PingRequest, PingResponse,
     ProjectProposal as PbProjectProposal, ProposeProjectRequest, ProposedRole as PbProposedRole,
     ApproveToolRequest, ProviderInfo, ProviderList, PtyClientMsg, PublishEventRequest,
+    RegenerateKickoffRequest, RegenerateKickoffResponse,
     PtyServerMsg, Role as PbRole, RoleChatRequest, RoleList, ScaffoldProjectRequest,
     ScaffoldProjectResponse,
     SearchHit as PbSearchHit, SearchRequest, SearchResults, StackTag as PbStackTag,
@@ -145,6 +146,58 @@ fn parse_handoffs(text: &str) -> Vec<(String, String)> {
     out
 }
 
+/// Best-effort list of files changed in `root` "recently".
+/// 1) If `.git` dir: run `git status --porcelain` and parse paths.
+/// 2) Else: walk `root` for files modified in the last 5 minutes.
+fn collect_changed_files(root: &std::path::Path) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let git_dir = root.join(".git");
+    if git_dir.is_dir() {
+        let output = std::process::Command::new("git")
+            .args(["status", "--porcelain"])
+            .current_dir(root)
+            .output();
+        if let Ok(o) = output {
+            for line in String::from_utf8_lossy(&o.stdout).lines() {
+                // Format: "XY path"  or "XY path -> newpath"
+                let trimmed = line.get(3..).unwrap_or("");
+                let path = trimmed.split(" -> ").last().unwrap_or(trimmed).trim();
+                if !path.is_empty() && out.len() < 40 {
+                    out.push(path.to_string());
+                }
+            }
+            return out;
+        }
+    }
+    // Fallback: mtime walk (max depth 4, last 5 min).
+    let cutoff_ms = now_ms() - 5 * 60 * 1000;
+    fn walk(dir: &std::path::Path, root: &std::path::Path, cutoff_ms: i64, out: &mut Vec<String>, depth: u32) {
+        if depth > 4 || out.len() >= 40 { return; }
+        let Ok(entries) = std::fs::read_dir(dir) else { return };
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let s = name.to_string_lossy();
+            if s.starts_with('.') || s == "node_modules" || s == "target" || s == ".build" { continue; }
+            let path = entry.path();
+            let Ok(meta) = entry.metadata() else { continue };
+            if meta.is_dir() {
+                walk(&path, root, cutoff_ms, out, depth + 1);
+            } else if let Ok(mt) = meta.modified() {
+                let mt_ms = mt.duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_millis() as i64).unwrap_or(0);
+                if mt_ms >= cutoff_ms {
+                    if let Ok(rel) = path.strip_prefix(root) {
+                        out.push(rel.to_string_lossy().to_string());
+                    }
+                }
+            }
+            if out.len() >= 40 { return; }
+        }
+    }
+    walk(root, root, cutoff_ms, &mut out, 0);
+    out
+}
+
 /// Fan an event out to every workspace role that subscribes to its topic
 /// (except the publisher), running each as a headless agentic turn. Headless
 /// turns may read but not write/shell (no human to approve), and their own
@@ -261,7 +314,7 @@ async fn run_role_headless(
         if allowed.is_empty() || allowed.iter().any(|x| x == &t) {
             let (db3, ws3, rn3) = (db.clone(), ws_id.clone(), role.name.clone());
             let _ = tokio::task::spawn_blocking(move || {
-                db3.insert_event(&ws3, &rn3, &t, &s, now_ms())
+                db3.insert_event(&ws3, &rn3, &t, &s, now_ms(), &[])
             }).await;
         }
     }
@@ -441,6 +494,7 @@ fn term_row_to_pb(t: &TerminalRow, alive: bool) -> PbTerminal {
         cwd: t.cwd.clone(),
         created_unix_ms: t.created_unix_ms,
         alive,
+        role: t.role.clone(),
     }
 }
 
@@ -660,11 +714,14 @@ impl Atelier for AtelierSvc {
                         let _ = std::fs::create_dir_all(parent);
                     }
                     let _ = std::fs::write(&abs_brief, brief);
-                    // Rewrite: `claude [args]` -> `claude --append-system-prompt "$(cat .atelier/agents/<role>.md)" [args]`
+                    // Rewrite: `claude [args]` -> `unset *_KEY; claude --append-system-prompt "$(cat .atelier/agents/<role>.md)" [args]`
+                    // Unset prevents "auth conflict" warning when user has
+                    // ANTHROPIC_API_KEY exported in shell rc — Pro/Max token
+                    // from claude.ai login should win for CLI sessions.
                     let trimmed = effective_command.trim_start();
                     let (head, tail) = trimmed.split_once(char::is_whitespace).unwrap_or((trimmed, ""));
                     effective_command = format!(
-                        "{head} --append-system-prompt \"$(cat {rel})\" {tail}",
+                        "unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN; {head} --append-system-prompt \"$(cat {rel})\" {tail}",
                         head = head,
                         rel = rel_brief,
                         tail = tail
@@ -682,10 +739,80 @@ impl Atelier for AtelierSvc {
             command: if has_command { Some(effective_command.clone()) } else { None },
             extra_env,
         };
-        self.pty
+        let term_arc = self.pty
             .create(spec)
             .await
             .map_err(|e| Status::internal(format!("pty create: {e}")))?;
+
+        // Preload scrollback from any previous (workspace, role) terminal so
+        // the new session opens with prior history visible above its fresh prompt.
+        if !r.role.is_empty() {
+            let dbq = self.db.clone();
+            let wsq = workspace.id.clone();
+            let roleq = r.role.clone();
+            if let Ok(prev) = tokio::task::spawn_blocking(move || dbq.previous_terminal_id(&wsq, &roleq)).await {
+                if let Ok(Some(prev_id)) = prev {
+                    let dbr = self.db.clone();
+                    let prev_id_clone = prev_id.clone();
+                    if let Ok(blob) = tokio::task::spawn_blocking(move || dbr.read_term_log(&prev_id_clone, 256 * 1024)).await {
+                        if let Ok(bytes) = blob {
+                            if !bytes.is_empty() {
+                                let banner = b"\r\n\x1b[33m--- Prior session (replayed from DB) ---\x1b[0m\r\n";
+                                let mut payload = Vec::with_capacity(banner.len() + bytes.len() + 64);
+                                payload.extend_from_slice(banner);
+                                payload.extend_from_slice(&bytes);
+                                payload.extend_from_slice(b"\r\n\x1b[33m--- End of replay; fresh session below ---\x1b[0m\r\n");
+                                term_arc.prepend_scrollback(&payload);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Mirror pty output → DB for future restart replay (batched ~512ms).
+        {
+            let mut rx = term_arc.subscribe();
+            let dbm = self.db.clone();
+            let tid = id.clone();
+            tokio::spawn(async move {
+                let mut buf: Vec<u8> = Vec::with_capacity(8192);
+                let mut last_flush = std::time::Instant::now();
+                loop {
+                    tokio::select! {
+                        msg = rx.recv() => {
+                            match msg {
+                                Ok(bytes) => {
+                                    buf.extend_from_slice(&bytes);
+                                    if buf.len() >= 64 * 1024 || last_flush.elapsed() >= std::time::Duration::from_millis(500) {
+                                        let to_write = std::mem::take(&mut buf);
+                                        let dbf = dbm.clone();
+                                        let tidf = tid.clone();
+                                        let _ = tokio::task::spawn_blocking(move || dbf.append_term_log(&tidf, &to_write, now_ms())).await;
+                                        last_flush = std::time::Instant::now();
+                                    }
+                                }
+                                Err(_) => break,
+                            }
+                        }
+                        _ = tokio::time::sleep(std::time::Duration::from_millis(750)) => {
+                            if !buf.is_empty() {
+                                let to_write = std::mem::take(&mut buf);
+                                let dbf = dbm.clone();
+                                let tidf = tid.clone();
+                                let _ = tokio::task::spawn_blocking(move || dbf.append_term_log(&tidf, &to_write, now_ms())).await;
+                                last_flush = std::time::Instant::now();
+                            }
+                        }
+                    }
+                }
+                if !buf.is_empty() {
+                    let dbf = dbm.clone();
+                    let tidf = tid.clone();
+                    let _ = tokio::task::spawn_blocking(move || dbf.append_term_log(&tidf, &buf, now_ms())).await;
+                }
+            });
+        }
 
         let created = now_ms();
         let row = TerminalRow {
@@ -695,6 +822,7 @@ impl Atelier for AtelierSvc {
             cwd,
             created_unix_ms: created,
             closed_unix_ms: None,
+            role: r.role.clone(),
         };
         let db = self.db.clone();
         let row2 = row.clone();
@@ -770,6 +898,8 @@ impl Atelier for AtelierSvc {
             .ok_or_else(|| Status::not_found(format!("terminal '{terminal_id}' not found")))?;
 
         let mut out_rx = term.subscribe();
+        // Snapshot scrollback BEFORE we let live bytes flow — replay first.
+        let replay = term.scrollback();
         let term_for_in = term.clone();
 
         // Spawn input pump.
@@ -790,6 +920,13 @@ impl Atelier for AtelierSvc {
 
         let term_for_out = term.clone();
         let outbound = async_stream::stream! {
+            // Replay scrollback first (one big frame) so reattach shows
+            // pty history (pending prompts, prior output).
+            if !replay.is_empty() {
+                yield Ok(PtyServerMsg {
+                    kind: Some(SK::Output(PtyOutput { data: replay })),
+                });
+            }
             loop {
                 tokio::select! {
                     msg = out_rx.recv() => {
@@ -1101,7 +1238,7 @@ impl Atelier for AtelierSvc {
                                             let from = role_name.clone();
                                             let (t2, s2) = (topic.clone(), summary.clone());
                                             let _ = tokio::task::spawn_blocking(move || {
-                                                db2.insert_event(&ws2, &from, &t2, &s2, now_ms())
+                                                db2.insert_event(&ws2, &from, &t2, &s2, now_ms(), &[])
                                             }).await;
                                             // Auto-react: fan out to subscribers.
                                             let lib = match &dispatch_ws_root {
@@ -1531,7 +1668,7 @@ impl Atelier for AtelierSvc {
         let proposal = pm
             .propose_from_idea(&r.idea)
             .await
-            .map_err(|e| Status::internal(format!("pm propose: {e}")))?;
+            .map_err(|e| Status::internal(format!("pm propose: {e:#}")))?;
 
         Ok(Response::new(proposal_to_pb(proposal)))
     }
@@ -1637,10 +1774,23 @@ impl Atelier for AtelierSvc {
         if topic.trim().is_empty() {
             return Err(Status::invalid_argument("topic required"));
         }
-        let (ws2, from2, topic2, summary2) = (ws.clone(), from.clone(), topic.clone(), summary.clone());
+        // Look up workspace root for file-diff
+        let ws_root: Option<std::path::PathBuf> = {
+            let dbq = self.db.clone();
+            let wsq = ws.clone();
+            let workspaces = tokio::task::spawn_blocking(move || dbq.list_workspaces())
+                .await.unwrap().unwrap_or_default();
+            workspaces.into_iter().find(|w| w.id == wsq).map(|w| std::path::PathBuf::from(w.path))
+        };
+        // Files changed since previous event (any role) using git if available.
+        let files: Vec<String> = ws_root.as_ref()
+            .map(|root| collect_changed_files(root))
+            .unwrap_or_default();
+
+        let (ws2, from2, topic2, summary2, files2) = (ws.clone(), from.clone(), topic.clone(), summary.clone(), files.clone());
         let db_ins = self.db.clone();
         let id = tokio::task::spawn_blocking(move || {
-            db_ins.insert_event(&ws2, &from2, &topic2, &summary2, now)
+            db_ins.insert_event(&ws2, &from2, &topic2, &summary2, now, &files2)
         })
         .await
         .unwrap()
@@ -1648,13 +1798,6 @@ impl Atelier for AtelierSvc {
 
         // Auto-react to subscribers.
         if !ws.is_empty() {
-            let ws_root = {
-                let dbq = self.db.clone();
-                let wsq = ws.clone();
-                let workspaces = tokio::task::spawn_blocking(move || dbq.list_workspaces())
-                    .await.unwrap().unwrap_or_default();
-                workspaces.into_iter().find(|w| w.id == ws).map(|w| std::path::PathBuf::from(w.path))
-            };
             let lib = match &ws_root {
                 Some(root) => self.roles.with_workspace(root),
                 None => (*self.roles).clone(),
@@ -1672,6 +1815,7 @@ impl Atelier for AtelierSvc {
             topic,
             summary,
             created_unix_ms: now,
+            files_changed: files,
         }))
     }
 
@@ -1697,6 +1841,7 @@ impl Atelier for AtelierSvc {
                     topic: e.topic,
                     summary: e.summary,
                     created_unix_ms: e.created_unix_ms,
+                    files_changed: e.files_changed,
                 })
                 .collect(),
         }))
@@ -1711,6 +1856,78 @@ impl Atelier for AtelierSvc {
             let _ = tx.send(r.allow);
         }
         Ok(Response::new(Empty {}))
+    }
+
+    async fn regenerate_kickoff(
+        &self,
+        req: Request<RegenerateKickoffRequest>,
+    ) -> Result<Response<RegenerateKickoffResponse>, Status> {
+        let r = req.into_inner();
+        if r.workspace_id.is_empty() || r.role_name.is_empty() {
+            return Err(Status::invalid_argument("workspace_id and role_name required"));
+        }
+        // Look up workspace
+        let db = self.db.clone();
+        let ws_id = r.workspace_id.clone();
+        let ws = tokio::task::spawn_blocking(move || db.list_workspaces())
+            .await
+            .unwrap()
+            .map_err(|e| Status::internal(e.to_string()))?
+            .into_iter()
+            .find(|w| w.id == ws_id)
+            .ok_or_else(|| Status::not_found("workspace not found"))?;
+        // Load workspace-scoped roles
+        let lib = self.roles.with_workspace(std::path::Path::new(&ws.path));
+        let role = lib.get(&r.role_name)
+            .ok_or_else(|| Status::not_found(format!("role '{}' not found", r.role_name)))?
+            .clone();
+        // Read role yaml from disk for the source-of-truth text
+        let role_yaml = std::fs::read_to_string(&role.source)
+            .unwrap_or_else(|_| serde_yaml::to_string(&role).unwrap_or_default());
+        // Build event log
+        let db2 = self.db.clone();
+        let ws_id2 = r.workspace_id.clone();
+        let events = tokio::task::spawn_blocking(move || db2.list_events(&ws_id2, &[], 0, 200))
+            .await
+            .unwrap()
+            .map_err(|e| Status::internal(e.to_string()))?;
+        let event_log = events.iter()
+            .map(|e| format!("@{} -> {}: {}", e.from_role, e.topic, e.summary))
+            .collect::<Vec<_>>()
+            .join("\n");
+        // Recent chat history for this role (last 12 assistant lines)
+        let db3 = self.db.clone();
+        let ws_id3 = r.workspace_id.clone();
+        let role_name3 = r.role_name.clone();
+        let hist = tokio::task::spawn_blocking(move || db3.list_agent_history(&ws_id3, &role_name3, 12))
+            .await
+            .unwrap()
+            .map_err(|e| Status::internal(e.to_string()))?;
+        let recent_work = hist.iter()
+            .filter(|m| m.role == "assistant")
+            .map(|m| m.content.chars().take(400).collect::<String>())
+            .collect::<Vec<_>>()
+            .join("\n---\n");
+        // Provider + model defaults
+        let provider_name = if r.provider.is_empty() { "anthropic".into() } else { r.provider };
+        let model = if r.model.is_empty() { "claude-haiku-4-5-20251001".into() } else { r.model };
+        let provider = self.providers
+            .get(&provider_name)
+            .ok_or_else(|| Status::not_found(format!("unknown provider '{provider_name}'")))?;
+        let pm = atelier_pm::Pm::new(provider, model);
+        let new_kickoff = pm.regenerate_kickoff(&role_yaml, &event_log, &recent_work)
+            .await
+            .map_err(|e| Status::internal(format!("pm regen: {e}")))?;
+        // Persist: overwrite role yaml with updated kickoff field
+        let mut updated = role.clone();
+        updated.kickoff = new_kickoff.clone();
+        if let Ok(yaml) = serde_yaml::to_string(&updated) {
+            let _ = std::fs::write(&updated.source, yaml);
+        }
+        Ok(Response::new(RegenerateKickoffResponse {
+            role_name: r.role_name,
+            kickoff: new_kickoff,
+        }))
     }
 
     async fn get_history(

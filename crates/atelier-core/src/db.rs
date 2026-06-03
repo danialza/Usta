@@ -56,6 +56,7 @@ CREATE TABLE IF NOT EXISTS terminals (
     cwd             TEXT NOT NULL,
     created_unix_ms INTEGER NOT NULL,
     closed_unix_ms  INTEGER,
+    role            TEXT NOT NULL DEFAULT '',
     FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
 );
 
@@ -93,11 +94,22 @@ CREATE TABLE IF NOT EXISTS events (
     from_role       TEXT NOT NULL,
     topic           TEXT NOT NULL,
     summary         TEXT NOT NULL,
-    created_unix_ms INTEGER NOT NULL
+    created_unix_ms INTEGER NOT NULL,
+    files_changed   TEXT NOT NULL DEFAULT ''   -- newline-separated paths
 );
 
 CREATE INDEX IF NOT EXISTS idx_events_ws ON events(workspace_id, id);
 CREATE INDEX IF NOT EXISTS idx_events_topic ON events(workspace_id, topic);
+
+-- Persisted pty output for crash/restart replay. One row per ~64KB chunk.
+CREATE TABLE IF NOT EXISTS term_log (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    terminal_id     TEXT NOT NULL,
+    data            BLOB NOT NULL,
+    created_unix_ms INTEGER NOT NULL,
+    FOREIGN KEY (terminal_id) REFERENCES terminals(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_term_log_tid ON term_log(terminal_id, id);
 "#;
 
 #[derive(Debug, Clone)]
@@ -124,6 +136,7 @@ pub struct EventRow {
     pub topic: String,
     pub summary: String,
     pub created_unix_ms: i64,
+    pub files_changed: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -134,6 +147,7 @@ pub struct TerminalRow {
     pub cwd: String,
     pub created_unix_ms: i64,
     pub closed_unix_ms: Option<i64>,
+    pub role: String,
 }
 
 impl Db {
@@ -165,6 +179,16 @@ impl Db {
         // Migration: add agent_role to pre-existing chat_messages tables.
         let _ = conn.execute(
             "ALTER TABLE chat_messages ADD COLUMN agent_role TEXT NOT NULL DEFAULT ''",
+            [],
+        );
+        // Migration: add role to pre-existing terminals tables.
+        let _ = conn.execute(
+            "ALTER TABLE terminals ADD COLUMN role TEXT NOT NULL DEFAULT ''",
+            [],
+        );
+        // Migration: add files_changed to pre-existing events tables.
+        let _ = conn.execute(
+            "ALTER TABLE events ADD COLUMN files_changed TEXT NOT NULL DEFAULT ''",
             [],
         );
         Ok(conn)
@@ -225,15 +249,16 @@ impl Db {
 
     pub fn insert_terminal(&self, t: &TerminalRow) -> rusqlite::Result<()> {
         self.conn.lock().unwrap().execute(
-            "INSERT INTO terminals (id, workspace_id, shell, cwd, created_unix_ms, closed_unix_ms)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            "INSERT INTO terminals (id, workspace_id, shell, cwd, created_unix_ms, closed_unix_ms, role)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             params![
                 t.id,
                 t.workspace_id,
                 t.shell,
                 t.cwd,
                 t.created_unix_ms,
-                t.closed_unix_ms
+                t.closed_unix_ms,
+                t.role
             ],
         )?;
         Ok(())
@@ -251,12 +276,12 @@ impl Db {
         let conn = self.conn.lock().unwrap();
         let (sql, ws): (&str, Option<String>) = match workspace_id {
             Some(w) => (
-                "SELECT id, workspace_id, shell, cwd, created_unix_ms, closed_unix_ms
+                "SELECT id, workspace_id, shell, cwd, created_unix_ms, closed_unix_ms, role
                  FROM terminals WHERE workspace_id = ?1 ORDER BY created_unix_ms DESC",
                 Some(w.to_string()),
             ),
             None => (
-                "SELECT id, workspace_id, shell, cwd, created_unix_ms, closed_unix_ms
+                "SELECT id, workspace_id, shell, cwd, created_unix_ms, closed_unix_ms, role
                  FROM terminals ORDER BY created_unix_ms DESC",
                 None,
             ),
@@ -270,6 +295,7 @@ impl Db {
                 cwd: r.get(3)?,
                 created_unix_ms: r.get(4)?,
                 closed_unix_ms: r.get(5)?,
+                role: r.get::<_, Option<String>>(6)?.unwrap_or_default(),
             })
         };
         let rows = if let Some(w) = ws {
@@ -409,6 +435,45 @@ impl Db {
 
     // --- Events (inter-agent bus) ---
 
+    /// Append a chunk of pty output for replay across restarts.
+    pub fn append_term_log(&self, terminal_id: &str, data: &[u8], now: i64) -> rusqlite::Result<()> {
+        self.conn.lock().unwrap().execute(
+            "INSERT INTO term_log (terminal_id, data, created_unix_ms) VALUES (?1, ?2, ?3)",
+            params![terminal_id, data, now],
+        )?;
+        Ok(())
+    }
+
+    /// Concatenated pty output for a terminal, capped to last `max_bytes`.
+    pub fn read_term_log(&self, terminal_id: &str, max_bytes: usize) -> rusqlite::Result<Vec<u8>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT data FROM term_log WHERE terminal_id = ?1 ORDER BY id ASC",
+        )?;
+        let rows = stmt.query_map(params![terminal_id], |r| r.get::<_, Vec<u8>>(0))?;
+        let mut all: Vec<u8> = Vec::new();
+        for row in rows { all.extend_from_slice(&row?); }
+        if all.len() > max_bytes {
+            let drop_n = all.len() - max_bytes;
+            all.drain(..drop_n);
+        }
+        Ok(all)
+    }
+
+    /// Most recent terminal id for a (workspace, role) pair, if any.
+    /// Used to preload pty history into a freshly spawned session after
+    /// daemon restart.
+    pub fn previous_terminal_id(&self, workspace_id: &str, role: &str) -> rusqlite::Result<Option<String>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id FROM terminals
+             WHERE workspace_id = ?1 AND role = ?2
+             ORDER BY created_unix_ms DESC LIMIT 1",
+        )?;
+        let mut rows = stmt.query_map(params![workspace_id, role], |r| r.get::<_, String>(0))?;
+        if let Some(r) = rows.next() { Ok(Some(r?)) } else { Ok(None) }
+    }
+
     pub fn insert_event(
         &self,
         workspace_id: &str,
@@ -416,12 +481,14 @@ impl Db {
         topic: &str,
         summary: &str,
         now: i64,
+        files: &[String],
     ) -> rusqlite::Result<i64> {
         let conn = self.conn.lock().unwrap();
+        let files_blob = files.join("\n");
         conn.execute(
-            "INSERT INTO events (workspace_id, from_role, topic, summary, created_unix_ms)
-             VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![workspace_id, from_role, topic, summary, now],
+            "INSERT INTO events (workspace_id, from_role, topic, summary, created_unix_ms, files_changed)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![workspace_id, from_role, topic, summary, now, files_blob],
         )?;
         Ok(conn.last_insert_rowid())
     }
@@ -437,6 +504,8 @@ impl Db {
     ) -> rusqlite::Result<Vec<EventRow>> {
         let conn = self.conn.lock().unwrap();
         let map = |r: &rusqlite::Row| {
+            let blob: String = r.get::<_, Option<String>>(6)?.unwrap_or_default();
+            let files = blob.split('\n').filter(|s| !s.is_empty()).map(|s| s.to_string()).collect();
             Ok(EventRow {
                 id: r.get(0)?,
                 workspace_id: r.get(1)?,
@@ -444,12 +513,13 @@ impl Db {
                 topic: r.get(3)?,
                 summary: r.get(4)?,
                 created_unix_ms: r.get(5)?,
+                files_changed: files,
             })
         };
         let mut rows: Vec<EventRow> = Vec::new();
         if topics.is_empty() {
             let mut stmt = conn.prepare(
-                "SELECT id, workspace_id, from_role, topic, summary, created_unix_ms
+                "SELECT id, workspace_id, from_role, topic, summary, created_unix_ms, files_changed
                  FROM events WHERE workspace_id = ?1 AND id > ?2
                  ORDER BY id DESC LIMIT ?3",
             )?;
@@ -460,7 +530,7 @@ impl Db {
         } else {
             let placeholders = topics.iter().map(|_| "?").collect::<Vec<_>>().join(",");
             let sql = format!(
-                "SELECT id, workspace_id, from_role, topic, summary, created_unix_ms
+                "SELECT id, workspace_id, from_role, topic, summary, created_unix_ms, files_changed
                  FROM events WHERE workspace_id = ?1 AND id > ?2 AND topic IN ({placeholders})
                  ORDER BY id DESC LIMIT {limit}"
             );

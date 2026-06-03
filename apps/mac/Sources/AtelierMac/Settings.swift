@@ -5,8 +5,20 @@ import SwiftUI
 @MainActor
 final class AppSettings: ObservableObject {
     @Published var socketPath: String { didSet { save(Self.socketKey, socketPath) } }
-    @Published var anthropicKey: String { didSet { save(Self.anthKey, anthropicKey) } }
-    @Published var geminiKey: String { didSet { save(Self.gemKey, geminiKey) } }
+    @Published var anthropicKey: String {
+        didSet {
+            let t = anthropicKey.trimmingCharacters(in: .whitespacesAndNewlines)
+            if t != anthropicKey { anthropicKey = t; return } // re-trigger w/ trimmed
+            save(Self.anthKey, anthropicKey)
+        }
+    }
+    @Published var geminiKey: String {
+        didSet {
+            let t = geminiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+            if t != geminiKey { geminiKey = t; return }
+            save(Self.gemKey, geminiKey)
+        }
+    }
     @Published var ollamaHost: String { didSet { save(Self.ollamaKey, ollamaHost) } }
     @Published var autoSpawnDaemon: Bool { didSet { UserDefaults.standard.set(autoSpawnDaemon, forKey: Self.autoSpawnKey) } }
 
@@ -22,8 +34,10 @@ final class AppSettings: ObservableObject {
         let d = UserDefaults.standard
         let env = ProcessInfo.processInfo.environment
         self.socketPath = d.string(forKey: Self.socketKey) ?? Self.defaultSocketPath()
-        self.anthropicKey = d.string(forKey: Self.anthKey) ?? (env["ANTHROPIC_API_KEY"] ?? "")
-        self.geminiKey = d.string(forKey: Self.gemKey) ?? (env["GEMINI_API_KEY"] ?? "")
+        let rawA = d.string(forKey: Self.anthKey) ?? (env["ANTHROPIC_API_KEY"] ?? "")
+        let rawG = d.string(forKey: Self.gemKey) ?? (env["GEMINI_API_KEY"] ?? "")
+        self.anthropicKey = rawA.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.geminiKey    = rawG.trimmingCharacters(in: .whitespacesAndNewlines)
         self.ollamaHost = d.string(forKey: Self.ollamaKey) ?? (env["OLLAMA_HOST"] ?? "http://127.0.0.1:11434")
         self.autoSpawnDaemon = d.object(forKey: Self.autoSpawnKey) as? Bool ?? true
     }
@@ -41,6 +55,10 @@ final class OllamaManager: ObservableObject {
     @Published var installed: [String] = []
     @Published var status: String = ""
     @Published var pulling: Bool = false
+    @Published var reachable: Bool = false
+    /// 0…1 download progress for active layer (-1 if indeterminate)
+    @Published var progress: Double = -1
+    @Published var progressLabel: String = ""
 
     func host(_ base: String) -> URL? { URL(string: base) }
 
@@ -51,17 +69,19 @@ final class OllamaManager: ObservableObject {
             let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any]
             let models = (obj?["models"] as? [[String: Any]]) ?? []
             installed = models.compactMap { $0["name"] as? String }.sorted()
-            status = installed.isEmpty ? "no models installed" : ""
+            reachable = true
+            status = installed.isEmpty ? "ollama running — no models pulled yet" : ""
         } catch {
             installed = []
-            status = "ollama not reachable at \(base)"
+            reachable = false
+            status = "ollama not reachable at \(base) — install: brew install ollama && brew services start ollama"
         }
     }
 
     func pull(base: String, model: String) async {
         guard !model.isEmpty, let url = URL(string: "\(base)/api/pull") else { return }
-        pulling = true; status = "pulling \(model)…"
-        defer { pulling = false }
+        pulling = true; status = "starting pull \(model)…"; progress = -1; progressLabel = ""
+        defer { pulling = false; progress = -1; progressLabel = "" }
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -69,10 +89,27 @@ final class OllamaManager: ObservableObject {
         do {
             let (bytes, _) = try await URLSession.shared.bytes(for: req)
             for try await line in bytes.lines {
-                if let d = line.data(using: .utf8),
-                   let obj = try? JSONSerialization.jsonObject(with: d) as? [String: Any] {
-                    if let s = obj["status"] as? String { status = s }
-                    if let err = obj["error"] as? String { status = "error: \(err)"; return }
+                guard let d = line.data(using: .utf8),
+                      let obj = try? JSONSerialization.jsonObject(with: d) as? [String: Any]
+                else { continue }
+                if let err = obj["error"] as? String { status = "error: \(err)"; return }
+                let s = (obj["status"] as? String) ?? ""
+                // Layer download: status often "pulling <digest>" with total+completed.
+                if let total = obj["total"] as? Int64, total > 0 {
+                    let done = (obj["completed"] as? Int64) ?? 0
+                    let pct = Double(done) / Double(total)
+                    progress = pct
+                    let mbDone = Double(done) / 1_048_576
+                    let mbTot  = Double(total) / 1_048_576
+                    let layer = s.hasPrefix("pulling ") ? String(s.dropFirst(8).prefix(12)) : s
+                    progressLabel = String(format: "%@ — %.0f/%.0f MB (%.0f%%)",
+                                           layer, mbDone, mbTot, pct * 100)
+                    status = "downloading \(model)"
+                } else if !s.isEmpty {
+                    // verifying / writing manifest / success
+                    progress = -1
+                    progressLabel = s
+                    status = s
                 }
             }
             status = "pulled \(model) ✓"
@@ -124,14 +161,28 @@ struct SettingsView: View {
                 Toggle("Auto-start daemon on launch", isOn: $settings.autoSpawnDaemon)
                 HStack(spacing: 8) {
                     Button("Restart daemon") {
-                        DaemonSpawner.stopByProbe(socket: settings.socketPath)
-                        _ = DaemonSpawner.spawn(
-                            socket: settings.socketPath,
-                            anthropicKey: settings.anthropicKey,
-                            geminiKey: settings.geminiKey,
-                            ollamaHost: settings.ollamaHost
-                        )
-                        status = "restarted — give it ~1s, then Reconnect"
+                        status = "killing old daemon…"
+                        let sock = settings.socketPath
+                        let aKey = settings.anthropicKey
+                        let gKey = settings.geminiKey
+                        let oHost = settings.ollamaHost
+                        Task {
+                            await Task.detached(priority: .userInitiated) {
+                                DaemonSpawner.stopByProbe(socket: sock)
+                                _ = DaemonSpawner.spawn(
+                                    socket: sock,
+                                    anthropicKey: aKey,
+                                    geminiKey: gKey,
+                                    ollamaHost: oHost
+                                )
+                            }.value
+                            // give daemon ~800ms to bind
+                            try? await Task.sleep(nanoseconds: 800_000_000)
+                            await client.connect()
+                            status = client.connected
+                                ? "restarted + connected (v\(client.daemonVersion ?? "?"))"
+                                : (client.lastError ?? "restart failed")
+                        }
                     }
                     Button("Reconnect") {
                         Task {
@@ -188,16 +239,44 @@ struct SettingsView: View {
                 }
                 Divider()
                 HStack(spacing: 8) {
-                    TextField("qwen2.5-coder:7b", text: $pullModel).textFieldStyle(.roundedBorder)
+                    TextField("qwen2.5-coder:1.5b", text: $pullModel).textFieldStyle(.roundedBorder)
                     Button {
                         Task { await ollama.pull(base: settings.ollamaHost, model: pullModel) }
                     } label: {
                         if ollama.pulling { ProgressView().scaleEffect(0.6) } else { Text("Pull") }
                     }
-                    .disabled(ollama.pulling)
+                    .disabled(ollama.pulling || !ollama.reachable)
                 }
-                Text("Coder models with tool-calling: qwen2.5-coder:7b, llama3.1:8b")
-                    .font(.caption2).foregroundStyle(.tertiary)
+                if ollama.pulling {
+                    VStack(alignment: .leading, spacing: 4) {
+                        if ollama.progress >= 0 {
+                            ProgressView(value: ollama.progress)
+                                .progressViewStyle(.linear)
+                        } else {
+                            ProgressView().progressViewStyle(.linear)
+                        }
+                        Text(ollama.progressLabel.isEmpty ? "preparing…" : ollama.progressLabel)
+                            .font(.caption2).foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                }
+                HStack(spacing: 6) {
+                    Text("Quick test:").font(.caption2).foregroundStyle(.secondary)
+                    Button("qwen2.5-coder:1.5b") { pullModel = "qwen2.5-coder:1.5b" }
+                        .buttonStyle(.plain).font(.caption2).foregroundStyle(.tint)
+                    Text("·").font(.caption2).foregroundStyle(.tertiary)
+                    Button("llama3.2:3b") { pullModel = "llama3.2:3b" }
+                        .buttonStyle(.plain).font(.caption2).foregroundStyle(.tint)
+                }
+                if !ollama.reachable {
+                    Text("⚠︎ Ollama not running. Install: `brew install ollama` then `brew services start ollama` (or open Ollama.app).")
+                        .font(.caption2).foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    Text("Fast/tiny: qwen2.5-coder:1.5b (~1GB) — has tool-calling. Bigger: 7b, llama3.1:8b. Ollama is local & free, runs separately from Atelier.")
+                        .font(.caption2).foregroundStyle(.tertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
             .padding(.vertical, 4)
         }

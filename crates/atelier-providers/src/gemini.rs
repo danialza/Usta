@@ -15,6 +15,36 @@ use std::time::Duration;
 
 const DEFAULT_BASE: &str = "https://generativelanguage.googleapis.com";
 
+/// POST with exponential backoff on 429/500/502/503/504. Up to 4 tries
+/// (~0.6s + 1.2s + 2.4s ≈ 4s total). Returns a successful response, or
+/// bubbles the last error body.
+async fn post_with_retry(
+    http: &reqwest::Client,
+    url: &str,
+    body: &serde_json::Value,
+) -> anyhow::Result<reqwest::Response> {
+    let mut delay_ms = 600u64;
+    let mut last_err = String::new();
+    for attempt in 0..4 {
+        let resp = http.post(url).json(body).send().await?;
+        let st = resp.status();
+        if st.is_success() {
+            return Ok(resp);
+        }
+        let code = st.as_u16();
+        let retriable = matches!(code, 429 | 500 | 502 | 503 | 504);
+        let text = resp.text().await.unwrap_or_default();
+        if !retriable || attempt == 3 {
+            anyhow::bail!("gemini {st}: {text}");
+        }
+        last_err = format!("{st}: {text}");
+        tracing::warn!(attempt, delay_ms, err = %last_err, "gemini retry");
+        tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+        delay_ms = (delay_ms * 2).min(4000);
+    }
+    anyhow::bail!("gemini exhausted retries: {last_err}");
+}
+
 pub struct GeminiProvider {
     api_key: Option<String>,
     base_url: String,
@@ -23,7 +53,10 @@ pub struct GeminiProvider {
 
 impl GeminiProvider {
     pub fn from_env() -> Self {
-        let api_key = std::env::var("GEMINI_API_KEY").ok().filter(|s| !s.is_empty());
+        let api_key = std::env::var("GEMINI_API_KEY")
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
         let base_url = std::env::var("GEMINI_BASE_URL").unwrap_or_else(|_| DEFAULT_BASE.into());
         let http = reqwest::Client::builder()
             .timeout(Duration::from_secs(300))
@@ -74,12 +107,7 @@ impl Provider for GeminiProvider {
             body["systemInstruction"] = json!({ "parts": [{ "text": s }] });
         }
 
-        let resp = self.http.post(&url).json(&body).send().await?;
-        if !resp.status().is_success() {
-            let st = resp.status();
-            let t = resp.text().await.unwrap_or_default();
-            anyhow::bail!("gemini {st}: {t}");
-        }
+        let resp = post_with_retry(&self.http, &url, &body).await?;
 
         let stream = try_stream! {
             let mut bytes = resp.bytes_stream();
@@ -147,12 +175,8 @@ impl Provider for GeminiProvider {
                     body["tools"] = json!([{ "functionDeclarations": fn_decls }]);
                 }
 
-                let resp = http.post(&url).json(&body).send().await?;
-                let status = resp.status();
+                let resp = post_with_retry(&http, &url, &body).await?;
                 let bytes = resp.bytes().await?;
-                if !status.is_success() {
-                    Err(anyhow::anyhow!("gemini {status}: {}", String::from_utf8_lossy(&bytes)))?;
-                }
                 let v: serde_json::Value = serde_json::from_slice(&bytes)?;
                 let parts = v["candidates"][0]["content"]["parts"].as_array().cloned().unwrap_or_default();
 

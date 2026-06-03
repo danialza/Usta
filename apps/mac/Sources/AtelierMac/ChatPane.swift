@@ -1,6 +1,14 @@
 import SwiftUI
 import AtelierProto
 
+extension Notification.Name {
+    /// Posted with `object: role.name` to ask a pane to send its kickoff.
+    static let atelierKickoffRole = Notification.Name("AtelierKickoffRole")
+    /// Posted with `object: subscriberRoleName` when a new event lands
+    /// whose topic that role subscribes to. Pane reacts by regenerating.
+    static let atelierEventForRole = Notification.Name("AtelierEventForRole")
+}
+
 enum ChatItemKind { case user, assistant, tool, approval }
 
 struct ChatMessage: Identifiable {
@@ -137,7 +145,12 @@ struct AssistantPane: View {
     let role: Atelier_V1_Role
     var collapsed: Bool = false
     var onToggleCollapse: (() -> Void)? = nil
+    var isMaximized: Bool = false
+    var onToggleMaximize: (() -> Void)? = nil
+    var step: Int? = nil
+    var stateColor: Color? = nil
     @EnvironmentObject var client: AtelierClientModel
+    @EnvironmentObject var bus: WorkspaceBus
     @StateObject private var model: ChatPaneModel
 
     enum Backend: String { case chat, cli }
@@ -150,17 +163,28 @@ struct AssistantPane: View {
     @State private var cliCommand: String = ""
     @State private var cliSession: TerminalSession? = nil
     @State private var cliLaunching: Bool = false
+    @State private var cliError: String? = nil
     @State private var showRoleEditor: Bool = false
     @State private var kickoffSent: Bool = false
+    @State private var regenInFlight: Bool = false
+    @State private var regeneratedKickoff: String? = nil
 
     init(workspaceID: String,
          role: Atelier_V1_Role,
          collapsed: Bool = false,
-         onToggleCollapse: (() -> Void)? = nil) {
+         onToggleCollapse: (() -> Void)? = nil,
+         isMaximized: Bool = false,
+         onToggleMaximize: (() -> Void)? = nil,
+         step: Int? = nil,
+         stateColor: Color? = nil) {
         self.workspaceID = workspaceID
         self.role = role
         self.collapsed = collapsed
         self.onToggleCollapse = onToggleCollapse
+        self.isMaximized = isMaximized
+        self.onToggleMaximize = onToggleMaximize
+        self.step = step
+        self.stateColor = stateColor
         _model = StateObject(wrappedValue: ChatPaneModel(role: role, workspaceID: workspaceID))
         _selectedProvider = State(initialValue: role.defaultProvider)
         _selectedModel = State(initialValue: role.defaultModel)
@@ -185,7 +209,26 @@ struct AssistantPane: View {
                 bodyContent
             }
         }
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .clipped()
         .background(AtelierTheme.cell)
+        .onReceive(NotificationCenter.default.publisher(for: .atelierKickoffRole)) { note in
+            guard let name = note.object as? String, name == role.name else { return }
+            if kickoffSent || role.kickoff.isEmpty { return }
+            Task { await sendKickoff() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .atelierEventForRole)) { note in
+            guard let name = note.object as? String, name == role.name else { return }
+            if regenInFlight { return }
+            Task {
+                regenInFlight = true
+                if let k = await client.regenerateKickoff(workspaceID: workspaceID, roleName: role.name) {
+                    regeneratedKickoff = k
+                    kickoffSent = false   // surface new banner
+                }
+                regenInFlight = false
+            }
+        }
         .task {
             providers = await client.listProviders()
             await model.loadHistory(client: client)
@@ -208,11 +251,16 @@ struct AssistantPane: View {
                 composer
             }
         }
+        .clipped()
     }
 
     static func defaultCommand(provider: String, model: String) -> String {
         switch provider {
-        case "anthropic": return "claude"
+        case "anthropic":
+            // Pass --model so the picked Atelier model (haiku/sonnet/opus)
+            // actually reaches the claude CLI session. Without it, claude
+            // uses its own account default (usually sonnet).
+            return model.isEmpty ? "claude" : "claude --model \(model)"
         case "gemini":
             return model.isEmpty ? "gemini" : "gemini --model \(model)"
         case "ollama":    return "aider --model ollama_chat/\(model) --yes-always"
@@ -227,99 +275,167 @@ struct AssistantPane: View {
             if let s = cliSession {
                 PtyTerminalView(session: s)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .clipped()
+            } else if let err = cliError {
+                VStack(spacing: 10) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange).font(.title2)
+                    Text("CLI failed to launch")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(.white)
+                    Text(err)
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundStyle(AtelierTheme.dim)
+                        .multilineTextAlignment(.center)
+                        .lineLimit(4)
+                        .padding(.horizontal, 24)
+                    HStack(spacing: 10) {
+                        Button("Retry") {
+                            cliError = nil
+                            Task {
+                                cliLaunching = true
+                                await launchCLI()
+                                cliLaunching = false
+                            }
+                        }
+                        .buttonStyle(.borderedProminent)
+                        Button("Use chat instead") {
+                            cliError = nil
+                            backend = .chat
+                        }
+                        .buttonStyle(.bordered)
+                    }
+                    Text("Hint: `\(cliCommand)` — ensure it's installed and in PATH.")
+                        .font(.caption2).foregroundStyle(AtelierTheme.dim)
+                }
+                .padding()
             } else {
                 VStack(spacing: 8) {
                     ProgressView().scaleEffect(0.7)
                     Text(cliLaunching ? "starting \(cliCommand)…" : "preparing…")
                         .font(.system(size: 11, design: .monospaced))
                         .foregroundStyle(AtelierTheme.dim)
+                    Button("Switch to chat") { backend = .chat }
+                        .buttonStyle(.plain)
+                        .font(.caption2)
+                        .foregroundStyle(.tint)
+                        .padding(.top, 6)
                 }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .task {
             // Auto-launch as soon as the CLI pane appears (no manual button).
-            if cliSession == nil && !cliLaunching {
+            if cliSession == nil && !cliLaunching && cliError == nil {
                 let cmd = cliCommand.trimmingCharacters(in: .whitespaces)
-                if !cmd.isEmpty {
-                    cliLaunching = true
-                    await launchCLI()
-                    cliLaunching = false
+                if cmd.isEmpty {
+                    cliError = "no CLI command configured for this role"
+                    return
                 }
+                cliLaunching = true
+                await launchCLI()
+                cliLaunching = false
             }
         }
     }
 
     private func launchCLI() async {
-        guard let t = await client.createTerminal(workspaceID: workspaceID, command: cliCommand, role: role.name) else { return }
-        let session = TerminalSession(id: t.id, title: cliCommand)
+        // 1) Try reattach: find an alive terminal for this role on the
+        // workspace. Survives pane re-mount (sidebar nav, role chip toggle).
+        let existing = await client.listTerminals(workspaceID: workspaceID)
+            .first { $0.role == role.name && $0.alive }
+        let termID: String
+        if let t = existing {
+            termID = t.id
+        } else {
+            guard let t = await client.createTerminal(workspaceID: workspaceID, command: cliCommand, role: role.name) else {
+                cliError = client.lastError ?? "createTerminal returned nil (daemon unreachable?)"
+                return
+            }
+            termID = t.id
+        }
+        let session = TerminalSession(id: termID, title: cliCommand)
         session.roleName = role.name
-        if let stub = client.ptyStub() { session.start(stub: stub) }
+        if let stub = client.ptyStub() {
+            session.start(stub: stub)
+        } else {
+            cliError = "pty stub unavailable"
+            return
+        }
         cliSession = session
+        cliError = nil
     }
 
     private var header: some View {
-        HStack(spacing: 10) {
-            let emoji = role.emoji.isEmpty
-                ? AtelierTheme.roleEmoji(for: role.name, fallback: "•") : role.emoji
-            Text(emoji).font(.title2)
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 6) {
-                    Circle().fill(AtelierTheme.roleColor(for: role.name)).frame(width: 7, height: 7)
-                    Text(role.name).font(.headline)
-                    if model.isStreaming {
-                        HStack(spacing: 4) {
-                            ProgressView().scaleEffect(0.45).frame(width: 12, height: 12)
-                            Text("working").font(.system(size: 10)).foregroundStyle(.orange)
-                        }
+        VStack(alignment: .leading, spacing: 6) {
+            // Row 1: identity (emoji + name + description) — full pane width
+            HStack(spacing: 8) {
+                if let n = step {
+                    Text("\(n)")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(.white)
+                        .frame(width: 18, height: 18)
+                        .background(Circle().fill(stateColor ?? AtelierTheme.roleColor(for: role.name)))
+                        .help("Step \(n) · \(stateLabel())")
+                }
+                let emoji = role.emoji.isEmpty
+                    ? AtelierTheme.roleEmoji(for: role.name, fallback: "•") : role.emoji
+                Text(emoji).font(.title3)
+                Circle().fill(AtelierTheme.roleColor(for: role.name)).frame(width: 7, height: 7)
+                Text(role.name).font(.system(size: 13, weight: .semibold))
+                    .lineLimit(1).truncationMode(.tail)
+                if model.isStreaming {
+                    HStack(spacing: 3) {
+                        ProgressView().scaleEffect(0.45).frame(width: 10, height: 10)
+                        Text("working").font(.system(size: 10)).foregroundStyle(.orange)
                     }
                 }
-                Text(role.description_p).font(.caption).foregroundStyle(AtelierTheme.dim).lineLimit(1)
+                Spacer()
+                if let maxToggle = onToggleMaximize {
+                    Button(action: maxToggle) {
+                        Image(systemName: isMaximized
+                              ? "arrow.down.right.and.arrow.up.left"
+                              : "arrow.up.left.and.arrow.down.right")
+                            .font(.caption)
+                    }
+                    .buttonStyle(.borderless)
+                    .foregroundStyle(AtelierTheme.dim)
+                    .help(isMaximized ? "Restore" : "Maximize")
+                }
+                if let toggle = onToggleCollapse {
+                    Button(action: toggle) {
+                        Image(systemName: collapsed ? "chevron.down" : "chevron.up")
+                            .font(.caption)
+                    }
+                    .buttonStyle(.borderless)
+                    .foregroundStyle(AtelierTheme.dim)
+                    .help(collapsed ? "Expand" : "Minimize to header")
+                }
             }
-            Spacer()
+            if !role.description_p.isEmpty {
+                Text(role.description_p).font(.system(size: 10))
+                    .foregroundStyle(AtelierTheme.dim).lineLimit(1)
+            }
+            // Row 2: controls — picker, provider, model, relaunch, gear
             if !collapsed {
-                Picker("", selection: $backend) {
-                    Image(systemName: "bubble.left.and.text.bubble.right").tag(Backend.chat)
-                    Image(systemName: "terminal").tag(Backend.cli)
+                HStack(spacing: 6) {
+                    Picker("", selection: $backend) {
+                        Image(systemName: "bubble.left.and.text.bubble.right").tag(Backend.chat)
+                        Image(systemName: "terminal").tag(Backend.cli)
+                    }
+                    .pickerStyle(.segmented)
+                    .fixedSize()
+                    .onChange(of: selectedProvider) { _, p in
+                        if cliSession == nil { cliCommand = !role.cliCommand.isEmpty ? role.cliCommand : Self.defaultCommand(provider: p, model: selectedModel) }
+                    }
+                    .onChange(of: selectedModel) { _, m in
+                        if cliSession == nil { cliCommand = !role.cliCommand.isEmpty ? role.cliCommand : Self.defaultCommand(provider: selectedProvider, model: m) }
+                    }
+                    providerPicker
+                    modelPicker
+                    Spacer(minLength: 0)
+                    headerActions
                 }
-                .pickerStyle(.segmented)
-                .fixedSize()
-                .onChange(of: selectedProvider) { _, p in
-                    if cliSession == nil { cliCommand = !role.cliCommand.isEmpty ? role.cliCommand : Self.defaultCommand(provider: p, model: selectedModel) }
-                }
-                .onChange(of: selectedModel) { _, m in
-                    if cliSession == nil { cliCommand = !role.cliCommand.isEmpty ? role.cliCommand : Self.defaultCommand(provider: selectedProvider, model: m) }
-                }
-                providerPicker
-                modelPicker
-            }
-            if backend == .cli {
-                Button {
-                    cliSession?.stop()
-                    cliSession = nil
-                    // Refresh derived command from current provider/model.
-                    cliCommand = !role.cliCommand.isEmpty ? role.cliCommand
-                        : Self.defaultCommand(provider: selectedProvider, model: selectedModel)
-                } label: {
-                    Image(systemName: "arrow.clockwise").font(.caption)
-                }
-                .buttonStyle(.borderless)
-                .foregroundStyle(AtelierTheme.dim)
-                .help("Relaunch CLI with current provider/model")
-            }
-            Button { showRoleEditor = true } label: {
-                Image(systemName: "gearshape").font(.caption)
-            }
-            .buttonStyle(.borderless)
-            .foregroundStyle(AtelierTheme.dim)
-            .help("Edit role")
-            if let toggle = onToggleCollapse {
-                Button(action: toggle) {
-                    Image(systemName: collapsed ? "chevron.down" : "chevron.up")
-                        .font(.caption)
-                }
-                .buttonStyle(.borderless)
-                .foregroundStyle(AtelierTheme.dim)
             }
         }
         .padding(10)
@@ -329,6 +445,31 @@ struct AssistantPane: View {
                     _ = await client.addRole(workspaceID: workspaceID, role: updated)
                 }
             })
+        }
+    }
+
+    @ViewBuilder
+    private var headerActions: some View {
+        HStack(spacing: 6) {
+            if backend == .cli {
+                Button {
+                    cliSession?.stop()
+                    cliSession = nil
+                    cliCommand = !role.cliCommand.isEmpty ? role.cliCommand
+                        : Self.defaultCommand(provider: selectedProvider, model: selectedModel)
+                } label: {
+                    Image(systemName: "arrow.clockwise").font(.caption)
+                }
+                .buttonStyle(.borderless)
+                .foregroundStyle(AtelierTheme.dim)
+                .help("Relaunch CLI")
+            }
+            Button { showRoleEditor = true } label: {
+                Image(systemName: "gearshape").font(.caption)
+            }
+            .buttonStyle(.borderless)
+            .foregroundStyle(AtelierTheme.dim)
+            .help("Edit role")
         }
     }
 
@@ -354,29 +495,62 @@ struct AssistantPane: View {
         }
     }
 
+    private var effectiveKickoff: String {
+        regeneratedKickoff ?? role.kickoff
+    }
+
     @ViewBuilder
     private var kickoffBanner: some View {
-        if !role.kickoff.isEmpty && !kickoffSent {
+        if !effectiveKickoff.isEmpty && !kickoffSent {
             HStack(alignment: .top, spacing: 8) {
                 Image(systemName: "paperplane.fill")
                     .font(.system(size: 10))
                     .foregroundStyle(.orange)
                     .padding(.top, 2)
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Kickoff from conductor")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(.orange)
-                    Text(role.kickoff)
+                    HStack(spacing: 4) {
+                        Text(regeneratedKickoff != nil ? "Next task (regenerated)" : "Kickoff from conductor")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(.orange)
+                        if regeneratedKickoff != nil {
+                            Text("NEW").font(.system(size: 8, weight: .bold))
+                                .padding(.horizontal, 4).padding(.vertical, 1)
+                                .background(Color.orange).foregroundStyle(.white)
+                                .clipShape(Capsule())
+                        }
+                    }
+                    Text(effectiveKickoff)
                         .font(.system(size: 11))
                         .foregroundStyle(.primary)
                         .lineLimit(4)
                 }
                 Spacer(minLength: 0)
-                Button("Send") {
-                    Task { await sendKickoff() }
+                VStack(spacing: 4) {
+                    Button("Send") {
+                        Task { await sendKickoff() }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                    Button {
+                        Task {
+                            regenInFlight = true
+                            if let k = await client.regenerateKickoff(workspaceID: workspaceID, roleName: role.name) {
+                                regeneratedKickoff = k
+                            }
+                            regenInFlight = false
+                        }
+                    } label: {
+                        HStack(spacing: 3) {
+                            if regenInFlight { ProgressView().scaleEffect(0.5).frame(width: 9, height: 9) }
+                            else { Image(systemName: "arrow.clockwise").font(.system(size: 9)) }
+                            Text("Next task").font(.system(size: 9))
+                        }
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .disabled(regenInFlight)
+                    .help("Ask PM to regenerate this kickoff based on event log")
                 }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.small)
                 Button {
                     kickoffSent = true
                 } label: {
@@ -394,10 +568,19 @@ struct AssistantPane: View {
         }
     }
 
+    private func stateLabel() -> String {
+        guard let c = stateColor else { return "pending — waiting on upstream" }
+        if c == .green  { return "done — published its outputs" }
+        if c == .blue   { return "ready — all upstream events arrived" }
+        if c == .orange { return "working" }
+        return "pending — waiting on upstream"
+    }
+
     private func sendKickoff() async {
-        let text = role.kickoff
+        let text = effectiveKickoff
         if text.isEmpty { return }
         kickoffSent = true
+        bus.markWorking(role.name)
         if backend == .cli {
             // Wait briefly so a freshly-launched CLI has its prompt up.
             if cliSession == nil { try? await Task.sleep(nanoseconds: 1_200_000_000) }

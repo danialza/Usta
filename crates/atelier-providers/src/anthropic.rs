@@ -24,7 +24,10 @@ pub struct AnthropicProvider {
 
 impl AnthropicProvider {
     pub fn from_env() -> Self {
-        let api_key = std::env::var("ANTHROPIC_API_KEY").ok().filter(|s| !s.is_empty());
+        let api_key = std::env::var("ANTHROPIC_API_KEY")
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
         let base_url = std::env::var("ANTHROPIC_BASE_URL")
             .unwrap_or_else(|_| DEFAULT_BASE.to_string());
         let http = reqwest::Client::builder()

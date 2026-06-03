@@ -99,7 +99,7 @@ final class AtelierClientModel: ObservableObject {
         }
     }
 
-    func createTerminal(workspaceID: String, cols: Int = 120, rows: Int = 32, command: String = "", role: String = "") async -> Atelier_V1_Terminal? {
+    func createTerminal(workspaceID: String, cols: Int = 80, rows: Int = 24, command: String = "", role: String = "") async -> Atelier_V1_Terminal? {
         guard let stub else { return nil }
         do {
             let req = Atelier_V1_CreateTerminalRequest.with {
@@ -335,6 +335,27 @@ final class AtelierClientModel: ObservableObject {
             return try await stub.applyTeam(req)
         } catch {
             self.lastError = "apply team: \(error)"
+            return nil
+        }
+    }
+
+    /// Ask daemon to regenerate `kickoff` for one role based on current
+    /// event log + role history. Returns the new kickoff string.
+    func regenerateKickoff(workspaceID: String, roleName: String,
+                           provider: String = "anthropic",
+                           model: String = "claude-haiku-4-5-20251001") async -> String? {
+        guard let stub else { return nil }
+        do {
+            let req = Atelier_V1_RegenerateKickoffRequest.with {
+                $0.workspaceID = workspaceID
+                $0.roleName = roleName
+                $0.provider = provider
+                $0.model = model
+            }
+            let resp = try await stub.regenerateKickoff(req)
+            return resp.kickoff
+        } catch {
+            self.lastError = "regen kickoff: \(error)"
             return nil
         }
     }

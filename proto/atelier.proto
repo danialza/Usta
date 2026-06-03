@@ -72,6 +72,23 @@ service Atelier {
 
   // Approve/deny a pending tool call (for roles with 'ask' permission).
   rpc ApproveTool(ApproveToolRequest) returns (Empty);
+
+  // Regenerate a role's `kickoff` text based on current event log + role
+  // history. Writes the new kickoff into the workspace yaml and returns it.
+  rpc RegenerateKickoff(RegenerateKickoffRequest) returns (RegenerateKickoffResponse);
+}
+
+message RegenerateKickoffRequest {
+  string workspace_id = 1;
+  string role_name    = 2;
+  // Optional override; empty = use PM defaults (anthropic / haiku).
+  string provider     = 3;
+  string model        = 4;
+}
+
+message RegenerateKickoffResponse {
+  string role_name    = 1;
+  string kickoff      = 2;
 }
 
 message Empty {}
@@ -154,6 +171,10 @@ message Terminal {
   string cwd             = 4;
   int64  created_unix_ms = 5;
   bool   alive           = 6;
+  // Role this terminal is tagged with (CLI agent role). Empty for
+  // free-form shells. Used by the Mac app to reattach panes across
+  // navigation without losing pty state.
+  string role            = 7;
 }
 
 message ListTerminalsRequest { string workspace_id = 1; /* empty = all */ }
@@ -374,6 +395,10 @@ message Event {
   string topic           = 4;
   string summary         = 5;
   int64  created_unix_ms = 6;
+  // Files changed on disk since this role's previous event (relative paths).
+  // Computed via `git diff --name-only` when the workspace is a git repo,
+  // else best-effort mtime walk. Empty if nothing to report.
+  repeated string files_changed = 7;
 }
 
 message PublishEventRequest {

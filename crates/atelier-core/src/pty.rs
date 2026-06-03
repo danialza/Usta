@@ -25,6 +25,9 @@ pub struct TerminalSpec {
 /// attachers can mirror the same pty (e.g. CLI + future UI).
 pub type OutputRx = broadcast::Receiver<Vec<u8>>;
 
+/// Cap of bytes kept in per-terminal scrollback for reattach replay.
+const SCROLLBACK_CAP: usize = 256 * 1024;
+
 pub struct Terminal {
     pub spec: TerminalSpec,
     /// Send bytes to write into pty master.
@@ -35,6 +38,9 @@ pub struct Terminal {
     master: Arc<Mutex<Box<dyn portable_pty::MasterPty + Send>>>,
     /// Set true when child exits or terminal closed.
     closed: Arc<std::sync::atomic::AtomicBool>,
+    /// Last ~256KB of output, replayed on each new attach so reattach
+    /// after UI navigation shows history (pending prompts, output etc).
+    scrollback: Arc<std::sync::Mutex<Vec<u8>>>,
 }
 
 impl Terminal {
@@ -48,6 +54,26 @@ impl Terminal {
     }
 
     pub fn subscribe(&self) -> OutputRx { self.output_tx.subscribe() }
+
+    /// Snapshot of current scrollback. Caller should send this to a freshly
+    /// attached client BEFORE relaying further `subscribe()` chunks.
+    pub fn scrollback(&self) -> Vec<u8> {
+        self.scrollback.lock().unwrap().clone()
+    }
+
+    /// Seed the scrollback with prior session bytes (replay across restarts).
+    /// Call before any client attaches. Trims to SCROLLBACK_CAP.
+    pub fn prepend_scrollback(&self, data: &[u8]) {
+        let mut g = self.scrollback.lock().unwrap();
+        let mut new = Vec::with_capacity(data.len() + g.len());
+        new.extend_from_slice(data);
+        new.extend_from_slice(&g);
+        if new.len() > SCROLLBACK_CAP {
+            let drop_n = new.len() - SCROLLBACK_CAP;
+            new.drain(..drop_n);
+        }
+        *g = new;
+    }
 
     pub async fn resize(&self, cols: u16, rows: u16) -> anyhow::Result<()> {
         let m = self.master.lock().await;
@@ -107,10 +133,12 @@ impl PtyManager {
         let (input_tx, mut input_rx) = mpsc::channel::<Vec<u8>>(64);
 
         let closed = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let scrollback = Arc::new(std::sync::Mutex::new(Vec::<u8>::with_capacity(SCROLLBACK_CAP)));
 
         // Reader thread (blocking).
         let out_tx = output_tx.clone();
         let closed_r = closed.clone();
+        let sb = scrollback.clone();
         std::thread::Builder::new()
             .name(format!("pty-read-{}", spec.id))
             .spawn(move || {
@@ -119,7 +147,18 @@ impl PtyManager {
                     match reader.read(&mut buf) {
                         Ok(0) => break,
                         Ok(n) => {
-                            let _ = out_tx.send(buf[..n].to_vec());
+                            let chunk = buf[..n].to_vec();
+                            // Append to scrollback ring; trim head when over cap.
+                            {
+                                let mut g = sb.lock().unwrap();
+                                g.extend_from_slice(&chunk);
+                                let len = g.len();
+                                if len > SCROLLBACK_CAP {
+                                    let drop_n = len - SCROLLBACK_CAP;
+                                    g.drain(..drop_n);
+                                }
+                            }
+                            let _ = out_tx.send(chunk);
                         }
                         Err(_) => break,
                     }
@@ -154,6 +193,7 @@ impl PtyManager {
             output_tx,
             master: Arc::new(Mutex::new(master)),
             closed,
+            scrollback,
         });
         self.terms.lock().await.insert(spec.id.clone(), term.clone());
         Ok(term)

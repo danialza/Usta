@@ -197,11 +197,36 @@ struct WorkspaceRow: View {
         .onTapGesture { onTap() }
         .onHover { hover = $0 }
         .contextMenu {
+            Button {
+                NSWorkspace.shared.open(URL(fileURLWithPath: ws.path))
+            } label: { Label("Open in Finder", systemImage: "folder") }
+            Button {
+                openInEditor(name: "Visual Studio Code", path: ws.path)
+            } label: { Label("Open in VS Code", systemImage: "chevron.left.forwardslash.chevron.right") }
+            Button {
+                openInEditor(name: "Cursor", path: ws.path)
+            } label: { Label("Open in Cursor", systemImage: "cursorarrow.click") }
+            Divider()
             if let onRemove {
                 Button(role: .destructive, action: onRemove) {
                     Label("Remove from list", systemImage: "minus.circle")
                 }
             }
+        }
+    }
+
+    /// Best-effort opener: try `open -a "<app>" <path>`, fall back to launching
+    /// the editor's CLI on PATH if `open -a` fails (no app installed).
+    private func openInEditor(name: String, path: String) {
+        let task = Process()
+        task.launchPath = "/usr/bin/open"
+        task.arguments = ["-a", name, path]
+        do { try task.run() } catch {
+            // Fallback: try CLI binary (e.g. `code` / `cursor`).
+            let cli = Process()
+            cli.launchPath = "/bin/zsh"
+            cli.arguments = ["-lc", "command -v \(name.lowercased() == "visual studio code" ? "code" : name.lowercased()) >/dev/null && \(name.lowercased() == "visual studio code" ? "code" : name.lowercased()) '\(path)'"]
+            try? cli.run()
         }
     }
 }
@@ -301,6 +326,8 @@ struct WorkspaceDetailView: View {
     @State private var applyResult: String? = nil
     @State private var terminalsLoaded = false
     @State private var showActivity = true
+    @State private var startingTeam = false
+    @StateObject private var bus = WorkspaceBus()
 
     var body: some View {
         HStack(spacing: 0) {
@@ -310,6 +337,7 @@ struct WorkspaceDetailView: View {
                 switch mode {
                 case .assistants:
                     AssistantsGrid(workspaceID: ws.id, roles: roles, focus: selectedRole?.name)
+                        .environmentObject(bus)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .background(AtelierTheme.bg)
                 case .terminals:
@@ -320,13 +348,20 @@ struct WorkspaceDetailView: View {
             if showActivity {
                 Divider().overlay(AtelierTheme.border)
                 ActivityFeed(workspaceID: ws.id)
-                    .frame(width: 300)
+                    .environmentObject(bus)
+                    .frame(width: 320)
             }
         }
+        .environmentObject(bus)
         .background(AtelierTheme.bg)
+        .overlay(alignment: .topTrailing) {
+            ToastStack().environmentObject(bus)
+        }
         .task(id: ws.id) {
             roles = await client.listRoles(workspaceID: ws.id)
+            bus.start(workspaceID: ws.id, client: client, roles: roles)
         }
+        .onDisappear { bus.stop() }
         .sheet(isPresented: $showApplyTeam) { applyTeamSheet }
         .sheet(isPresented: $showAddRole) {
             RoleEditor(onSave: { newRole in
@@ -342,9 +377,39 @@ struct WorkspaceDetailView: View {
     private var header: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .center, spacing: 12) {
-                Image(systemName: "folder.fill.badge.gear")
-                    .font(.system(size: 26))
-                    .foregroundStyle(.tint)
+                Menu {
+                    Button { NSWorkspace.shared.open(URL(fileURLWithPath: ws.path)) } label: {
+                        Label("Open in Finder", systemImage: "folder")
+                    }
+                    Button {
+                        let p = Process(); p.launchPath = "/usr/bin/open"
+                        p.arguments = ["-a", "Visual Studio Code", ws.path]
+                        try? p.run()
+                    } label: {
+                        Label("Open in VS Code", systemImage: "chevron.left.forwardslash.chevron.right")
+                    }
+                    Button {
+                        let p = Process(); p.launchPath = "/usr/bin/open"
+                        p.arguments = ["-a", "Cursor", ws.path]
+                        try? p.run()
+                    } label: {
+                        Label("Open in Cursor", systemImage: "cursorarrow.click")
+                    }
+                    Button {
+                        let p = Process(); p.launchPath = "/usr/bin/open"
+                        p.arguments = ["-a", "Terminal", ws.path]
+                        try? p.run()
+                    } label: {
+                        Label("Open in Terminal", systemImage: "terminal")
+                    }
+                } label: {
+                    Image(systemName: "folder.fill.badge.gear")
+                        .font(.system(size: 26))
+                        .foregroundStyle(.tint)
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
                 VStack(alignment: .leading, spacing: 2) {
                     Text(ws.name).font(.system(size: 16, weight: .semibold))
                     Text(ws.path).font(.system(size: 11))
@@ -363,6 +428,14 @@ struct WorkspaceDetailView: View {
                 toolbarButton("Apply Team", systemImage: "person.3.sequence") {
                     showApplyTeam = true
                 }
+                if !roles.isEmpty && mode == .assistants {
+                    toolbarButton(
+                        startingTeam ? "Starting…" : "Start Team",
+                        systemImage: startingTeam ? "hourglass" : "play.fill"
+                    ) {
+                        if !startingTeam { Task { await startTeamSequentially() } }
+                    }
+                }
                 if mode == .terminals {
                     toolbarButton("New Terminal", systemImage: "plus.rectangle.on.rectangle") {
                         Task { await grid.newTerminal(workspaceID: ws.id, client: client) }
@@ -377,11 +450,29 @@ struct WorkspaceDetailView: View {
     }
 
     private var roleChipsStrip: some View {
-        FlowLayout(spacing: 6) {
+        // Sort by state priority so the working role is first, then ready,
+        // pending, done. Stable within tier (alpha).
+        let ordered = roles.sorted { a, b in
+            let pa = chipPriority(bus.state(of: a.name))
+            let pb = chipPriority(bus.state(of: b.name))
+            if pa != pb { return pa < pb }
+            return a.name < b.name
+        }
+        return FlowLayout(spacing: 6) {
             RoleChipAll(selected: selectedRole == nil) { selectedRole = nil }
-            ForEach(roles, id: \.name) { r in
+            ForEach(ordered, id: \.name) { r in
                 chip(for: r)
             }
+        }
+        .animation(.easeInOut(duration: 0.3), value: ordered.map(\.name))
+    }
+
+    private func chipPriority(_ s: WorkspaceBus.RoleState) -> Int {
+        switch s {
+        case .working: return 0
+        case .ready:   return 1
+        case .pending: return 2
+        case .done:    return 3
         }
     }
 
@@ -504,6 +595,66 @@ struct WorkspaceDetailView: View {
             applyResult = e
         }
     }
+
+    /// Send kickoff to each role one at a time, in dependency order:
+    /// roles with no `subscribes` go first (they generate events others wait on);
+    /// downstream roles last. Within a tier, preserve PM-given order.
+    private func startTeamSequentially() async {
+        startingTeam = true
+        defer { startingTeam = false }
+        let ordered = topoSorted(roles)
+        for r in ordered {
+            guard !r.kickoff.isEmpty else { continue }
+            NotificationCenter.default.post(
+                name: .atelierKickoffRole,
+                object: r.name
+            )
+            // Give the role time to: (a) receive its prompt, (b) call MCP,
+            // (c) possibly publish an event. 8s is a sane minimum; downstream
+            // roles will still wait on the event bus via wait_for_event.
+            try? await Task.sleep(nanoseconds: 8_000_000_000)
+        }
+    }
+
+    /// Kahn's algorithm over handoff topics. A role depends on roles that
+    /// publish any topic it subscribes to.
+    private func topoSorted(_ all: [Atelier_V1_Role]) -> [Atelier_V1_Role] {
+        // topic -> publishers
+        var producers: [String: Set<String>] = [:]
+        for r in all {
+            for t in r.handoffPublishes {
+                producers[t, default: []].insert(r.name)
+            }
+        }
+        // name -> set of upstream role names
+        var upstream: [String: Set<String>] = [:]
+        for r in all {
+            var deps: Set<String> = []
+            for t in r.handoffSubscribes {
+                if let pubs = producers[t] {
+                    for p in pubs where p != r.name { deps.insert(p) }
+                }
+            }
+            upstream[r.name] = deps
+        }
+        // Iteratively peel off roles whose upstream is satisfied.
+        var remaining = all
+        var out: [Atelier_V1_Role] = []
+        var done: Set<String> = []
+        while !remaining.isEmpty {
+            let ready = remaining.filter { (upstream[$0.name] ?? []).isSubset(of: done) }
+            if ready.isEmpty {
+                // Cycle or missing producer — drain remaining in given order.
+                out.append(contentsOf: remaining)
+                break
+            }
+            out.append(contentsOf: ready)
+            for r in ready { done.insert(r.name) }
+            let readyNames = Set(ready.map { $0.name })
+            remaining.removeAll { readyNames.contains($0.name) }
+        }
+        return out
+    }
 }
 
 struct RoleChipAll: View {
@@ -526,12 +677,19 @@ struct RoleChip: View {
     let role: Atelier_V1_Role
     let selected: Bool
     var onTap: () -> Void
+    @EnvironmentObject var bus: WorkspaceBus
+    @State private var pulse: Bool = false
     var body: some View {
+        let working = bus.state(of: role.name) == .working
         Button(action: onTap) {
             HStack(spacing: 6) {
                 Circle()
                     .fill(AtelierTheme.roleColor(for: role.name))
                     .frame(width: 8, height: 8)
+                    .opacity(working ? (pulse ? 0.3 : 1.0) : 1.0)
+                    .scaleEffect(working ? (pulse ? 1.4 : 1.0) : 1.0)
+                    .animation(working ? .easeInOut(duration: 0.65).repeatForever(autoreverses: true) : .default,
+                               value: pulse)
                 let emoji = role.emoji.isEmpty
                     ? AtelierTheme.roleEmoji(for: role.name, fallback: "•")
                     : role.emoji
@@ -541,13 +699,23 @@ struct RoleChip: View {
                     .truncationMode(.tail)
                     .fixedSize(horizontal: true, vertical: false)
             }
+            .onAppear { if working { pulse = true } }
+            .onChange(of: working) { _, new in pulse = new }
             .padding(.horizontal, 10)
             .padding(.vertical, 5)
             .background(selected ? AtelierTheme.roleColor(for: role.name).opacity(0.30)
                                 : AtelierTheme.panel)
             .overlay(Capsule().stroke(
-                selected ? AtelierTheme.roleColor(for: role.name) : AtelierTheme.border,
-                lineWidth: selected ? 1.2 : 1))
+                working ? Color.red
+                    : (selected ? AtelierTheme.roleColor(for: role.name) : AtelierTheme.border),
+                lineWidth: working ? 1.6 : (selected ? 1.2 : 1)
+            ))
+            .overlay(
+                Capsule()
+                    .stroke(Color.red.opacity(working ? (pulse ? 0.85 : 0.15) : 0.0), lineWidth: 2.4)
+                    .animation(working ? .easeInOut(duration: 0.65).repeatForever(autoreverses: true) : .default,
+                               value: pulse)
+            )
             .clipShape(Capsule())
         }
         .buttonStyle(.plain)

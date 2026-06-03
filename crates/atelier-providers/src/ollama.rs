@@ -65,6 +65,11 @@ impl Provider for OllamaProvider {
         // Coder-capable, tool-calling models. Pull with e.g.
         //   ollama pull qwen2.5-coder:7b
         vec![
+            // Fast + tiny (~1GB) — good for tests / low RAM
+            "qwen2.5-coder:1.5b".into(),
+            "qwen2.5-coder:3b".into(),
+            "llama3.2:3b".into(),
+            // Standard
             "qwen2.5-coder:7b".into(),
             "llama3.1:8b".into(),
             "qwen3-coder".into(),

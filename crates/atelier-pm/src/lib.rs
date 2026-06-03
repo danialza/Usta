@@ -163,9 +163,9 @@ Rules:
 "#;
 
 pub const PM_SYSTEM_PROMPT: &str = r#"You are the PM agent inside Atelier, a multi-agent IDE.
-Your job: given a snapshot of a codebase (file tree + key config files + README), identify the tech stack and propose a small team of AI engineer roles tailored to THIS specific project.
+Your job: given a snapshot of an EXISTING codebase (file tree + key config files + README), identify the tech stack and propose a real team of AI engineer specialists to work on this project.
 
-Each role you propose becomes an actual agent in the IDE — so you must write its full `system_prompt` describing how it should behave on this codebase.
+Each role you propose becomes an actual agent in the IDE — write its `system_prompt`, list the Claude skills it should preload, declare event topics it publishes/subscribes for handoff, and write a concrete `kickoff` first-task message.
 
 Reply ONLY with a single fenced JSON block. The JSON must match this schema:
 
@@ -179,24 +179,57 @@ Reply ONLY with a single fenced JSON block. The JSON must match this schema:
     {
       "name": "frontend",
       "emoji": "🎨",
-      "why": "the UI is built with React + Tailwind and ships a marketing site + dashboard",
+      "why": "owns the user-facing surface",
       "recommended_provider": "anthropic",
-      "recommended_model": "claude-sonnet-4-6",
+      "recommended_model": "claude-haiku-4-5-20251001",
       "tools": ["shell", "fs_read", "fs_write", "npm", "playwright"],
-      "system_prompt": "You are a senior frontend engineer on the <project name> team. The stack is Next.js 14 + TypeScript + Tailwind. Focus on the marketing site (app/(marketing)/) and the dashboard (app/(app)/dashboard/). Prefer server components by default. When unsure about design, propose 2-3 options and defer the pick to @ui-ux..."
+      "claude_skills": ["docx"],
+      "publishes": ["ui.component.added", "ui.page.created"],
+      "subscribes": ["api.contract.defined", "design.spec.ready"],
+      "system_prompt": "You are the frontend engineer on this project. The stack is <stack>. Own <real folders>. Defer auth questions to @security, schema questions to @backend...",
+      "cli_command": "claude",
+      "kickoff": "Hi @frontend — based on @ui-ux's design.spec.ready, scaffold the contact form component in src/components/ContactForm.tsx. Wire it to POST to the backend endpoint. Publish ui.component.added when done."
     }
   ]
 }
 
 Rules:
-- 3 to 6 team members, no more, no less than 3.
-- `name` must be a short kebab-case identifier (e.g. "frontend", "backend", "security", "payments"), unique within the team.
-- emoji must be a single grapheme.
-- recommended_model must be a real model id (claude-opus-4-7, claude-sonnet-4-6, claude-haiku-4-5-20251001, qwen3-coder, llama3.2).
-- recommended_provider must be "anthropic" or "ollama".
-- `system_prompt` must be 6–20 sentences, specific to THIS project: reference real folders, files, frameworks you saw. Tell the role what to defer to other roles in the team (use @mentions of other role names). End with a one-line "Output" rule about format/voice.
-- tools is a small set drawn from: shell, fs_read, fs_write, npm, pnpm, pip, cargo, go, docker, gh, flyctl, kubectl, terraform, psql, sqlite, prisma, semgrep, gitleaks, trivy, nmap, playwright, vite.
-- output nothing outside the fenced JSON block.
+- 4 to 8 team members. Cover the disciplines actually present in this
+  codebase (frontend, backend, api, ui-ux, design-system, qa, security,
+  devops, dba, docs, product-manager, etc.). Split distinct concerns
+  into separate specialists — qa is always separate from backend,
+  security separate from devops.
+- Define rich handoff topics so the team operates like an org. Examples:
+  api.contract.defined, api.implemented, schema.changed, migration.applied,
+  ui.component.added, ui.page.created, design.spec.ready, design.tokens.ready,
+  tests.passing, tests.failing, security.finding, security.cleared,
+  deploy.ready, requirements.defined. Every publisher must have at least
+  one subscriber and vice versa (no orphan topics).
+- `name` is short kebab-case, unique within team.
+- emoji is a single grapheme.
+- recommended_model is a REAL id. Valid: claude-haiku-4-5-20251001,
+  claude-opus-4-7, qwen3-coder, llama3.2, qwen2.5-coder:1.5b. Use
+  claude-haiku-4-5-20251001 as the default for engineering roles.
+- recommended_provider is "anthropic", "gemini", or "ollama".
+- `system_prompt` is 8–20 sentences, project-specific, names real folders
+  the role owns, lists what they DO vs DEFER to @other-roles. End with
+  one "Output:" line about voice/format.
+- tools drawn from: shell, fs_read, fs_write, npm, pnpm, pip, cargo, go,
+  docker, gh, flyctl, kubectl, terraform, psql, sqlite, prisma, semgrep,
+  gitleaks, trivy, playwright, vite.
+- claude_skills from: pdf, xlsx, docx, pptx, skill-creator,
+  consolidate-memory. Empty list if none fit.
+- publishes/subscribes use dotted topic names (`area.event`).
+- kickoff: 2-5 sentences, concrete first task RIGHT NOW, references real
+  folders/files, ends with the topic the role should publish when done.
+  This is what the conductor sends on first pane launch.
+- cli_command: real CLI binary, derived from provider+model:
+    anthropic -> "claude"
+    gemini    -> "gemini --model <recommended_model>"
+    ollama    -> "aider --model ollama_chat/<recommended_model> --yes-always"
+  For non-coding roles (product-manager, ui-ux pure design, docs) leave
+  cli_command as "" so the pane defaults to native chat.
+- Output nothing outside the fenced JSON block.
 "#;
 
 pub struct Pm {
@@ -249,7 +282,7 @@ impl Pm {
         let req = ChatRequest {
             model: self.model.clone(),
             system: Some(PM_SYSTEM_PROMPT.into()),
-            max_tokens: Some(8192),
+            max_tokens: Some(16384),
             messages: vec![ChatMessage { role: "user".into(), content: user_msg }],
         };
 
@@ -262,6 +295,49 @@ impl Pm {
             }
         }
         parse_analysis(&full)
+    }
+
+    /// Regenerate a single role's next-step kickoff message based on what
+    /// has already happened in the workspace. Returns 2-5 sentence prompt.
+    ///
+    /// `role_yaml`   — full role YAML (so the model knows responsibility + topics)
+    /// `event_log`   — human-readable list of recent events: "@role -> topic: summary"
+    /// `recent_work` — short paragraph of what this role did last (chat history)
+    pub async fn regenerate_kickoff(
+        &self,
+        role_yaml: &str,
+        event_log: &str,
+        recent_work: &str,
+    ) -> anyhow::Result<String> {
+        let sys = r#"You are the PM agent in Atelier. A role has done some work and the event bus has updates. Write its NEXT concrete task as a 2-5 sentence kickoff prompt.
+
+Rules:
+- Reference real folders/files/topics from the role yaml when possible.
+- If upstream events imply a new direction, follow them.
+- End with the exact topic the role should publish when done (from its publishes list).
+- No markdown, no fences, plain prose. Output ONLY the kickoff text — no prefix, no quotes.
+"#;
+        let user = format!(
+            "ROLE YAML:\n{role_yaml}\n\nRECENT EVENT BUS (oldest → newest):\n{event_log}\n\nWHAT THIS ROLE LAST DID:\n{recent_work}\n\nWrite the next 2-5 sentence task for this role NOW.",
+            role_yaml = role_yaml,
+            event_log = if event_log.is_empty() { "(none yet)" } else { event_log },
+            recent_work = if recent_work.is_empty() { "(nothing yet)" } else { recent_work }
+        );
+        let req = ChatRequest {
+            model: self.model.clone(),
+            system: Some(sys.into()),
+            max_tokens: Some(512),
+            messages: vec![ChatMessage { role: "user".into(), content: user }],
+        };
+        let mut stream = self.provider.chat(req).await?;
+        let mut out = String::new();
+        while let Some(item) = stream.next().await {
+            match item? {
+                ChatDelta::Text(t) => out.push_str(&t),
+                ChatDelta::Done { .. } => break,
+            }
+        }
+        Ok(out.trim().trim_matches('"').to_string())
     }
 }
 

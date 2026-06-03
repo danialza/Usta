@@ -293,7 +293,8 @@ struct ProposedRoleCard: View {
         "anthropic": ["claude-opus-4-7", "claude-sonnet-4-6", "claude-haiku-4-5-20251001"],
         "gemini":    ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-2.0-flash-lite",
                       "gemini-1.5-flash-002", "gemini-2.5-pro", "gemini-1.5-pro-002"],
-        "ollama":    ["qwen2.5-coder:7b", "llama3.1:8b", "qwen3-coder"],
+        "ollama":    ["qwen2.5-coder:1.5b", "qwen2.5-coder:3b", "llama3.2:3b",
+                      "qwen2.5-coder:7b", "llama3.1:8b", "qwen3-coder"],
     ]
     var onDelete: (() -> Void)? = nil
 

@@ -11,43 +11,136 @@ struct AssistantsGrid: View {
     let focus: String?
 
     @State private var collapsed: Set<String> = []
+    @State private var maximized: String? = nil
+    @EnvironmentObject var bus: WorkspaceBus
+
+    /// Map role.name -> 1-based step tier from topo sort over handoff topics.
+    /// Roles with no upstream = step 1, downstream tiers increment.
+    private var stepFor: [String: Int] {
+        var producers: [String: Set<String>] = [:]
+        for r in roles {
+            for t in r.handoffPublishes {
+                producers[t, default: []].insert(r.name)
+            }
+        }
+        var upstream: [String: Set<String>] = [:]
+        for r in roles {
+            var deps: Set<String> = []
+            for t in r.handoffSubscribes {
+                if let pubs = producers[t] {
+                    for p in pubs where p != r.name { deps.insert(p) }
+                }
+            }
+            upstream[r.name] = deps
+        }
+        var step: [String: Int] = [:]
+        var remaining = roles
+        var tier = 1
+        while !remaining.isEmpty {
+            let ready = remaining.filter { r in
+                (upstream[r.name] ?? []).allSatisfy { step[$0] != nil }
+            }
+            if ready.isEmpty {
+                for r in remaining { step[r.name] = tier }
+                break
+            }
+            for r in ready { step[r.name] = tier }
+            let names = Set(ready.map { $0.name })
+            remaining.removeAll { names.contains($0.name) }
+            tier += 1
+        }
+        return step
+    }
 
     var body: some View {
-        let shown = focus == nil ? roles : roles.filter { $0.name == focus }
+        let baseShown = focus == nil ? roles : roles.filter { $0.name == focus }
+        // If user is in "All" view (focus == nil), maximize should NOT pin
+        // a single pane — clear it so the grid shows everything.
+        let activeMax: String? = (focus == nil) ? nil : maximized
+        let shown: [Atelier_V1_Role] = {
+            if let m = activeMax, let r = baseShown.first(where: { $0.name == m }) { return [r] }
+            return baseShown
+        }()
+        let steps = stepFor
         Group {
             if shown.isEmpty {
                 empty
             } else if shown.count == 1 {
-                AssistantPane(workspaceID: workspaceID, role: shown[0])
+                AssistantPane(
+                    workspaceID: workspaceID,
+                    role: shown[0],
+                    collapsed: false,
+                    onToggleCollapse: nil,
+                    isMaximized: maximized == shown[0].name,
+                    onToggleMaximize: { toggleMax(shown[0].name) },
+                    step: steps[shown[0].name],
+                    stateColor: stateColor(bus.state(of: shown[0].name))
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(AtelierTheme.cell)
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10)
+                        .stroke(AtelierTheme.roleColor(for: shown[0].name).opacity(0.35))
+                )
+                .padding(10)
             } else {
                 grid(shown)
             }
         }
     }
 
+    /// Compute column count from available width with a min pane width.
+    /// Each pane needs ~440px to render its full header without overflow.
     private func cols(for width: CGFloat, count: Int) -> Int {
-        let target: Int
-        if width < 700 { target = 1 }
-        else if width < 1200 { target = 2 }
-        else if width < 1700 { target = 3 }
-        else { target = 4 }
-        return max(1, min(target, count))
+        let minPane: CGFloat = 440
+        let spacing: CGFloat = 8
+        // (n * minPane) + ((n-1) * spacing) + 20 padding <= width
+        // n <= (width - 20 + spacing) / (minPane + spacing)
+        let usable = max(0, width - 20)
+        let n = Int((usable + spacing) / (minPane + spacing))
+        return max(1, min(n == 0 ? 1 : n, count))
+    }
+
+    /// Lower number = higher visual priority.
+    private func priority(_ s: WorkspaceBus.RoleState) -> Int {
+        switch s {
+        case .working: return 0   // currently doing work — surface first
+        case .ready:   return 1   // user attention next
+        case .pending: return 2
+        case .done:    return 3   // finished — bottom
+        }
     }
 
     private func grid(_ shown: [Atelier_V1_Role]) -> some View {
-        GeometryReader { geo in
+        let steps = stepFor
+        let ordered = shown.sorted { a, b in
+            let pa = priority(bus.state(of: a.name))
+            let pb = priority(bus.state(of: b.name))
+            if pa != pb { return pa < pb }
+            return (steps[a.name] ?? 99) < (steps[b.name] ?? 99)
+        }
+        // Map role.name -> 1-based current display index (matches sort order).
+        let displayStep: [String: Int] = Dictionary(uniqueKeysWithValues:
+            ordered.enumerated().map { ($1.name, $0 + 1) }
+        )
+        return GeometryReader { geo in
             let n = cols(for: geo.size.width, count: shown.count)
-            let layout = Array(repeating: GridItem(.flexible(), spacing: 8), count: n)
+            let layout = Array(repeating: GridItem(.flexible(minimum: 380), spacing: 8), count: n)
             ScrollView {
                 LazyVGrid(columns: layout, spacing: 8) {
-                    ForEach(shown, id: \.name) { role in
+                    ForEach(ordered, id: \.name) { role in
                         AssistantPane(
                             workspaceID: workspaceID,
                             role: role,
                             collapsed: collapsed.contains(role.name),
-                            onToggleCollapse: { toggle(role.name) }
+                            onToggleCollapse: { toggle(role.name) },
+                            isMaximized: maximized == role.name,
+                            onToggleMaximize: { toggleMax(role.name) },
+                            step: displayStep[role.name],
+                            stateColor: stateColor(bus.state(of: role.name))
                         )
-                        .frame(minHeight: collapsed.contains(role.name) ? 56 : 340)
+                        .frame(minHeight: collapsed.contains(role.name) ? 56 : 360)
                         .background(AtelierTheme.cell)
                         .clipShape(RoundedRectangle(cornerRadius: 10))
                         .overlay(
@@ -57,12 +150,26 @@ struct AssistantsGrid: View {
                     }
                 }
                 .padding(10)
+                .animation(.easeInOut(duration: 0.35), value: ordered.map(\.name))
             }
         }
     }
 
     private func toggle(_ name: String) {
         if collapsed.contains(name) { collapsed.remove(name) } else { collapsed.insert(name) }
+    }
+
+    private func toggleMax(_ name: String) {
+        if maximized == name { maximized = nil } else { maximized = name }
+    }
+
+    private func stateColor(_ s: WorkspaceBus.RoleState) -> Color {
+        switch s {
+        case .pending: return .gray
+        case .ready:   return .blue
+        case .working: return .orange
+        case .done:    return .green
+        }
     }
 
     private var empty: some View {
