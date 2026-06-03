@@ -115,6 +115,41 @@ final class WorkspaceBus: ObservableObject {
 
     /// For a pending role, list its missing-upstream topics + which role
     /// would publish each. Used by the UI to explain "blocked on …".
+    /// Pending role that's blocking the most others. Count how many pending
+    /// roles transitively wait on each pending role's outputs; pick the max.
+    /// Used when the bus is deadlocked — UI tells user where to type.
+    func bottleneck() -> (name: String, dependents: Int, cycle: Bool)? {
+        let pending = roles.filter { state(of: $0.name) == .pending }
+        if pending.isEmpty { return nil }
+        // For each pending role X, count how many OTHER pending roles
+        // subscribe to a topic X publishes.
+        var score: [String: Int] = [:]
+        for x in pending {
+            let xPubs = Set(x.handoffPublishes)
+            var n = 0
+            for other in pending where other.name != x.name {
+                for s in other.handoffSubscribes {
+                    if xPubs.contains(s)
+                        || xPubs.contains(where: { Self.topicMatches(s, in: [$0]) }) {
+                        n += 1
+                        break
+                    }
+                }
+            }
+            score[x.name] = n
+        }
+        // Cycle? A cycle exists if for some pending X, X also waits on
+        // something Y publishes where Y waits on X. Quick heuristic: every
+        // pending role is downstream of at least one other pending role.
+        let allDownstream = pending.allSatisfy { p in
+            let miss = missingFor(p.name).map { $0.from }
+            return miss.contains(where: { from in pending.contains { $0.name == from } })
+        }
+        let best = score.max(by: { $0.value < $1.value })
+            ?? (key: pending[0].name, value: 0)
+        return (best.key, best.value, allDownstream)
+    }
+
     func missingFor(_ name: String) -> [(topic: String, from: String)] {
         guard let r = roles.first(where: { $0.name == name }) else { return [] }
         let published = Set(events.map { $0.topic })

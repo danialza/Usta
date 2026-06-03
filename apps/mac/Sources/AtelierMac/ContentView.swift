@@ -456,66 +456,78 @@ struct WorkspaceDetailView: View {
     private var nextActionBar: some View {
         let working = roles.filter { bus.state(of: $0.name) == .working }.map { $0.name }
         let ready   = bus.readyNow
-        let pending = roles.filter { bus.state(of: $0.name) == .pending }.map { $0.name }
         let done    = roles.filter { bus.state(of: $0.name) == .done }.map { $0.name }
         let total   = roles.count
 
+        // Pick the role the user should focus.
+        let focusName: String? = {
+            if let w = working.first { return w }
+            if let r = ready.first { return r }
+            return bus.bottleneck()?.name
+        }()
+
         let (icon, color, title, body): (String, Color, String, String) = {
-            if !working.isEmpty {
-                return ("clock.arrow.circlepath", .orange,
-                        "Working", "@\(working.joined(separator: ", @"))  is running — wait or open its pane.")
+            if let w = working.first {
+                return ("clock.arrow.circlepath", .orange, "Working",
+                        "@\(w) is running. Click bar to open its pane.")
             }
-            if !ready.isEmpty {
-                return ("arrow.right.circle.fill", .accentColor,
-                        "Do next", "Click ▶ Run on @\(ready[0]) (or open its pane and Send).")
+            if let r = ready.first {
+                return ("arrow.right.circle.fill", .accentColor, "Do next",
+                        "@\(r) is ready. Click ▶ Run or open its pane and Send.")
             }
             if done.count == total {
-                return ("checkmark.seal.fill", .green,
-                        "All done", "Every role published its outputs. Project is at a clean checkpoint.")
+                return ("checkmark.seal.fill", .green, "All done",
+                        "Every role published its outputs. Clean checkpoint.")
             }
-            // All remaining are pending → deadlock or upstream missing. Suggest the
-            // pending role whose upstream is "closest" (fewest missing topics).
-            let best = pending
-                .map { ($0, bus.missingFor($0).count) }
-                .min(by: { $0.1 < $1.1 })
-            if let (name, miss) = best {
-                let publisher = bus.missingFor(name).first?.from ?? "?"
-                let pubName = publisher == "?" ? "manual input" : "@\(publisher)"
-                return ("hand.point.right.fill", .yellow,
-                        "Unblock",
-                        "@\(name) blocked on \(miss) topic(s). Open \(pubName)'s pane and type the next prompt, or click its Send.")
+            if let bn = bus.bottleneck() {
+                if bn.cycle {
+                    return ("arrow.triangle.2.circlepath", .yellow, "Cycle — break it",
+                            "All pending roles wait on each other. Open @\(bn.name) (blocks \(bn.dependents) other(s)) and type the next prompt manually.")
+                }
+                return ("hand.point.right.fill", .yellow, "Unblock @\(bn.name)",
+                        "@\(bn.name) blocks \(bn.dependents) other role(s). Click bar to open its pane, then Send or type into its terminal.")
             }
             return ("ellipsis.circle", .gray, "Idle", "Nothing ready. Click Refresh.")
         }()
 
-        return HStack(spacing: 10) {
+        let content = HStack(spacing: 10) {
             Image(systemName: icon).foregroundStyle(color).font(.system(size: 16))
             VStack(alignment: .leading, spacing: 1) {
                 Text(title).font(.system(size: 10, weight: .bold)).foregroundStyle(color)
                 Text(body).font(.system(size: 12)).foregroundStyle(.primary).lineLimit(2)
             }
             Spacer()
-            if !ready.isEmpty {
+            if let r = ready.first {
                 Button {
-                    NotificationCenter.default.post(name: .atelierKickoffRole, object: ready[0])
+                    NotificationCenter.default.post(name: .atelierKickoffRole, object: r)
                 } label: {
                     HStack(spacing: 4) {
                         Image(systemName: "play.fill").font(.system(size: 10))
-                        Text("Run @\(ready[0])").font(.system(size: 11, weight: .medium))
+                        Text("Run @\(r)").font(.system(size: 11, weight: .medium))
                     }
                     .padding(.horizontal, 10).padding(.vertical, 5)
                     .background(Color.accentColor).foregroundStyle(.white)
                     .clipShape(Capsule())
                 }
                 .buttonStyle(.plain)
+            } else if let f = focusName {
+                Text("Open @\(f) →").font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(color)
             }
             Text("\(done.count)/\(total) done")
                 .font(.system(size: 10)).foregroundStyle(AtelierTheme.dim)
         }
         .padding(.horizontal, 12).padding(.vertical, 8)
-        .background(color.opacity(0.08))
-        .overlay(RoundedRectangle(cornerRadius: 8).stroke(color.opacity(0.35)))
+        .background(color.opacity(0.10))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(color.opacity(0.40)))
         .clipShape(RoundedRectangle(cornerRadius: 8))
+        .contentShape(RoundedRectangle(cornerRadius: 8))
+
+        return content.onTapGesture {
+            if let f = focusName, let r = roles.first(where: { $0.name == f }) {
+                selectedRole = r   // filter grid to that pane
+            }
+        }
     }
 
     private var roleChipsStrip: some View {
