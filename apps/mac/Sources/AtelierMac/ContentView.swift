@@ -512,8 +512,33 @@ struct WorkspaceDetailView: View {
                 }
                 .buttonStyle(.plain)
             } else if let f = focusName {
-                Text("Open @\(f) →").font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(color)
+                let unpub = bus.unpublishedFor(f)
+                if !unpub.isEmpty {
+                    Button {
+                        Task {
+                            for t in unpub {
+                                _ = await client.publishEvent(
+                                    workspaceID: ws.id, fromRole: f, topic: t,
+                                    summary: "manually marked done by user — \(t)"
+                                )
+                            }
+                            bus.refreshNow(workspaceID: ws.id)
+                        }
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "checkmark.circle.fill").font(.system(size: 10))
+                            Text("Mark @\(f) done").font(.system(size: 11, weight: .medium))
+                        }
+                        .padding(.horizontal, 10).padding(.vertical, 5)
+                        .background(Color.green).foregroundStyle(.white)
+                        .clipShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .help("Force-publish remaining topics for @\(f): \(unpub.joined(separator: ", "))")
+                } else {
+                    Text("Open @\(f) →").font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(color)
+                }
             }
             Text("\(done.count)/\(total) done")
                 .font(.system(size: 10)).foregroundStyle(AtelierTheme.dim)

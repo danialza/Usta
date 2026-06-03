@@ -339,6 +339,27 @@ final class AtelierClientModel: ObservableObject {
         }
     }
 
+    /// Publish a handoff event on the workspace bus on behalf of a role.
+    /// Used by the "Mark done" UI when an agent finished but forgot to
+    /// call publish_event via MCP.
+    @discardableResult
+    func publishEvent(workspaceID: String, fromRole: String,
+                      topic: String, summary: String) async -> Atelier_V1_Event? {
+        guard let stub else { return nil }
+        do {
+            let req = Atelier_V1_PublishEventRequest.with {
+                $0.workspaceID = workspaceID
+                $0.fromRole = fromRole
+                $0.topic = topic
+                $0.summary = summary
+            }
+            return try await stub.publishEvent(req)
+        } catch {
+            self.lastError = "publish event: \(error)"
+            return nil
+        }
+    }
+
     /// Ask daemon to regenerate `kickoff` for one role based on current
     /// event log + role history. Returns the new kickoff string.
     func regenerateKickoff(workspaceID: String, roleName: String,

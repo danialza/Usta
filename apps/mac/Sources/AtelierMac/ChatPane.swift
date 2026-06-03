@@ -468,7 +468,24 @@ struct AssistantPane: View {
 
     @ViewBuilder
     private var headerActions: some View {
+        let unpub = bus.unpublishedFor(role.name)
         HStack(spacing: 6) {
+            if !unpub.isEmpty {
+                Button {
+                    Task { await markRoleDone(topics: unpub) }
+                } label: {
+                    HStack(spacing: 3) {
+                        Image(systemName: "checkmark.circle").font(.system(size: 10))
+                        Text("Mark done").font(.system(size: 10, weight: .medium))
+                    }
+                    .padding(.horizontal, 6).padding(.vertical, 3)
+                    .background(Color.green.opacity(0.18))
+                    .foregroundStyle(.green)
+                    .clipShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .help("Force-publish \(unpub.count) remaining topic(s): \(unpub.joined(separator: ", "))")
+            }
             if backend == .cli {
                 Button {
                     cliSession?.stop()
@@ -489,6 +506,22 @@ struct AssistantPane: View {
             .foregroundStyle(AtelierTheme.dim)
             .help("Edit role")
         }
+    }
+
+    /// Publish each missing handoff topic on this role's behalf.
+    /// Used when claude finished work but forgot to call publish_event.
+    private func markRoleDone(topics: [String]) async {
+        for t in topics {
+            let summary = "manually marked done by user — \(t)"
+            _ = await client.publishEvent(
+                workspaceID: workspaceID,
+                fromRole: role.name,
+                topic: t,
+                summary: summary
+            )
+        }
+        // Force-poll so UI flips immediately.
+        bus.refreshNow(workspaceID: workspaceID)
     }
 
     @ViewBuilder

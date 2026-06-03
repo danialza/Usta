@@ -202,6 +202,16 @@ final class WorkspaceBus: ObservableObject {
         return (best.key, best.value, allDownstream)
     }
 
+    /// Topics this role still owes (in handoffPublishes but not yet in events
+    /// from this role). Used by "Mark done" to know what to backfill.
+    func unpublishedFor(_ name: String) -> [String] {
+        guard let r = roles.first(where: { $0.name == name }) else { return [] }
+        let mine = Set(events.filter { $0.fromRole == name }.map { $0.topic })
+        return r.handoffPublishes.filter { topic in
+            !Self.topicMatches(topic, in: mine)
+        }
+    }
+
     func missingFor(_ name: String) -> [(topic: String, from: String)] {
         guard let r = roles.first(where: { $0.name == name }) else { return [] }
         let published = Set(events.map { $0.topic })
