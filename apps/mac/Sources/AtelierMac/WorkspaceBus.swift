@@ -109,7 +109,11 @@ final class WorkspaceBus: ObservableObject {
             .map { $0.topic })
         let pubs = r.handoffPublishes
         let subs = r.handoffSubscribes
-        let pubsDone = !pubs.isEmpty && pubs.allSatisfy { Self.topicMatches($0, in: mineRecent) }
+        // LENIENT done: role is done if it published ANY of its declared
+        // topics after the latest feature.requested. Yaml topic lists are
+        // often hallucinated (PM puts ui-ux's topic on PM, etc) — strict
+        // "all pubs" left roles stuck forever. One real publish = enough.
+        let pubsDone = !pubs.isEmpty && pubs.contains { Self.topicMatches($0, in: mineRecent) }
         if pubsDone { return .done }
         if working.contains(name) { return .working }
         let subsMet = subs.isEmpty || subs.allSatisfy { Self.topicMatches($0, in: allTopics) }

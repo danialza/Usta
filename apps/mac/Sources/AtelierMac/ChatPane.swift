@@ -484,17 +484,12 @@ struct AssistantPane: View {
                 Button {
                     Task { await markRoleDone(topics: unpub) }
                 } label: {
-                    HStack(spacing: 3) {
-                        Image(systemName: "checkmark.circle").font(.system(size: 10))
-                        Text("Mark done").font(.system(size: 10, weight: .medium))
-                    }
-                    .padding(.horizontal, 6).padding(.vertical, 3)
-                    .background(Color.green.opacity(0.18))
-                    .foregroundStyle(.green)
-                    .clipShape(Capsule())
+                    Image(systemName: "checkmark.circle.fill").font(.system(size: 13))
+                        .padding(.horizontal, 4).padding(.vertical, 2)
+                        .foregroundStyle(.green)
                 }
                 .buttonStyle(.plain)
-                .help("Force-publish \(unpub.count) remaining topic(s): \(unpub.joined(separator: ", "))")
+                .help("Mark @\(role.name) done — force-publish \(unpub.count) remaining: \(unpub.joined(separator: ", "))")
             }
             if backend == .cli {
                 Button {
