@@ -14,9 +14,14 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DIST="$ROOT/dist"
 APP="$DIST/Atelier.app"
 
-echo "==> Cargo release build (atelierd + ateliercli)"
+echo "==> Cargo release build (atelierd + ateliercli + atelier-mcp)"
 cd "$ROOT"
-cargo build --release -p atelier-daemon -p atelier-cli -p atelier-mcp
+# Build per-package separately. A combined "-p A -p B -p C" build sometimes
+# leaves target/release/atelierd as a stale variant due to cross-package
+# artifact reuse — building each in its own invocation forces fresh outputs.
+cargo build --release -p atelier-cli
+cargo build --release -p atelier-mcp
+cargo build --release -p atelier-daemon
 
 echo "==> Swift release build (AtelierMac)"
 cd "$ROOT/apps/mac"
