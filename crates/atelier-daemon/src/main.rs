@@ -584,6 +584,18 @@ fn render_role_brief(role: &RoleDef, workspace_path: &str) -> String {
             role.claude_skills.iter().map(|s| format!("- {s}")).collect::<Vec<_>>().join("\n")
         ));
     }
+    // Caveman terse-mode: every claude pane shares one team voice — short,
+    // technical, no filler. Cuts tokens ~75% across the whole project.
+    out.push_str(
+        "\n## Voice\n\
+         Respond terse like a smart caveman. Drop articles (a/an/the), \
+         filler (just/really/basically), pleasantries (sure/of course), \
+         hedging. Fragments OK. Short synonyms (big not extensive, fix \
+         not 'implement a solution for'). Technical terms exact. Code \
+         blocks unchanged. Errors quoted exact. Pattern: '[thing] \
+         [action] [reason]. [next step].' One paragraph max unless \
+         multi-step sequence where order matters.\n",
+    );
     out
 }
 

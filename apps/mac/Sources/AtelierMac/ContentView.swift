@@ -322,6 +322,9 @@ struct WorkspaceDetailView: View {
     @State private var terminalsLoaded = false
     @State private var showActivity = true
     @State private var startingTeam = false
+    @State private var newFeatureText: String = ""
+    @State private var showNewFeature: Bool = false
+    @State private var newFeatureRole: String = "product-manager"
     @StateObject private var bus = WorkspaceBus()
 
     var body: some View {
@@ -413,6 +416,10 @@ struct WorkspaceDetailView: View {
                 }
                 Spacer()
                 modePicker
+                toolbarButton("Run App", systemImage: "play.rectangle.fill") {
+                    PreviewRunner.run(at: ws.path)
+                }
+                .help(PreviewRunner.describe(at: ws.path))
                 toolbarButton("Refresh", systemImage: "arrow.clockwise") {
                     Task {
                         roles = await client.listRoles(workspaceID: ws.id)
@@ -447,9 +454,78 @@ struct WorkspaceDetailView: View {
             if !roles.isEmpty && mode == .assistants {
                 roleChipsStrip
                 nextActionBar
+                newFeatureBar
             }
         }
         .padding(14)
+    }
+
+    /// Collapsed "💡 New feature" entry: text input → publishes a
+    /// `feature.requested` event from the user, routed to the picked role.
+    /// Triggers auto-regen for that role's pane → they get a fresh kickoff
+    /// referencing the new ask.
+    @ViewBuilder
+    private var newFeatureBar: some View {
+        if !showNewFeature {
+            Button { showNewFeature = true } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "lightbulb").font(.system(size: 11))
+                    Text("Add new feature or change…")
+                        .font(.system(size: 11)).foregroundStyle(AtelierTheme.dim)
+                    Spacer()
+                }
+                .padding(.horizontal, 10).padding(.vertical, 6)
+                .background(AtelierTheme.cell.opacity(0.4))
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+            }
+            .buttonStyle(.plain)
+        } else {
+            HStack(spacing: 6) {
+                Image(systemName: "lightbulb.fill").foregroundStyle(.yellow)
+                TextField("Describe the new feature or change…", text: $newFeatureText)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 12))
+                    .onSubmit { submitNewFeature() }
+                Picker("", selection: $newFeatureRole) {
+                    ForEach(roles, id: \.name) { r in
+                        Text("→ @\(r.name)").tag(r.name)
+                    }
+                }
+                .pickerStyle(.menu).fixedSize()
+                Button("Send") { submitNewFeature() }
+                    .buttonStyle(.borderedProminent).controlSize(.small)
+                    .disabled(newFeatureText.trimmingCharacters(in: .whitespaces).isEmpty)
+                Button {
+                    showNewFeature = false; newFeatureText = ""
+                } label: { Image(systemName: "xmark").font(.caption2) }
+                    .buttonStyle(.borderless).foregroundStyle(AtelierTheme.dim)
+            }
+            .padding(.horizontal, 10).padding(.vertical, 6)
+            .background(Color.yellow.opacity(0.08))
+            .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.yellow.opacity(0.4)))
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+        }
+    }
+
+    private func submitNewFeature() {
+        let text = newFeatureText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        let target = newFeatureRole
+        Task {
+            _ = await client.publishEvent(
+                workspaceID: ws.id,
+                fromRole: "user",
+                topic: "feature.requested",
+                summary: text
+            )
+            // Nudge target pane to auto-regen its kickoff with the new ask.
+            NotificationCenter.default.post(name: .atelierAutoRegenerate, object: target)
+            bus.refreshNow(workspaceID: ws.id)
+            await MainActor.run {
+                newFeatureText = ""
+                showNewFeature = false
+            }
+        }
     }
 
     /// Single-line "what to do RIGHT NOW" computed from bus state.
