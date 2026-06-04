@@ -68,6 +68,23 @@ enum DaemonSpawner {
         return result == 0
     }
 
+    /// Path of the rolling daemon log file. Created on first spawn.
+    static func logFileURL() -> URL {
+        let logs = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Logs/Atelier", isDirectory: true)
+        try? FileManager.default.createDirectory(at: logs, withIntermediateDirectories: true)
+        return logs.appendingPathComponent("atelierd.log")
+    }
+
+    /// Rotate log to `.1` if larger than 4 MB so the live file stays grep-able.
+    static func rotateIfBig(_ url: URL) {
+        guard let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
+              let size = attrs[.size] as? UInt64, size > 4 * 1024 * 1024 else { return }
+        let rotated = url.deletingPathExtension().appendingPathExtension("log.1")
+        try? FileManager.default.removeItem(at: rotated)
+        try? FileManager.default.moveItem(at: url, to: rotated)
+    }
+
     /// Best-effort: kill any atelierd process bound to `socket`, then remove
     /// the socket file so a fresh spawn can bind. We pkill by full arg match
     /// so we don't touch unrelated daemons.
@@ -107,11 +124,29 @@ enum DaemonSpawner {
         if let key = anthropicKey, !key.isEmpty { env["ANTHROPIC_API_KEY"] = key }
         if let key = geminiKey, !key.isEmpty { env["GEMINI_API_KEY"] = key }
         if let h = ollamaHost, !h.isEmpty { env["OLLAMA_HOST"] = h }
+        // Bump daemon log level so the file is useful for debugging.
+        if env["RUST_LOG"] == nil {
+            env["RUST_LOG"] = "info,atelier_daemon=debug"
+        }
         proc.environment = env
 
-        proc.standardOutput = FileHandle.nullDevice
-        proc.standardError = FileHandle.nullDevice
         proc.standardInput = FileHandle.nullDevice
+        // Send daemon stdout/stderr to a rolling log file so the user can
+        // tail it for debugging. Old log moved to .1 each spawn.
+        let logURL = Self.logFileURL()
+        Self.rotateIfBig(logURL)
+        if let h = try? FileHandle(forWritingTo: logURL) {
+            h.seekToEndOfFile()
+            proc.standardOutput = h
+            proc.standardError = h
+        } else if FileManager.default.createFile(atPath: logURL.path, contents: nil),
+                  let h = try? FileHandle(forWritingTo: logURL) {
+            proc.standardOutput = h
+            proc.standardError = h
+        } else {
+            proc.standardOutput = FileHandle.nullDevice
+            proc.standardError = FileHandle.nullDevice
+        }
 
         do {
             try proc.run()

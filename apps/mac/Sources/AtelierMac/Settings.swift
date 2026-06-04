@@ -208,7 +208,21 @@ struct SettingsView: View {
                             status = client.connected ? "connected (v\(client.daemonVersion ?? "?"))" : (client.lastError ?? "failed")
                         }
                     }
+                    Button("Show Log") {
+                        NSWorkspace.shared.activateFileViewerSelecting([DaemonSpawner.logFileURL()])
+                    }
+                    .help("Reveal atelierd.log in Finder")
+                    Button("Tail Log") {
+                        let url = DaemonSpawner.logFileURL()
+                        let task = Process()
+                        task.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+                        task.arguments = ["-a", "Console", url.path]
+                        try? task.run()
+                    }
+                    .help("Open atelierd.log in Console.app")
                 }
+                Text("Daemon log: ~/Library/Logs/Atelier/atelierd.log · Auto-rotates at 4 MB")
+                    .font(.caption2).foregroundStyle(.secondary)
                 Text("Keys are passed to the daemon when you start it from here. After changing a key, Restart daemon.")
                     .font(.caption2).foregroundStyle(.secondary)
             }
