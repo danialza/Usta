@@ -262,9 +262,49 @@ fn spawn_idle_watcher(
                 let mine_topics: std::collections::HashSet<String> = mine_events.iter()
                     .filter(|e| e.from_role == role_def.name)
                     .map(|e| e.topic.clone()).collect();
-                let mut unpub: Vec<String> = role_def.handoff_topics.publishes.iter()
-                    .filter(|t| !mine_topics.contains(*t))
-                    .cloned().collect();
+                // Trust EXPLICIT announcements: parse pty for lines like
+                // "Event <topic> published" and publish only those topics
+                // (intersected with the role's declared handoffPublishes for
+                // safety). This avoids publishing topics the role has in its
+                // yaml by hallucination but never actually claimed.
+                let explicit_topics: Vec<String> = {
+                    let pat = "event ";
+                    let mut out: Vec<String> = Vec::new();
+                    let mut search = lower.as_str();
+                    while let Some(idx) = search.find(pat) {
+                        let after = &search[idx + pat.len()..];
+                        // Take chars until whitespace; token must contain '.'
+                        let token: String = after.chars()
+                            .take_while(|c| !c.is_whitespace() && *c != ':' && *c != ',' && *c != '!')
+                            .collect();
+                        let token_len = token.len();
+                        if token.contains('.') {
+                            // Confirm it's followed (loosely) by "published"
+                            let rest = &after[token_len..];
+                            if rest.contains("published") && !out.contains(&token) {
+                                out.push(token);
+                            }
+                        }
+                        // advance past this hit
+                        search = &after[token_len.max(1)..];
+                    }
+                    out
+                };
+                // Prefer explicit list; fall back to declared publishes only
+                // when nothing explicit was found AND a strong marker exists.
+                let candidate_pool: Vec<String> = if !explicit_topics.is_empty() {
+                    explicit_topics.into_iter()
+                        .filter(|t| role_def.handoff_topics.publishes.iter()
+                                .any(|p| p == t || p.ends_with(t) || t.ends_with(p)))
+                        .collect()
+                } else if strong_markers.iter().any(|n| lower.contains(n)) {
+                    role_def.handoff_topics.publishes.clone()
+                } else {
+                    Vec::new()
+                };
+                let mut unpub: Vec<String> = candidate_pool.into_iter()
+                    .filter(|t| !mine_topics.contains(t))
+                    .collect();
                 if unpub.is_empty() { continue; }
                 // Resolve mutual-exclusion pairs: pick at most one based on
                 // which appears LATER in the pty tail (more recent claim).
