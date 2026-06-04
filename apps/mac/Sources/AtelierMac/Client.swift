@@ -11,7 +11,17 @@ final class AtelierClientModel: ObservableObject {
     @Published var connected: Bool = false
     @Published var daemonVersion: String? = nil
     @Published var workspaces: [Atelier_V1_Workspace] = []
-    @Published var lastError: String? = nil
+    @Published var lastError: String? = nil {
+        didSet {
+            guard lastError != nil else { return }
+            // Auto-clear stale error after 8s so it doesn't haunt unrelated views.
+            let snapshot = lastError
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: 8_000_000_000)
+                if self?.lastError == snapshot { self?.lastError = nil }
+            }
+        }
+    }
 
     private var runTask: Task<Void, Never>? = nil
     private var stub: Atelier_V1_Atelier.Client<HTTP2ClientTransport.Posix>? = nil

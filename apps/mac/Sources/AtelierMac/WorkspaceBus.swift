@@ -14,6 +14,12 @@ final class WorkspaceBus: ObservableObject {
     /// Sticky bottleneck pick recomputed by `refresh()`. Used by Next-Action
     /// bar to stop flickering between equal-scored candidates each poll.
     @Published var pinnedBottleneckName: String? = nil
+    /// Roles we've already fired auto-regen for (per readiness transition).
+    /// Cleared when role leaves .ready/.bottleneck state. Stops the 429 storm
+    /// from broadcasting regen every 1.2s poll.
+    private var autoRegenFired: Set<String> = []
+    /// Cooldown: per-role earliest time we may fire another auto-regen.
+    private var autoRegenCooldown: [String: Date] = [:]
     /// In-window toast queue (auto-clears after a few seconds).
     @Published var toasts: [ToastItem] = []
     /// Last set of "ready" role names — used to detect changes.
@@ -265,6 +271,17 @@ final class WorkspaceBus: ObservableObject {
         Task { await self.refresh(workspaceID: workspaceID) }
     }
 
+    private func shouldAutoRegen(_ name: String) -> Bool {
+        if autoRegenFired.contains(name) { return false }
+        if let until = autoRegenCooldown[name], until > Date() { return false }
+        return true
+    }
+
+    private func markAutoRegenFired(_ name: String) {
+        autoRegenFired.insert(name)
+        autoRegenCooldown[name] = Date().addingTimeInterval(60)
+    }
+
     private func refresh(workspaceID: String) async {
         guard let client else { return }
         let fresh = await client.listEvents(workspaceID: workspaceID, limit: 200)
@@ -322,17 +339,24 @@ final class WorkspaceBus: ObservableObject {
             let next = bn?.name
             if next != pinnedBottleneckName {
                 pinnedBottleneckName = next
-                // Notify the new bottleneck pane to auto-regenerate so user
-                // opens it to a ready-to-Send prompt (no extra click).
-                if let n = next {
+                if let n = next, shouldAutoRegen(n) {
                     NotificationCenter.default.post(name: .atelierAutoRegenerate, object: n)
+                    markAutoRegenFired(n)
                 }
             }
         }
-        // Also auto-regen for any role that just became .ready and has no
-        // regenerated kickoff yet — keep prompts fresh as state changes.
-        for r in roles where state(of: r.name) == .ready {
-            NotificationCenter.default.post(name: .atelierAutoRegenerate, object: r.name)
+        // Only fire auto-regen for roles that JUST became ready since last
+        // poll. Avoids 429-bombing anthropic with N parallel regens every
+        // 1.2s tick. Per-role 60s cooldown on top.
+        for name in newlyReady where shouldAutoRegen(name) {
+            NotificationCenter.default.post(name: .atelierAutoRegenerate, object: name)
+            markAutoRegenFired(name)
+        }
+        // Drop fired flag for roles that left ready/bottleneck so a future
+        // re-entry retriggers regen.
+        autoRegenFired = autoRegenFired.filter { name in
+            let s = state(of: name)
+            return s == .ready || (s == .pending && name == pinnedBottleneckName)
         }
     }
 }
