@@ -510,17 +510,26 @@ struct WorkspaceDetailView: View {
     private func submitNewFeature() {
         let text = newFeatureText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
-        let target = newFeatureRole
         Task {
-            _ = await client.publishEvent(
-                workspaceID: ws.id,
-                fromRole: "user",
-                topic: "feature.requested",
-                summary: text
-            )
-            // Nudge target pane to auto-regen its kickoff with the new ask.
-            NotificationCenter.default.post(name: .atelierAutoRegenerate, object: target)
-            bus.refreshNow(workspaceID: ws.id)
+            bus.toast(kind: .info, title: "Planning feature…",
+                      body: "PM is deciding which roles act and writing tasks.")
+            if let plan = await client.orchestrateFeature(workspaceID: ws.id, featureText: text) {
+                // Reload roles so updated kickoff yamls land in UI
+                roles = await client.listRoles(workspaceID: ws.id)
+                bus.updateRoles(roles)
+                bus.refreshNow(workspaceID: ws.id)
+                // Wake each affected pane with new banner
+                for r in plan.roles {
+                    NotificationCenter.default.post(name: .atelierResetKickoff, object: r.name)
+                }
+                let names = plan.roles.map { "@\($0.name)" }.joined(separator: ", ")
+                bus.toast(kind: .ready,
+                          title: "Plan ready — \(plan.roles.count) role(s)",
+                          body: "\(names). Open their panes; tasks pre-loaded.")
+            } else {
+                bus.toast(kind: .info, title: "Plan failed",
+                          body: client.lastError ?? "unknown error")
+            }
             await MainActor.run {
                 newFeatureText = ""
                 showNewFeature = false

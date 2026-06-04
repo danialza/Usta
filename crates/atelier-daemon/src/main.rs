@@ -18,6 +18,7 @@ use atelier_proto::v1::{
     ProjectProposal as PbProjectProposal, ProposeProjectRequest, ProposedRole as PbProposedRole,
     ApproveToolRequest, ProviderInfo, ProviderList, PtyClientMsg, PublishEventRequest,
     RegenerateKickoffRequest, RegenerateKickoffResponse,
+    OrchestrateFeatureRequest, OrchestrateFeatureResponse, AffectedRole as PbAffectedRole,
     PtyServerMsg, Role as PbRole, RoleChatRequest, RoleList, ScaffoldProjectRequest,
     ScaffoldProjectResponse,
     SearchHit as PbSearchHit, SearchRequest, SearchResults, StackTag as PbStackTag,
@@ -2059,6 +2060,72 @@ impl Atelier for AtelierSvc {
             let _ = tx.send(r.allow);
         }
         Ok(Response::new(Empty {}))
+    }
+
+    async fn orchestrate_feature(
+        &self,
+        req: Request<OrchestrateFeatureRequest>,
+    ) -> Result<Response<OrchestrateFeatureResponse>, Status> {
+        let r = req.into_inner();
+        if r.feature_text.trim().is_empty() {
+            return Err(Status::invalid_argument("feature_text required"));
+        }
+        // Look up workspace
+        let db = self.db.clone();
+        let ws_id = r.workspace_id.clone();
+        let ws = tokio::task::spawn_blocking(move || db.list_workspaces())
+            .await.unwrap()
+            .map_err(|e| Status::internal(e.to_string()))?
+            .into_iter().find(|w| w.id == ws_id)
+            .ok_or_else(|| Status::not_found("workspace not found"))?;
+        let lib = self.roles.with_workspace(std::path::Path::new(&ws.path));
+        // Build team yaml blob
+        let mut team_yaml = String::new();
+        for r in lib.iter() {
+            if r.scope != atelier_roles::RoleScope::Workspace { continue; }
+            if let Ok(s) = serde_yaml::to_string(r) {
+                team_yaml.push_str(&format!("---\n{s}"));
+            }
+        }
+        // Event log
+        let db2 = self.db.clone();
+        let ws_id2 = r.workspace_id.clone();
+        let events = tokio::task::spawn_blocking(move || db2.list_events(&ws_id2, &[], 0, 200))
+            .await.unwrap()
+            .map_err(|e| Status::internal(e.to_string()))?;
+        let event_log = events.iter()
+            .map(|e| format!("@{} -> {}: {}", e.from_role, e.topic, e.summary))
+            .collect::<Vec<_>>().join("\n");
+        // Provider + model
+        let provider_name = if r.provider.is_empty() { "anthropic".into() } else { r.provider };
+        let model = if r.model.is_empty() { "claude-haiku-4-5-20251001".into() } else { r.model };
+        let provider = self.providers.get(&provider_name)
+            .ok_or_else(|| Status::not_found(format!("unknown provider '{provider_name}'")))?;
+        let pm = atelier_pm::Pm::new(provider, model);
+        let (summary, plan) = pm.orchestrate_feature(&team_yaml, &event_log, &r.feature_text)
+            .await
+            .map_err(|e| Status::internal(format!("pm orchestrate: {e}")))?;
+        // Publish the request event itself
+        let _ = self.db.insert_event(&r.workspace_id, "user", "feature.requested", &r.feature_text, now_ms(), &[]);
+        // For each affected role: write new kickoff into yaml
+        let mut applied: Vec<PbAffectedRole> = Vec::new();
+        for (role_name, task) in &plan {
+            if let Some(role) = lib.get(role_name) {
+                let mut updated = role.clone();
+                updated.kickoff = task.clone();
+                if let Ok(yaml) = serde_yaml::to_string(&updated) {
+                    let _ = std::fs::write(&updated.source, yaml);
+                }
+                applied.push(PbAffectedRole {
+                    role_name: role_name.clone(),
+                    task: task.clone(),
+                });
+            }
+        }
+        Ok(Response::new(OrchestrateFeatureResponse {
+            plan_summary: summary,
+            roles: applied,
+        }))
     }
 
     async fn regenerate_kickoff(

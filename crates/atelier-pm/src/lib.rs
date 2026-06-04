@@ -313,6 +313,69 @@ impl Pm {
     /// `role_yaml`   — full role YAML (so the model knows responsibility + topics)
     /// `event_log`   — human-readable list of recent events: "@role -> topic: summary"
     /// `recent_work` — short paragraph of what this role did last (chat history)
+    /// Orchestrate a new feature request. Given the full team + event log,
+    /// return a plan: which roles need to act and the exact task each.
+    /// Returns (plan_summary, vec![(role_name, task_prompt)]).
+    pub async fn orchestrate_feature(
+        &self,
+        team_yaml: &str,
+        event_log: &str,
+        feature_text: &str,
+    ) -> anyhow::Result<(String, Vec<(String, String)>)> {
+        let sys = r#"You are the PM in Atelier. The user just requested a NEW feature on an existing project. You have the team yaml (roles + their topics) and the full event bus so far. Decide which roles must act, and write a concrete imperative task for each.
+
+Reply ONLY with a single fenced JSON block matching:
+{
+  "plan_summary": "one sentence: who does what at a high level",
+  "affected_roles": [
+    { "role_name": "ui-ux", "task": "Update docs/design/spec.md section 3 to use glossy Apple-style gradients. Replace flat color tokens in docs/design/tokens.json with gradient tokens. Publish design.spec.ready and design.tokens.ready when done." },
+    { "role_name": "design-system", "task": "Re-render Button, Input, FormGroup with new gloss tokens from docs/design/tokens.json. Update Storybook stories. Publish design.system.ready when done." }
+  ]
+}
+
+Rules:
+- Only include roles whose work genuinely changes for this feature. Skip roles untouched.
+- Tasks are imperative ("Edit X to do Y."), reference real files/topics from team + event log, no placeholders.
+- 2-4 sentences per task. End each with "Publish <topic> when done." using the role's existing handoffPublishes.
+- Order roles by dependency (upstream first).
+- Output ONLY the JSON, nothing outside the fence.
+"#;
+        let user = format!(
+            "TEAM (yaml blob):\n{team_yaml}\n\nEVENT BUS so far:\n{events}\n\nUSER FEATURE REQUEST:\n{feature_text}\n\nReturn the orchestration plan.",
+            team_yaml = team_yaml,
+            events = if event_log.is_empty() { "(none)" } else { event_log },
+            feature_text = feature_text,
+        );
+        let req = ChatRequest {
+            model: self.model.clone(),
+            system: Some(sys.into()),
+            max_tokens: Some(4096),
+            messages: vec![ChatMessage { role: "user".into(), content: user }],
+        };
+        let mut stream = self.provider.chat(req).await?;
+        let mut full = String::new();
+        while let Some(item) = stream.next().await {
+            match item? {
+                ChatDelta::Text(t) => full.push_str(&t),
+                ChatDelta::Done { .. } => break,
+            }
+        }
+        let body = extract_json(&full).ok_or_else(|| anyhow::anyhow!("no JSON in PM response"))?;
+        #[derive(serde::Deserialize)]
+        struct Plan {
+            plan_summary: String,
+            affected_roles: Vec<RolePlan>,
+        }
+        #[derive(serde::Deserialize)]
+        struct RolePlan { role_name: String, task: String }
+        let plan: Plan = serde_json::from_str(body)
+            .map_err(|e| anyhow::anyhow!("parse plan: {e}\n--- raw ---\n{body}"))?;
+        let pairs = plan.affected_roles.into_iter()
+            .map(|r| (r.role_name, r.task))
+            .collect();
+        Ok((plan.plan_summary, pairs))
+    }
+
     pub async fn regenerate_kickoff(
         &self,
         role_yaml: &str,

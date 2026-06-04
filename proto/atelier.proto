@@ -76,6 +76,27 @@ service Atelier {
   // Regenerate a role's `kickoff` text based on current event log + role
   // history. Writes the new kickoff into the workspace yaml and returns it.
   rpc RegenerateKickoff(RegenerateKickoffRequest) returns (RegenerateKickoffResponse);
+
+  // Orchestrate a new feature request: PM picks affected roles, generates
+  // a concrete task for each, writes them into role yamls, returns the plan.
+  rpc OrchestrateFeature(OrchestrateFeatureRequest) returns (OrchestrateFeatureResponse);
+}
+
+message OrchestrateFeatureRequest {
+  string workspace_id = 1;
+  string feature_text = 2;   // free-form user request
+  string provider     = 3;   // default anthropic
+  string model        = 4;   // default haiku
+}
+
+message AffectedRole {
+  string role_name = 1;
+  string task      = 2;      // imperative prompt PM wrote for this role
+}
+
+message OrchestrateFeatureResponse {
+  string plan_summary           = 1;
+  repeated AffectedRole roles   = 2;
 }
 
 message RegenerateKickoffRequest {

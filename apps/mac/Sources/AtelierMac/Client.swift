@@ -370,6 +370,28 @@ final class AtelierClientModel: ObservableObject {
         }
     }
 
+    /// Orchestrate a new feature: PM picks affected roles + writes a task
+    /// for each into role yamls. Returns plan summary + role list.
+    func orchestrateFeature(workspaceID: String, featureText: String,
+                            provider: String = "anthropic",
+                            model: String = "claude-haiku-4-5-20251001")
+                            async -> (summary: String, roles: [(name: String, task: String)])? {
+        guard let stub else { return nil }
+        do {
+            let req = Atelier_V1_OrchestrateFeatureRequest.with {
+                $0.workspaceID = workspaceID
+                $0.featureText = featureText
+                $0.provider = provider
+                $0.model = model
+            }
+            let resp = try await stub.orchestrateFeature(req)
+            return (resp.planSummary, resp.roles.map { ($0.roleName, $0.task) })
+        } catch {
+            self.lastError = "orchestrate: \(error)"
+            return nil
+        }
+    }
+
     /// Ask daemon to regenerate `kickoff` for one role based on current
     /// event log + role history. Returns the new kickoff string.
     func regenerateKickoff(workspaceID: String, roleName: String,

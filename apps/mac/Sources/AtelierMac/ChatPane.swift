@@ -11,6 +11,9 @@ extension Notification.Name {
     /// its kickoff auto-regenerated (becomes bottleneck or newly ready).
     /// Pane dedups: only runs if regeneratedKickoff is nil.
     static let atelierAutoRegenerate = Notification.Name("AtelierAutoRegenerate")
+    /// Posted with `object: roleName` after OrchestrateFeature wrote a new
+    /// kickoff into the role's yaml. Pane should re-show banner.
+    static let atelierResetKickoff = Notification.Name("AtelierResetKickoff")
 }
 
 enum ChatItemKind { case user, assistant, tool, approval }
@@ -232,6 +235,13 @@ struct AssistantPane: View {
                 }
                 regenInFlight = false
             }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .atelierResetKickoff)) { note in
+            guard let name = note.object as? String, name == role.name else { return }
+            // Updated yaml has fresh kickoff text — re-show banner using that
+            // (clear any stale regen + un-dismiss).
+            regeneratedKickoff = nil
+            kickoffSent = false
         }
         .onReceive(NotificationCenter.default.publisher(for: .atelierAutoRegenerate)) { note in
             guard let name = note.object as? String, name == role.name else { return }
