@@ -234,12 +234,15 @@ fn spawn_idle_watcher(
                     workspaces.into_iter().find(|w| w.id == wsq).map(|w| std::path::PathBuf::from(w.path))
                 };
                 let recent_files = ws_root_check.as_ref()
-                    .map(|r| collect_changed_files(r))
+                    .map(|r| collect_changed_files_since(r, t.created_unix_ms))
                     .unwrap_or_default();
                 if recent_files.is_empty() {
-                    tracing::debug!(role = %t.role, "idle-watcher: keyword hit but no file changes — skipping");
+                    tracing::info!(role = %t.role, term = %t.id,
+                                   "idle-watcher: keyword hit but no file changes since launch — skipping");
                     continue;
                 }
+                tracing::info!(role = %t.role, files = recent_files.len(),
+                               "idle-watcher: candidate completion detected");
                 // Find role + its unpublished topics
                 let ws_root = {
                     let dbq = db.clone();
@@ -355,6 +358,59 @@ fn spawn_idle_watcher(
             }
         }
     });
+}
+
+/// Same as `collect_changed_files` but uses `since_ms` as the mtime cutoff
+/// instead of "last 5 minutes". Use the terminal's `created_unix_ms` so the
+/// watcher sees every file the role wrote since it launched, regardless of
+/// how long the session took.
+fn collect_changed_files_since(root: &std::path::Path, since_ms: i64) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let git_dir = root.join(".git");
+    if git_dir.is_dir() {
+        // git is timestamp-agnostic — return current dirty set; caller
+        // doesn't strictly need the since_ms when git is available.
+        let output = std::process::Command::new("git")
+            .args(["status", "--porcelain"])
+            .current_dir(root)
+            .output();
+        if let Ok(o) = output {
+            for line in String::from_utf8_lossy(&o.stdout).lines() {
+                let trimmed = line.get(3..).unwrap_or("");
+                let path = trimmed.split(" -> ").last().unwrap_or(trimmed).trim();
+                if !path.is_empty() && out.len() < 40 {
+                    out.push(path.to_string());
+                }
+            }
+            return out;
+        }
+    }
+    // mtime walk, cutoff = since_ms (terminal launch time)
+    fn walk(dir: &std::path::Path, root: &std::path::Path, cutoff_ms: i64, out: &mut Vec<String>, depth: u32) {
+        if depth > 4 || out.len() >= 40 { return; }
+        let Ok(entries) = std::fs::read_dir(dir) else { return };
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let s = name.to_string_lossy();
+            if s.starts_with('.') || s == "node_modules" || s == "target" || s == ".build" { continue; }
+            let path = entry.path();
+            let Ok(meta) = entry.metadata() else { continue };
+            if meta.is_dir() {
+                walk(&path, root, cutoff_ms, out, depth + 1);
+            } else if let Ok(mt) = meta.modified() {
+                let mt_ms = mt.duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_millis() as i64).unwrap_or(0);
+                if mt_ms >= cutoff_ms {
+                    if let Ok(rel) = path.strip_prefix(root) {
+                        out.push(rel.to_string_lossy().to_string());
+                    }
+                }
+            }
+            if out.len() >= 40 { return; }
+        }
+    }
+    walk(root, root, since_ms, &mut out, 0);
+    out
 }
 
 /// Best-effort list of files changed in `root` "recently".
