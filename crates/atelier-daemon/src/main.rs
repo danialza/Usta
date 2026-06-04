@@ -158,15 +158,31 @@ fn spawn_idle_watcher(
     _providers: Arc<ProviderRegistry>,
 ) {
     const POLL_SECS: u64 = 10;
-    const IDLE_SECS: i64 = 30;
-    const TAIL_BYTES: usize = 4096;
-    // Match Done, Finished, Complete[d], Published, Ready, Wrote, ✓, ✅,
-    // "task complete", "all set". Case-insensitive via lower().
-    let needles: &[&str] = &[
-        " done", " done.", "all done", "task complete", "task done",
-        " finished", "finished.", " complete", "completed",
-        " published", "published.", "published api", "published the",
-        "✓", "✅",
+    const IDLE_SECS: i64 = 60;          // bumped: 30s too eager
+    const TAIL_BYTES: usize = 8192;     // bigger window for marker context
+    // Strict markers: claude's bullet prefix (⏺ or `>`) followed by a strong
+    // completion phrase OR explicit "Files Created/Modified" header. These
+    // are structured output, not casual chatter. Loose words like " done"
+    // alone caused false positives in welcome banners, narration, etc.
+    let strong_markers: &[&str] = &[
+        "⏺ done",
+        "⏺ all done",
+        "⏺ finished",
+        "⏺ complete",
+        "⏺ task complete",
+        "⏺ published",
+        "files created:",
+        "files modified:",
+        "event published:",
+        "✓ done",
+        "✅ done",
+    ];
+    // Mutual-exclusion pairs: passing/failing, cleared/finding — never
+    // publish both for the same role on auto-detect.
+    let exclusive_pairs: &[(&str, &str)] = &[
+        ("tests.passing", "tests.failing"),
+        ("security.cleared", "security.finding"),
+        ("deploy.ready", "deploy.rolled_back"),
     ];
     tokio::spawn(async move {
         // De-dupe: don't republish same topic twice within a short window.
@@ -196,8 +212,26 @@ fn spawn_idle_watcher(
                 let tail = tokio::task::spawn_blocking(move || dbq.read_term_log(&tid, TAIL_BYTES))
                     .await.ok().and_then(|r| r.ok()).unwrap_or_default();
                 let lower = String::from_utf8_lossy(&tail).to_lowercase();
-                let hit = needles.iter().any(|n| lower.contains(n));
+                let hit = strong_markers.iter().any(|n| lower.contains(n));
                 if !hit { continue; }
+                // Real-work check: skip if NO files changed in workspace
+                // since this terminal launched. Stops claude-said-done-but-
+                // wrote-nothing false positives (welcome banner, summary
+                // monologue, etc.).
+                let ws_root_check = {
+                    let dbq = db.clone();
+                    let wsq = t.workspace_id.clone();
+                    let workspaces = tokio::task::spawn_blocking(move || dbq.list_workspaces())
+                        .await.ok().and_then(|r| r.ok()).unwrap_or_default();
+                    workspaces.into_iter().find(|w| w.id == wsq).map(|w| std::path::PathBuf::from(w.path))
+                };
+                let recent_files = ws_root_check.as_ref()
+                    .map(|r| collect_changed_files(r))
+                    .unwrap_or_default();
+                if recent_files.is_empty() {
+                    tracing::debug!(role = %t.role, "idle-watcher: keyword hit but no file changes — skipping");
+                    continue;
+                }
                 // Find role + its unpublished topics
                 let ws_root = {
                     let dbq = db.clone();
@@ -224,6 +258,23 @@ fn spawn_idle_watcher(
                     .filter(|t| !mine_topics.contains(*t))
                     .cloned().collect();
                 if unpub.is_empty() { continue; }
+                // Resolve mutual-exclusion pairs: pick at most one based on
+                // which appears LATER in the pty tail (more recent claim).
+                for (a, b) in exclusive_pairs {
+                    let has_a = unpub.iter().any(|t| t == a);
+                    let has_b = unpub.iter().any(|t| t == b);
+                    if has_a && has_b {
+                        let pos_a = lower.rfind(a);
+                        let pos_b = lower.rfind(b);
+                        let keep = match (pos_a, pos_b) {
+                            (Some(pa), Some(pb)) => if pa > pb { *a } else { *b },
+                            (Some(_), None)      => *a,
+                            (None, Some(_))      => *b,
+                            (None, None)         => *a,  // arbitrary
+                        };
+                        unpub.retain(|t| t == keep || (t != a && t != b));
+                    }
+                }
                 // De-dupe per topic (skip if fired in last 5 min)
                 unpub.retain(|topic| {
                     let key = (t.id.clone(), topic.clone());
