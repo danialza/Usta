@@ -93,11 +93,20 @@ final class WorkspaceBus: ObservableObject {
     /// - .pending otherwise
     func state(of name: String) -> RoleState {
         guard let r = roles.first(where: { $0.name == name }) else { return .pending }
+        // "Done" must be relative to the most recent user feature request —
+        // if the user added a new feature AFTER this role last published,
+        // role needs to act again, so it isn't done anymore.
+        let latestFeatureMs = events
+            .filter { $0.topic == "feature.requested" }
+            .map { $0.createdUnixMs }
+            .max() ?? 0
         let allTopics = Set(events.map { $0.topic })
-        let mineTopics = Set(events.filter { $0.fromRole == name }.map { $0.topic })
+        let mineRecent = Set(events
+            .filter { $0.fromRole == name && $0.createdUnixMs > latestFeatureMs }
+            .map { $0.topic })
         let pubs = r.handoffPublishes
         let subs = r.handoffSubscribes
-        let pubsDone = !pubs.isEmpty && pubs.allSatisfy { Self.topicMatches($0, in: mineTopics) }
+        let pubsDone = !pubs.isEmpty && pubs.allSatisfy { Self.topicMatches($0, in: mineRecent) }
         if pubsDone { return .done }
         if working.contains(name) { return .working }
         let subsMet = subs.isEmpty || subs.allSatisfy { Self.topicMatches($0, in: allTopics) }
@@ -208,11 +217,18 @@ final class WorkspaceBus: ObservableObject {
         return (best.key, best.value, allDownstream)
     }
 
-    /// Topics this role still owes (in handoffPublishes but not yet in events
-    /// from this role). Used by "Mark done" to know what to backfill.
+    /// Topics this role still owes (in handoffPublishes but not yet
+    /// republished SINCE the most recent feature.requested event). Used by
+    /// "Mark done" to know what to backfill.
     func unpublishedFor(_ name: String) -> [String] {
         guard let r = roles.first(where: { $0.name == name }) else { return [] }
-        let mine = Set(events.filter { $0.fromRole == name }.map { $0.topic })
+        let latestFeatureMs = events
+            .filter { $0.topic == "feature.requested" }
+            .map { $0.createdUnixMs }
+            .max() ?? 0
+        let mine = Set(events
+            .filter { $0.fromRole == name && $0.createdUnixMs > latestFeatureMs }
+            .map { $0.topic })
         return r.handoffPublishes.filter { topic in
             !Self.topicMatches(topic, in: mine)
         }
@@ -280,6 +296,15 @@ final class WorkspaceBus: ObservableObject {
     private func markAutoRegenFired(_ name: String) {
         autoRegenFired.insert(name)
         autoRegenCooldown[name] = Date().addingTimeInterval(60)
+    }
+
+    /// Drop all dedup so freshly-opened features can fire auto-regen even
+    /// for roles previously marked done. Called after OrchestrateFeature.
+    func resetAutoRegenGuards() {
+        autoRegenFired.removeAll()
+        autoRegenCooldown.removeAll()
+        lastReady.removeAll()  // force a "newly ready" delta on next refresh
+        pinnedBottleneckName = nil
     }
 
     private func refresh(workspaceID: String) async {

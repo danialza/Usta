@@ -517,6 +517,7 @@ struct WorkspaceDetailView: View {
                 // Reload roles so updated kickoff yamls land in UI
                 roles = await client.listRoles(workspaceID: ws.id)
                 bus.updateRoles(roles)
+                bus.resetAutoRegenGuards()   // allow re-fire for re-opened roles
                 bus.refreshNow(workspaceID: ws.id)
                 // Wake each affected pane with new banner
                 for r in plan.roles {
