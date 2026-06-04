@@ -14,6 +14,9 @@ final class WorkspaceBus: ObservableObject {
     /// Sticky bottleneck pick recomputed by `refresh()`. Used by Next-Action
     /// bar to stop flickering between equal-scored candidates each poll.
     @Published var pinnedBottleneckName: String? = nil
+    /// After OrchestrateFeature, the plan's role names in order. Boosts
+    /// these roles to the top of ordering until they go .done again.
+    @Published var orchestrationOrder: [String] = []
     /// Roles we've already fired auto-regen for (per readiness transition).
     /// Cleared when role leaves .ready/.bottleneck state. Stops the 429 storm
     /// from broadcasting regen every 1.2s poll.
@@ -138,11 +141,14 @@ final class WorkspaceBus: ObservableObject {
     /// working(0) > ready(1) > bottleneck-pending(2) > pending(3) > done(4)
     func priority(of name: String) -> Int {
         let s = state(of: name)
+        // Roles in the current OrchestrateFeature plan get top priority
+        // until they go .done — keeps the plan visible while running.
+        let isOrchestrated = orchestrationOrder.contains(name)
         switch s {
-        case .working: return 0
-        case .ready:   return 1
-        case .pending: return (name == pinnedBottleneckName) ? 2 : 3
-        case .done:    return 4
+        case .working: return isOrchestrated ? 0 : 1
+        case .ready:   return isOrchestrated ? 2 : 3
+        case .pending: return isOrchestrated ? 4 : (name == pinnedBottleneckName ? 5 : 6)
+        case .done:    return 7
         }
     }
 
@@ -249,9 +255,20 @@ final class WorkspaceBus: ObservableObject {
     }
 
     /// Roles currently ready to act (have all upstream events) but not done.
+    /// Sorted by canonical priority (orchestration-boosted first, then topo).
     var readyNow: [String] {
-        roles.map { $0.name }
-            .filter { state(of: $0) == .ready }
+        let names = roles.map { $0.name }.filter { state(of: $0) == .ready }
+        // Order by orchestrationOrder index first (if present), then by
+        // orderedRoles which respects topo tiers.
+        let ordered = orderedRoles(roles).map { $0.name }
+        return names.sorted { a, b in
+            let ia = orchestrationOrder.firstIndex(of: a) ?? Int.max
+            let ib = orchestrationOrder.firstIndex(of: b) ?? Int.max
+            if ia != ib { return ia < ib }
+            let pa = ordered.firstIndex(of: a) ?? Int.max
+            let pb = ordered.firstIndex(of: b) ?? Int.max
+            return pa < pb
+        }
     }
 
     /// For an event, which roles subscribe to its topic (auto-dispatch targets).
@@ -307,6 +324,11 @@ final class WorkspaceBus: ObservableObject {
         pinnedBottleneckName = nil
     }
 
+    /// Remember plan order so UI can boost those roles to the top.
+    func setOrchestrationOrder(_ names: [String]) {
+        orchestrationOrder = names
+    }
+
     private func refresh(workspaceID: String) async {
         guard let client else { return }
         let fresh = await client.listEvents(workspaceID: workspaceID, limit: 200)
@@ -354,6 +376,12 @@ final class WorkspaceBus: ObservableObject {
             return !(pubs.isSubset(of: mine) && !pubs.isEmpty)
         }
         if stillWorking != working { working = stillWorking }
+        // Drop orchestrationOrder when every plan role is .done so the boost
+        // goes away once the team finishes the feature.
+        if !orchestrationOrder.isEmpty &&
+           orchestrationOrder.allSatisfy({ state(of: $0) == .done }) {
+            orchestrationOrder.removeAll()
+        }
         // Recompute sticky bottleneck. Keep the current pin if it's still a
         // valid pending role; only switch when the existing pick goes away.
         let bn = bottleneck()

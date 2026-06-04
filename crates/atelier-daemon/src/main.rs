@@ -206,14 +206,21 @@ fn spawn_idle_watcher(
                 let last = tokio::task::spawn_blocking(move || dbq.last_term_log_ms(&tid))
                     .await.ok().and_then(|r| r.ok()).flatten();
                 let last_ms = match last { Some(v) => v, None => continue };
-                if now - last_ms < IDLE_SECS * 1000 { continue; }
                 // Read tail of pty log + check for completion keywords
                 let dbq = db.clone();
                 let tid = t.id.clone();
                 let tail = tokio::task::spawn_blocking(move || dbq.read_term_log(&tid, TAIL_BYTES))
                     .await.ok().and_then(|r| r.ok()).unwrap_or_default();
-                let lower = String::from_utf8_lossy(&tail).to_lowercase();
-                let hit = strong_markers.iter().any(|n| lower.contains(n));
+                let tail_str = String::from_utf8_lossy(&tail).to_lowercase();
+                // Fast path: claude explicitly logged "Event <topic> published"
+                // — accept after just 8s quiet (claude already announced done).
+                let has_explicit_pub = tail_str.contains("event ")
+                    && tail_str.contains("published");
+                let idle_required = if has_explicit_pub { 8 } else { 60 };
+                if now - last_ms < idle_required * 1000 { continue; }
+                let lower = tail_str;
+                let hit = has_explicit_pub
+                    || strong_markers.iter().any(|n| lower.contains(n));
                 if !hit { continue; }
                 // Real-work check: skip if NO files changed in workspace
                 // since this terminal launched. Stops claude-said-done-but-
