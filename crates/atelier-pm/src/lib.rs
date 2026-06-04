@@ -145,7 +145,17 @@ Rules:
   docker, gh, flyctl, kubectl, terraform, psql, sqlite, prisma, semgrep,
   gitleaks, trivy, nmap, playwright, vite. Give each role its minimal set.
 - claude_skills from: pdf, xlsx, docx, pptx, skill-creator,
-  consolidate-memory, setup-cowork. Empty if none fit.
+  consolidate-memory, setup-cowork, grill-me, grill-with-docs, tdd,
+  improve-codebase-architecture, diagnose, to-prd, to-issues.
+  Per-role guidance:
+    product-manager → grill-with-docs, to-prd, to-issues, docx
+    ui-ux           → grill-me, pptx
+    backend / frontend / mobile / api → tdd, diagnose, improve-codebase-architecture
+    qa              → tdd, diagnose
+    security        → diagnose
+    devops          → diagnose, to-issues
+    docs            → docx, to-prd
+  Empty list if none fit. Skills are slash-commands the role can invoke.
 - publishes/subscribes use dotted topic names (`area.event`).
 - kickoff: a concrete first task this role should do RIGHT NOW. 2-5
   sentences, project-specific, references real folders/files. Acts as

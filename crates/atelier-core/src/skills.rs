@@ -4,6 +4,7 @@
 
 pub fn describe(skill: &str) -> Option<&'static str> {
     Some(match skill {
+        // Anthropic built-ins
         "pdf"                => "read/extract/fill/create PDF files",
         "xlsx"               => "read, edit, and create Excel/CSV spreadsheets",
         "docx"               => "create and edit Word documents",
@@ -11,6 +12,14 @@ pub fn describe(skill: &str) -> Option<&'static str> {
         "skill-creator"      => "author and refine new Claude skills",
         "consolidate-memory" => "merge and prune long-term memory files",
         "setup-cowork"       => "guided Cowork environment setup",
+        // mattpocock/skills — clone to ~/.claude/commands/ to activate
+        "grill-me"           => "interview user with precise questions before writing code; build shared understanding first",
+        "grill-with-docs"    => "like grill-me but also reads project docs to ground its questions",
+        "tdd"                => "force Test-Driven Development cycle (Red → Green → Refactor) step by step",
+        "improve-codebase-architecture" => "find tangled code and refactor into deep, clean modules",
+        "diagnose"           => "structured debug loop for hard bugs — reproduce, isolate, fix, verify",
+        "to-prd"             => "convert chat + planning into a Product Requirements Document",
+        "to-issues"          => "split a PRD into discrete GitHub issues, each independently deliverable",
         _ => return None,
     })
 }
@@ -27,6 +36,8 @@ fn skill_paths(name: &str) -> Vec<std::path::PathBuf> {
     if let Ok(home) = std::env::var("HOME") {
         let home = PathBuf::from(home);
         out.push(home.join(".claude/skills").join(name).join("SKILL.md"));
+        // mattpocock/skills slash-command layout
+        out.push(home.join(".claude/commands").join(format!("{name}.md")));
         // one-level glob over the plugin cache: ~/.claude/plugins/cache/*/.../skills/<name>/SKILL.md
         let cache = home.join(".claude/plugins/cache");
         if let Ok(rd) = std::fs::read_dir(&cache) {

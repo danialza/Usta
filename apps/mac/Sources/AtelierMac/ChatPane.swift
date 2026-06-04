@@ -553,12 +553,15 @@ struct AssistantPane: View {
     @ViewBuilder
     private var kickoffBanner: some View {
         let s = bus.state(of: role.name)
-        // User explicitly generated a fresh prompt — show it even if state is
-        // still pending/done, so they can Send it.
-        if regeneratedKickoff != nil && !kickoffSent {
-            kickoffBannerCore
-        } else if s == .done {
+        // Done state wins: role published all outputs → stale "Next task"
+        // suggestions are misleading. Clear regen too.
+        if s == .done {
             doneBanner
+                .onAppear {
+                    if regeneratedKickoff != nil { regeneratedKickoff = nil; kickoffSent = true }
+                }
+        } else if regeneratedKickoff != nil && !kickoffSent {
+            kickoffBannerCore
         } else if s == .pending {
             blockedBanner
         } else if !effectiveKickoff.isEmpty && !kickoffSent {
