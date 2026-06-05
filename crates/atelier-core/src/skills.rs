@@ -11,6 +11,7 @@ pub fn describe(skill: &str) -> Option<&'static str> {
         "pptx"               => "create and edit PowerPoint decks",
         "skill-creator"      => "author and refine new Claude skills",
         "consolidate-memory" => "merge and prune long-term memory files",
+        "memory-recall"      => "search and recall relevant memories from past sessions (memsearch)",
         "setup-cowork"       => "guided Cowork environment setup",
         // mattpocock/skills — clone to ~/.claude/commands/ to activate
         "grill-me"           => "interview user with precise questions before writing code; build shared understanding first",

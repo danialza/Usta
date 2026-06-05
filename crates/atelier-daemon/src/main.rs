@@ -682,12 +682,21 @@ fn render_role_brief(role: &RoleDef, workspace_path: &str) -> String {
          - wait_for_event(topics, timeout_seconds?): block until upstream work lands.\n\
          Always publish_event when you complete a task that affects others.\n",
     );
-    if !role.claude_skills.is_empty() {
-        out.push_str(&format!(
-            "\n## Claude skills available\n{}\n",
-            role.claude_skills.iter().map(|s| format!("- {s}")).collect::<Vec<_>>().join("\n")
-        ));
+    // Universal skills: every role gets these regardless of yaml, so the
+    // whole team always has memory recall + interview-first + TDD + diagnose
+    // + refactor + PRD/issues helpers. Yaml-specific skills append after.
+    let universal: &[&str] = &[
+        "memory-recall", "grill-me", "tdd", "diagnose",
+        "improve-codebase-architecture", "to-prd", "to-issues",
+    ];
+    let mut all_skills: Vec<String> = universal.iter().map(|s| s.to_string()).collect();
+    for s in &role.claude_skills {
+        if !all_skills.contains(s) { all_skills.push(s.clone()); }
     }
+    out.push_str(&format!(
+        "\n## Claude skills available (use any time)\n{}\n",
+        all_skills.iter().map(|s| format!("- {s}")).collect::<Vec<_>>().join("\n")
+    ));
     // Caveman terse-mode: every claude pane shares one team voice — short,
     // technical, no filler. Cuts tokens ~75% across the whole project.
     out.push_str(

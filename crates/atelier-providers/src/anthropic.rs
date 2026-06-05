@@ -16,10 +16,51 @@ use std::time::Duration;
 const DEFAULT_BASE: &str = "https://api.anthropic.com";
 const API_VERSION: &str = "2023-06-01";
 
+/// Limit concurrent in-flight anthropic requests to keep us under Tier 1
+/// 50-RPM cap. 2 concurrent + retry handles bursts (PM regen, OrchestrateFeature,
+/// idle-watcher) without 429 storms.
+static ANTHROPIC_GATE: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(2);
+
 pub struct AnthropicProvider {
     api_key: Option<String>,
     base_url: String,
     http: reqwest::Client,
+}
+
+/// POST with exponential backoff on 429/500/502/503/504. Up to 4 tries
+/// (~0.6s + 1.2s + 2.4s ≈ 4s). Holds a global semaphore permit so we never
+/// have more than 2 concurrent calls (Tier 1 50-RPM safe even with bursts).
+async fn post_with_retry(
+    http: &reqwest::Client,
+    url: &str,
+    body: &serde_json::Value,
+    key: &str,
+) -> anyhow::Result<reqwest::Response> {
+    let _permit = ANTHROPIC_GATE.acquire().await.map_err(|e| anyhow::anyhow!(e))?;
+    let mut delay_ms = 600u64;
+    let mut last_err = String::new();
+    for attempt in 0..4 {
+        let resp = http.post(url)
+            .header("x-api-key", key)
+            .header("anthropic-version", API_VERSION)
+            .header("content-type", "application/json")
+            .json(body)
+            .send()
+            .await?;
+        let st = resp.status();
+        if st.is_success() { return Ok(resp); }
+        let code = st.as_u16();
+        let retriable = matches!(code, 429 | 500 | 502 | 503 | 504);
+        let text = resp.text().await.unwrap_or_default();
+        if !retriable || attempt == 3 {
+            anyhow::bail!("anthropic {st}: {text}");
+        }
+        last_err = format!("{st}: {text}");
+        tracing::warn!(attempt, delay_ms, "anthropic retry: {last_err}");
+        tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+        delay_ms = (delay_ms * 2).min(4000);
+    }
+    anyhow::bail!("anthropic exhausted retries: {last_err}");
 }
 
 impl AnthropicProvider {
@@ -111,21 +152,8 @@ impl Provider for AnthropicProvider {
             }).collect(),
         };
 
-        let resp = self
-            .http
-            .post(&url)
-            .header("x-api-key", key)
-            .header("anthropic-version", API_VERSION)
-            .header("content-type", "application/json")
-            .json(&body)
-            .send()
-            .await?;
-
-        if !resp.status().is_success() {
-            let status = resp.status();
-            let txt = resp.text().await.unwrap_or_default();
-            anyhow::bail!("anthropic {status}: {txt}");
-        }
+        let body_v = serde_json::to_value(&body)?;
+        let resp = post_with_retry(&self.http, &url, &body_v, &key).await?;
 
         let stream = try_stream! {
             let mut byte_stream = resp.bytes_stream();
@@ -219,18 +247,7 @@ impl Provider for AnthropicProvider {
                 if let Some(s) = &system { body["system"] = json!(s); }
                 if !tools_json.is_empty() { body["tools"] = json!(tools_json); }
 
-                let resp = http
-                    .post(&url)
-                    .header("x-api-key", &key)
-                    .header("anthropic-version", API_VERSION)
-                    .header("content-type", "application/json")
-                    .json(&body)
-                    .send()
-                    .await?;
-                let status = resp.status();
-                if !status.is_success() {
-                    Err(anyhow::anyhow!("anthropic {status}"))?;
-                }
+                let resp = post_with_retry(&http, &url, &body, &key).await?;
 
                 // SSE accumulation for this turn.
                 // index -> (kind, text_or_json, id, name)
