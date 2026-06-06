@@ -80,6 +80,19 @@ service Atelier {
   // Orchestrate a new feature request: PM picks affected roles, generates
   // a concrete task for each, writes them into role yamls, returns the plan.
   rpc OrchestrateFeature(OrchestrateFeatureRequest) returns (OrchestrateFeatureResponse);
+
+  // Anthropic rate-limit snapshot (parsed from last response headers).
+  // Empty/zeros if no API call has run yet.
+  rpc GetRateLimit(Empty) returns (RateLimitInfo);
+}
+
+message RateLimitInfo {
+  int64 limit                  = 1;  // requests per minute
+  int64 remaining              = 2;
+  int64 reset_unix_ms          = 3;
+  int64 tokens_in_remaining    = 4;
+  int64 tokens_out_remaining   = 5;
+  int64 last_updated_unix_ms   = 6;
 }
 
 message OrchestrateFeatureRequest {

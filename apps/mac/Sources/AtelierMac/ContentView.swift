@@ -326,6 +326,7 @@ struct WorkspaceDetailView: View {
     @State private var showNewFeature: Bool = false
     @State private var newFeatureRole: String = "product-manager"
     @StateObject private var bus = WorkspaceBus()
+    @StateObject private var rate = RateLimitModel()
 
     var body: some View {
         HStack(spacing: 0) {
@@ -358,8 +359,11 @@ struct WorkspaceDetailView: View {
         .task(id: ws.id) {
             roles = await client.listRoles(workspaceID: ws.id)
             bus.start(workspaceID: ws.id, client: client, roles: roles)
+            rate.start(client: client) { msg in
+                bus.toast(kind: .info, title: "Anthropic rate limit", body: msg)
+            }
         }
-        .onDisappear { bus.stop() }
+        .onDisappear { bus.stop(); rate.stop() }
         .sheet(isPresented: $showApplyTeam) { applyTeamSheet }
         .sheet(isPresented: $showAddRole) {
             RoleEditor(onSave: { newRole in
@@ -416,6 +420,7 @@ struct WorkspaceDetailView: View {
                 }
                 Spacer()
                 modePicker
+                RateLimitChip(model: rate)
                 toolbarButton("Run App", systemImage: "play.rectangle.fill") {
                     PreviewRunner.run(at: ws.path)
                 }

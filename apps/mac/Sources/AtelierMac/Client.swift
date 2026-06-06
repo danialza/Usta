@@ -370,6 +370,19 @@ final class AtelierClientModel: ObservableObject {
         }
     }
 
+    /// Live Anthropic rate-limit snapshot (parsed from response headers).
+    /// Returns nil if no API call has happened yet (limit=0).
+    func getRateLimit() async -> (limit: Int64, remaining: Int64, resetMs: Int64, lastUpdatedMs: Int64)? {
+        guard let stub else { return nil }
+        do {
+            let r = try await stub.getRateLimit(.with { _ in })
+            if r.limit == 0 { return nil }
+            return (r.limit, r.remaining, r.resetUnixMs, r.lastUpdatedUnixMs)
+        } catch {
+            return nil
+        }
+    }
+
     /// Orchestrate a new feature: PM picks affected roles + writes a task
     /// for each into role yamls. Returns plan summary + role list.
     func orchestrateFeature(workspaceID: String, featureText: String,

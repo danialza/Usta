@@ -19,6 +19,7 @@ use atelier_proto::v1::{
     ApproveToolRequest, ProviderInfo, ProviderList, PtyClientMsg, PublishEventRequest,
     RegenerateKickoffRequest, RegenerateKickoffResponse,
     OrchestrateFeatureRequest, OrchestrateFeatureResponse, AffectedRole as PbAffectedRole,
+    RateLimitInfo,
     PtyServerMsg, Role as PbRole, RoleChatRequest, RoleList, ScaffoldProjectRequest,
     ScaffoldProjectResponse,
     SearchHit as PbSearchHit, SearchRequest, SearchResults, StackTag as PbStackTag,
@@ -2172,6 +2173,21 @@ impl Atelier for AtelierSvc {
             let _ = tx.send(r.allow);
         }
         Ok(Response::new(Empty {}))
+    }
+
+    async fn get_rate_limit(
+        &self,
+        _req: Request<Empty>,
+    ) -> Result<Response<RateLimitInfo>, Status> {
+        let s = atelier_providers::anthropic::current_rate_limit();
+        Ok(Response::new(RateLimitInfo {
+            limit: s.limit,
+            remaining: s.remaining,
+            reset_unix_ms: s.reset_unix_ms,
+            tokens_in_remaining: s.tokens_in_remaining,
+            tokens_out_remaining: s.tokens_out_remaining,
+            last_updated_unix_ms: s.last_updated_ms,
+        }))
     }
 
     async fn orchestrate_feature(

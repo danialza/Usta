@@ -21,6 +21,98 @@ const API_VERSION: &str = "2023-06-01";
 /// idle-watcher) without 429 storms.
 static ANTHROPIC_GATE: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(2);
 
+/// Live rate-limit state parsed from response headers. Updated after every
+/// successful response so the gate can pre-block instead of leaking 429s.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct RateLimitSnapshot {
+    pub limit: i64,           // anthropic-ratelimit-requests-limit
+    pub remaining: i64,       // anthropic-ratelimit-requests-remaining
+    pub reset_unix_ms: i64,   // anthropic-ratelimit-requests-reset (RFC3339 → ms)
+    pub tokens_in_remaining: i64,
+    pub tokens_out_remaining: i64,
+    pub last_updated_ms: i64,
+}
+
+static RATE_STATE: std::sync::OnceLock<std::sync::Mutex<RateLimitSnapshot>> =
+    std::sync::OnceLock::new();
+
+fn state() -> &'static std::sync::Mutex<RateLimitSnapshot> {
+    RATE_STATE.get_or_init(|| std::sync::Mutex::new(RateLimitSnapshot::default()))
+}
+
+/// Public snapshot for daemon to expose via GetRateLimit RPC.
+pub fn current_rate_limit() -> RateLimitSnapshot {
+    *state().lock().unwrap()
+}
+
+fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
+}
+
+/// Parse RFC3339 timestamp (e.g. "2026-06-04T13:45:12Z") to unix-ms.
+/// Best-effort; falls back to now+60s if format unknown.
+fn parse_rfc3339_ms(s: &str) -> i64 {
+    // Lazy minimal parse: year-mo-dyThh:mi:ssZ
+    let bytes = s.as_bytes();
+    if bytes.len() < 20 { return now_ms() + 60_000; }
+    let read = |off: usize, len: usize| -> i64 {
+        std::str::from_utf8(&bytes[off..off+len])
+            .ok().and_then(|s| s.parse().ok()).unwrap_or(0)
+    };
+    let year = read(0, 4);
+    let mo = read(5, 2);
+    let dy = read(8, 2);
+    let hh = read(11, 2);
+    let mi = read(14, 2);
+    let ss = read(17, 2);
+    // Days-from-epoch (Howard Hinnant's algorithm)
+    let y = if mo <= 2 { year - 1 } else { year };
+    let era = (if y >= 0 { y } else { y - 399 }) / 400;
+    let yoe = (y - era * 400) as u64;
+    let doy = ((153 * (if mo > 2 { mo - 3 } else { mo + 9 }) + 2) / 5 + dy as i64 - 1) as u64;
+    let doe = yoe * 365 + yoe/4 - yoe/100 + doy;
+    let days = era * 146097 + doe as i64 - 719468;
+    (days * 86400 + hh * 3600 + mi * 60 + ss) * 1000
+}
+
+fn update_rate_from_headers(headers: &reqwest::header::HeaderMap) {
+    let g = |k: &str| headers.get(k).and_then(|v| v.to_str().ok());
+    let parse_i = |k: &str| g(k).and_then(|v| v.parse::<i64>().ok());
+    let mut s = state().lock().unwrap();
+    if let Some(v) = parse_i("anthropic-ratelimit-requests-limit") { s.limit = v; }
+    if let Some(v) = parse_i("anthropic-ratelimit-requests-remaining") { s.remaining = v; }
+    if let Some(v) = g("anthropic-ratelimit-requests-reset") {
+        s.reset_unix_ms = parse_rfc3339_ms(v);
+    }
+    if let Some(v) = parse_i("anthropic-ratelimit-input-tokens-remaining") {
+        s.tokens_in_remaining = v;
+    }
+    if let Some(v) = parse_i("anthropic-ratelimit-output-tokens-remaining") {
+        s.tokens_out_remaining = v;
+    }
+    s.last_updated_ms = now_ms();
+}
+
+/// Pre-request gate: if last response showed remaining ≤ 2, block until the
+/// stored reset time (max wait clamped to 65s so caller doesn't hang forever).
+async fn pre_request_gate() {
+    let snap = *state().lock().unwrap();
+    if snap.limit == 0 { return; }  // never seen a response yet
+    if snap.remaining > 2 { return; }
+    let now = now_ms();
+    let wait_ms = (snap.reset_unix_ms - now).clamp(0, 65_000);
+    if wait_ms > 0 {
+        tracing::warn!(
+            limit = snap.limit, remaining = snap.remaining, wait_ms,
+            "anthropic rate-limit gate: sleeping until reset"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(wait_ms as u64)).await;
+    }
+}
+
 pub struct AnthropicProvider {
     api_key: Option<String>,
     base_url: String,
@@ -36,6 +128,7 @@ async fn post_with_retry(
     body: &serde_json::Value,
     key: &str,
 ) -> anyhow::Result<reqwest::Response> {
+    pre_request_gate().await;
     let _permit = ANTHROPIC_GATE.acquire().await.map_err(|e| anyhow::anyhow!(e))?;
     let mut delay_ms = 600u64;
     let mut last_err = String::new();
@@ -48,6 +141,7 @@ async fn post_with_retry(
             .send()
             .await?;
         let st = resp.status();
+        update_rate_from_headers(resp.headers());
         if st.is_success() { return Ok(resp); }
         let code = st.as_u16();
         let retriable = matches!(code, 429 | 500 | 502 | 503 | 504);
@@ -56,8 +150,14 @@ async fn post_with_retry(
             anyhow::bail!("anthropic {st}: {text}");
         }
         last_err = format!("{st}: {text}");
-        tracing::warn!(attempt, delay_ms, "anthropic retry: {last_err}");
-        tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+        // For 429, prefer Retry-After or reset_at over fixed backoff.
+        let snap = *state().lock().unwrap();
+        let mut sleep_ms = delay_ms;
+        if code == 429 && snap.reset_unix_ms > now_ms() {
+            sleep_ms = ((snap.reset_unix_ms - now_ms()) as u64).clamp(500, 30_000);
+        }
+        tracing::warn!(attempt, sleep_ms, "anthropic retry: {last_err}");
+        tokio::time::sleep(Duration::from_millis(sleep_ms)).await;
         delay_ms = (delay_ms * 2).min(4000);
     }
     anyhow::bail!("anthropic exhausted retries: {last_err}");
