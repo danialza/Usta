@@ -335,7 +335,8 @@ struct WorkspaceDetailView: View {
                 Divider().overlay(AtelierTheme.border)
                 switch mode {
                 case .assistants:
-                    AssistantsGrid(workspaceID: ws.id, roles: roles, focus: selectedRole?.name)
+                    AssistantsGrid(workspaceID: ws.id, roles: roles, focus: selectedRole?.name,
+                                   onClearFocus: { selectedRole = nil })
                         .environmentObject(bus)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .background(AtelierTheme.bg)

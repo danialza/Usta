@@ -424,20 +424,24 @@ struct AssistantPane: View {
                         Image(systemName: isMaximized
                               ? "arrow.down.right.and.arrow.up.left"
                               : "arrow.up.left.and.arrow.down.right")
-                            .font(.caption)
+                            .font(.system(size: 13, weight: .semibold))
+                            .frame(width: 22, height: 22)
+                            .contentShape(Rectangle())
                     }
-                    .buttonStyle(.borderless)
+                    .buttonStyle(.plain)
                     .foregroundStyle(AtelierTheme.dim)
-                    .help(isMaximized ? "Restore" : "Maximize")
+                    .help(isMaximized ? "Restore (show all)" : "Maximize (focus this pane)")
                 }
                 if let toggle = onToggleCollapse {
                     Button(action: toggle) {
                         Image(systemName: collapsed ? "chevron.down" : "chevron.up")
-                            .font(.caption)
+                            .font(.system(size: 13, weight: .semibold))
+                            .frame(width: 22, height: 22)
+                            .contentShape(Rectangle())
                     }
-                    .buttonStyle(.borderless)
+                    .buttonStyle(.plain)
                     .foregroundStyle(AtelierTheme.dim)
-                    .help(collapsed ? "Expand" : "Minimize to header")
+                    .help(collapsed ? "Expand body" : "Collapse to header")
                 }
             }
             if !role.description_p.isEmpty {

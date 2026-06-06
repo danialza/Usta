@@ -13,6 +13,10 @@ struct AssistantsGrid: View {
     @State private var collapsed: Set<String> = []
     @State private var maximized: String? = nil
     @EnvironmentObject var bus: WorkspaceBus
+    /// Called by AssistantPane's maximize button when grid is already in
+    /// single-pane mode (filtered by chip). Lets ContentView clear its
+    /// `selectedRole` so user lands back on All.
+    var onClearFocus: (() -> Void)? = nil
 
     // Drop a stale maximize when the user filters to a different role / All.
     private func reconcileMaximize() {
@@ -78,8 +82,13 @@ struct AssistantsGrid: View {
                     role: shown[0],
                     collapsed: collapsed.contains(shown[0].name),
                     onToggleCollapse: { toggle(shown[0].name) },
-                    isMaximized: maximized == shown[0].name,
-                    onToggleMaximize: { toggleMax(shown[0].name) },
+                    // In single-pane mode the pane already fills available
+                    // space → "maximize" toggles back to All instead.
+                    isMaximized: true,
+                    onToggleMaximize: {
+                        maximized = nil
+                        onClearFocus?()
+                    },
                     step: 1,
                     stateColor: stateColor(bus.state(of: shown[0].name))
                 )
