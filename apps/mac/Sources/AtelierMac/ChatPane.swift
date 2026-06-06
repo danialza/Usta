@@ -392,6 +392,31 @@ struct AssistantPane: View {
         }
         cliSession = session
         cliError = nil
+        // Auto-activate universal skills on every fresh CLI session: type
+        // `/caveman:caveman` then `/memsearch:memory-recall` after pty has
+        // booted. Only fire on NEW terminals (existing reattach already has
+        // them active from earlier).
+        if existing == nil {
+            Task { await sendSkillPrelude(session: session) }
+        }
+    }
+
+    /// Inject `/caveman:caveman` + `/memsearch:memory-recall` (or other
+    /// slash skills) into the freshly launched claude pty so every role
+    /// boots into terse + memory-aware mode.
+    private func sendSkillPrelude(session: TerminalSession) async {
+        // Wait for claude to finish welcome banner + reach prompt
+        try? await Task.sleep(nanoseconds: 5_000_000_000)
+        let preludes: [String] = [
+            "/caveman:caveman",
+            "/memsearch:memory-recall",
+        ]
+        for cmd in preludes {
+            if let data = (cmd + "\n").data(using: .utf8) {
+                await session.sendInput(data)
+            }
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+        }
     }
 
     private var header: some View {
