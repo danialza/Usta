@@ -175,6 +175,9 @@ struct AssistantPane: View {
     @State private var kickoffSent: Bool = false
     @State private var regenInFlight: Bool = false
     @State private var regeneratedKickoff: String? = nil
+    /// Slash-command skills user has invoked in this pane's pty since launch.
+    /// Set when we type the command in, cleared on relaunch.
+    @State private var activatedSkills: Set<String> = []
 
     init(workspaceID: String,
          role: Atelier_V1_Role,
@@ -473,6 +476,7 @@ struct AssistantPane: View {
                 Text(role.description_p).font(.system(size: 10))
                     .foregroundStyle(AtelierTheme.dim).lineLimit(1)
             }
+            skillIndicatorRow
             // Row 2: controls — picker, provider, model, relaunch, gear
             if !collapsed {
                 HStack(spacing: 6) {
@@ -524,6 +528,7 @@ struct AssistantPane: View {
                 Button {
                     cliSession?.stop()
                     cliSession = nil
+                    activatedSkills.removeAll()
                     cliCommand = !role.cliCommand.isEmpty ? role.cliCommand
                         : Self.defaultCommand(provider: selectedProvider, model: selectedModel)
                 } label: {
@@ -577,6 +582,59 @@ struct AssistantPane: View {
             }
             .padding(.horizontal, 10)
             .padding(.bottom, 6)
+        }
+    }
+
+    /// Small clickable chips showing which slash-command skills are active
+    /// in this pane's pty. Gray = not invoked. Green = sent. Click to send.
+    @ViewBuilder
+    private var skillIndicatorRow: some View {
+        if backend == .cli {
+            let entries: [(slug: String, label: String)] = [
+                ("caveman:caveman",        "🪨 caveman"),
+                ("memsearch:memory-recall","🧠 memory"),
+                ("grill-me",               "❓ grill"),
+                ("tdd",                    "🧪 tdd"),
+                ("diagnose",               "🔬 diagnose"),
+            ]
+            HStack(spacing: 4) {
+                ForEach(entries, id: \.slug) { e in
+                    skillChip(slug: e.slug, label: e.label)
+                }
+            }
+        }
+    }
+
+    private func skillChip(slug: String, label: String) -> some View {
+        let active = activatedSkills.contains(slug)
+        return Button {
+            Task { await invokeSkill(slug: slug) }
+        } label: {
+            HStack(spacing: 3) {
+                Circle().fill(active ? Color.green : Color.gray.opacity(0.5))
+                    .frame(width: 5, height: 5)
+                Text(label).font(.system(size: 9, weight: active ? .semibold : .regular))
+            }
+            .padding(.horizontal, 5).padding(.vertical, 2)
+            .background((active ? Color.green : Color.gray).opacity(0.10))
+            .overlay(Capsule().stroke((active ? Color.green : Color.gray).opacity(0.35)))
+            .clipShape(Capsule())
+            .foregroundStyle(active ? Color.green : AtelierTheme.dim)
+        }
+        .buttonStyle(.plain)
+        .help(active
+              ? "\(slug) active in this pane"
+              : "Click to invoke /\(slug) — activate skill")
+    }
+
+    /// Type "/<slug>\n" into the pty + mark active. If CLI not yet up, queue
+    /// the activation for the next attach (kickoffSent path handles it).
+    private func invokeSkill(slug: String) async {
+        guard let s = cliSession else { return }
+        let cmd = "/\(slug)\n"
+        if let data = cmd.data(using: .utf8) {
+            await s.sendInput(data)
+            await MainActor.run { activatedSkills.insert(slug) }
         }
     }
 
