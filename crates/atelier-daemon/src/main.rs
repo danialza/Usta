@@ -264,8 +264,15 @@ fn spawn_idle_watcher(
                 let wsq = t.workspace_id.clone();
                 let mine_events = tokio::task::spawn_blocking(move || dbq.list_events(&wsq, &[], 0, 200))
                     .await.ok().and_then(|r| r.ok()).unwrap_or_default();
+                // Latest blocker event (feature.requested, *.failing, *.finding,
+                // *.rejected, *.rolled_back, *.broken, *.blocked) — any role's
+                // publishes that PREDATE this need to fire again.
+                let latest_blocker_ms = mine_events.iter()
+                    .filter(|e| is_blocker_topic_or_feature(&e.topic))
+                    .map(|e| e.created_unix_ms)
+                    .max().unwrap_or(0);
                 let mine_topics: std::collections::HashSet<String> = mine_events.iter()
-                    .filter(|e| e.from_role == role_def.name)
+                    .filter(|e| e.from_role == role_def.name && e.created_unix_ms > latest_blocker_ms)
                     .map(|e| e.topic.clone()).collect();
                 // Trust EXPLICIT announcements: parse pty for lines like
                 // "Event <topic> published" and publish only those topics
@@ -475,10 +482,15 @@ fn collect_changed_files(root: &std::path::Path) -> Vec<String> {
 /// OrchestrateIssue so PM writes fix-tasks for upstream owners.
 fn is_blocker_topic(topic: &str) -> bool {
     let t = topic.to_lowercase();
-    if t == "feature.requested" { return false; }  // feature handled separately
+    if t == "feature.requested" { return false; }  // feature triggers separately
     let suffixes = [".failing", ".failed", ".finding", ".rejected",
                     ".rolled_back", ".broken", ".blocked"];
     suffixes.iter().any(|s| t.ends_with(s))
+}
+
+/// Includes feature.requested for "reopens roles" detection.
+fn is_blocker_topic_or_feature(topic: &str) -> bool {
+    topic == "feature.requested" || is_blocker_topic(topic)
 }
 
 /// Spawn an OrchestrateIssue call in the background so the caller's
