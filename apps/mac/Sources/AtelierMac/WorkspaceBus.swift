@@ -201,6 +201,31 @@ final class WorkspaceBus: ObservableObject {
     /// roles transitively wait on each pending role's outputs; pick the max.
     /// Used when the bus is deadlocked — UI tells user where to type.
     func bottleneck() -> (name: String, dependents: Int, cycle: Bool)? {
+        // First: if ANY role is ready (no missing upstream) but hasn't acted,
+        // suggest that role instead of pretending there's a cycle. This is
+        // the natural project starter — e.g. product-manager with no
+        // internal subscribes when the team has just been scaffolded.
+        // Pre-compute pending set + impact score (publishes-overlap count)
+        // for each ready role, then pick highest-impact ready as the natural
+        // starter. Loose match: exact topic equality is enough; the fuzzy
+        // matcher is main-actor and not callable here.
+        let pendingNames = Set(roles.filter { state(of: $0.name) == .pending }.map { $0.name })
+        func plainScore(_ r: Atelier_V1_Role) -> Int {
+            let pubs = Set(r.handoffPublishes)
+            return roles.filter { pendingNames.contains($0.name) }
+                .reduce(0) { n, p in
+                    n + (p.handoffSubscribes.contains(where: { pubs.contains($0) }) ? 1 : 0)
+                }
+        }
+        let readyRoles = roles.filter { state(of: $0.name) == .ready }
+            .sorted { a, b in
+                let sa = plainScore(a), sb = plainScore(b)
+                if sa != sb { return sa > sb }
+                return a.name < b.name
+            }
+        if let starter = readyRoles.first {
+            return (starter.name, plainScore(starter), false)
+        }
         let pending = roles.filter { state(of: $0.name) == .pending }
         if pending.isEmpty { return nil }
         // For each pending role X, count how many OTHER pending roles

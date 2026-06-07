@@ -420,7 +420,19 @@ struct NewProjectWizard: View {
         guard panel.runModal() == .OK, let url = panel.url else { return }
         step = .scaffolding
         errorMsg = nil
-        if let resp = await client.scaffoldProject(proposal: p, parentDir: url.path) {
+        // Synthesize idea + answered grill Q&A so daemon's auto-orchestrate
+        // sees ALL context (not just original brief).
+        var enriched = idea.trimmingCharacters(in: .whitespacesAndNewlines)
+        let qa: [(String, String)] = grillQuestions.compactMap { q in
+            let a = (grillAnswers[q.id] ?? "").trimmingCharacters(in: .whitespaces)
+            return a.isEmpty ? nil : (q.question, a)
+        }
+        if !qa.isEmpty {
+            enriched += "\n\n--- Refinements from grill ---\n"
+            for (q, a) in qa { enriched += "- \(q) → \(a)\n" }
+        }
+        if let resp = await client.scaffoldProject(proposal: p, parentDir: url.path,
+                                                   idea: enriched, provider: provider, model: model) {
             openedWS = resp.workspace
             step = .done
         } else {

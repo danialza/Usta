@@ -325,6 +325,11 @@ struct WorkspaceDetailView: View {
     @State private var newFeatureText: String = ""
     @State private var showNewFeature: Bool = false
     @State private var newFeatureRole: String = "product-manager"
+    // Workshop grill: post-scaffold refinement
+    @State private var showGrillMore: Bool = false
+    @State private var grillMoreLoading: Bool = false
+    @State private var grillMoreQs: [Atelier_V1_GrillQuestion] = []
+    @State private var grillMoreAns: [String: String] = [:]
     @StateObject private var bus = WorkspaceBus()
     @StateObject private var rate = RateLimitModel()
 
@@ -374,6 +379,140 @@ struct WorkspaceDetailView: View {
                     }
                 }
             })
+        }
+        .sheet(isPresented: $showGrillMore) { grillMoreSheet }
+    }
+
+    // MARK: Workshop grill
+
+    private func openGrillMore() async {
+        grillMoreLoading = true
+        defer { grillMoreLoading = false }
+        // Synthesize a ProjectProposal from current workspace roles so we
+        // can reuse the existing GenerateGrillQuestions RPC.
+        let synth = Atelier_V1_ProjectProposal.with {
+            $0.projectName = ws.name
+            $0.projectSlug = ws.name.lowercased().replacingOccurrences(of: " ", with: "-")
+            $0.summary = "In-flight project, refining mid-workshop."
+            $0.team = roles.map { r in
+                Atelier_V1_ProposedRole.with {
+                    $0.name = r.name
+                    $0.emoji = r.emoji
+                    $0.why = r.description_p
+                    $0.recommendedProvider = r.defaultProvider
+                    $0.recommendedModel = r.defaultModel
+                    $0.tools = r.allowedTools
+                    $0.claudeSkills = r.claudeSkills
+                    $0.publishes = r.handoffPublishes
+                    $0.subscribes = r.handoffSubscribes
+                    $0.cliCommand = r.cliCommand
+                    $0.kickoff = r.kickoff
+                }
+            }
+        }
+        let qs = await client.generateGrillQuestions(idea: ws.name, proposal: synth)
+        grillMoreQs = qs
+        grillMoreAns = [:]
+        if !qs.isEmpty { showGrillMore = true }
+        else { bus.toast(kind: .info, title: "Grill",
+                         body: client.lastError ?? "no questions returned") }
+    }
+
+    private var grillMoreSheet: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                Image(systemName: "questionmark.bubble.fill").foregroundStyle(.tint)
+                Text("Grill more — refine the project").font(.headline)
+                Spacer()
+                Button("Close") { showGrillMore = false }.buttonStyle(.borderless)
+            }.padding(14)
+            Divider().overlay(AtelierTheme.border)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    Text("Answer what's relevant. Skip the rest. Your answers will be sent to PM as a refinement request — affected roles get fresh tasks.")
+                        .font(.callout).foregroundStyle(AtelierTheme.dim)
+                    ForEach(Array(grillMoreQs.enumerated()), id: \.offset) { idx, q in
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack(alignment: .top, spacing: 6) {
+                                Text("\(idx + 1).").font(.body.bold()).foregroundStyle(AtelierTheme.dim)
+                                Text(q.question).font(.body.bold())
+                            }
+                            if !q.rationale.isEmpty {
+                                Text(q.rationale).font(.caption).foregroundStyle(AtelierTheme.dim)
+                            }
+                            if !q.options.isEmpty {
+                                FlowLayout(spacing: 6) {
+                                    ForEach(q.options, id: \.self) { opt in
+                                        let selected = grillMoreAns[q.id] == opt
+                                        Button { grillMoreAns[q.id] = selected ? "" : opt } label: {
+                                            Text(opt).font(.caption)
+                                                .padding(.horizontal, 10).padding(.vertical, 4)
+                                                .background(selected ? Color.accentColor.opacity(0.25) : AtelierTheme.cell)
+                                                .overlay(RoundedRectangle(cornerRadius: 12).stroke(selected ? Color.accentColor : AtelierTheme.border))
+                                                .clipShape(RoundedRectangle(cornerRadius: 12))
+                                                .foregroundStyle(.primary)
+                                        }.buttonStyle(.plain)
+                                    }
+                                }
+                            }
+                            if q.allowFreeText {
+                                TextField("Or type your own…",
+                                          text: Binding(
+                                            get: { grillMoreAns[q.id] ?? "" },
+                                            set: { grillMoreAns[q.id] = $0 }))
+                                    .textFieldStyle(.plain).font(.system(size: 12))
+                                    .padding(8).background(AtelierTheme.cell)
+                                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(AtelierTheme.border))
+                            }
+                        }
+                        .padding(12).frame(maxWidth: .infinity, alignment: .leading)
+                        .background(AtelierTheme.cell.opacity(0.5))
+                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(AtelierTheme.border))
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                    }
+                }.padding(18)
+            }
+            Divider().overlay(AtelierTheme.border)
+            HStack {
+                Spacer()
+                Button {
+                    Task { await applyGrillMore() }
+                } label: { Label("Apply Answers", systemImage: "sparkles") }
+                .buttonStyle(.borderedProminent)
+                .disabled(grillMoreAns.values.allSatisfy { $0.trimmingCharacters(in: .whitespaces).isEmpty })
+            }.padding(14)
+        }
+        .frame(minWidth: 640, minHeight: 520)
+        .background(AtelierTheme.panel)
+    }
+
+    private func applyGrillMore() async {
+        let qa: [(String, String)] = grillMoreQs.compactMap { q in
+            let a = (grillMoreAns[q.id] ?? "").trimmingCharacters(in: .whitespaces)
+            return a.isEmpty ? nil : (q.question, a)
+        }
+        guard !qa.isEmpty else { return }
+        var text = "Project refinement based on additional grill answers:\n\n"
+        for (q, a) in qa { text += "- \(q) → \(a)\n" }
+        showGrillMore = false
+        bus.toast(kind: .info, title: "Refining…",
+                  body: "PM is updating affected roles' tasks.")
+        if let plan = await client.orchestrateFeature(workspaceID: ws.id, featureText: text) {
+            roles = await client.listRoles(workspaceID: ws.id)
+            bus.updateRoles(roles)
+            bus.resetAutoRegenGuards()
+            bus.setOrchestrationOrder(plan.roles.map { $0.name })
+            bus.refreshNow(workspaceID: ws.id)
+            for r in plan.roles {
+                NotificationCenter.default.post(name: .atelierResetKickoff, object: r.name)
+            }
+            let names = plan.roles.map { "@\($0.name)" }.joined(separator: ", ")
+            bus.toast(kind: .ready,
+                      title: "Refinement applied — \(plan.roles.count) role(s)",
+                      body: names)
+        } else {
+            bus.toast(kind: .info, title: "Refinement failed",
+                      body: client.lastError ?? "unknown")
         }
     }
 
@@ -442,6 +581,14 @@ struct WorkspaceDetailView: View {
                 }
                 toolbarButton("Apply Team", systemImage: "person.3.sequence") {
                     showApplyTeam = true
+                }
+                if !roles.isEmpty && mode == .assistants {
+                    toolbarButton(
+                        grillMoreLoading ? "Grilling…" : "Grill More",
+                        systemImage: grillMoreLoading ? "hourglass" : "questionmark.bubble"
+                    ) {
+                        if !grillMoreLoading { Task { await openGrillMore() } }
+                    }
                 }
                 if !roles.isEmpty && mode == .assistants {
                     toolbarButton(

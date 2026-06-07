@@ -467,6 +467,13 @@ message ProjectProposal {
 message ScaffoldProjectRequest {
   ProjectProposal proposal = 1;
   string parent_dir        = 2;
+  // Original free-text idea + any grill Q&A. Written as the first
+  // feature.requested event so PM auto-orchestrates initial kickoffs.
+  string idea              = 3;
+  // Optional provider/model for the auto-orchestration call. Defaults to
+  // anthropic + claude-haiku-4-5.
+  string provider          = 4;
+  string model             = 5;
 }
 
 message ScaffoldProjectResponse {

@@ -2296,6 +2296,64 @@ impl Atelier for AtelierSvc {
             row
         };
 
+        // Auto-orchestrate: publish feature.requested with the original
+        // idea + first_steps and run PM to write kickoffs into role yamls.
+        // This unblocks @product-manager (and other no-upstream roles) so
+        // the workshop opens with a clear start point instead of a cycle.
+        let kickoff_text = {
+            let mut s = String::new();
+            if !r.idea.trim().is_empty() {
+                s.push_str(r.idea.trim());
+                s.push_str("\n\n");
+            } else if !proposal.summary.trim().is_empty() {
+                s.push_str(proposal.summary.trim());
+                s.push_str("\n\n");
+            }
+            if !proposal.first_steps.trim().is_empty() {
+                s.push_str("First steps: ");
+                s.push_str(proposal.first_steps.trim());
+            }
+            s.trim().to_string()
+        };
+        if !kickoff_text.is_empty() {
+            let providers = self.providers.clone();
+            let roles_lib = self.roles.clone();
+            let db_arc = self.db.clone();
+            let ws_id = row.id.clone();
+            let ws_path = row.path.clone();
+            let provider_name = if r.provider.is_empty() { "anthropic".to_string() } else { r.provider.clone() };
+            let model = if r.model.is_empty() { "claude-haiku-4-5-20251001".to_string() } else { r.model.clone() };
+            tokio::spawn(async move {
+                let lib = roles_lib.with_workspace(std::path::Path::new(&ws_path));
+                let mut team_yaml = String::new();
+                for role in lib.iter() {
+                    if role.scope != atelier_roles::RoleScope::Workspace { continue; }
+                    if let Ok(s) = serde_yaml::to_string(role) {
+                        team_yaml.push_str(&format!("---\n{s}"));
+                    }
+                }
+                // Always publish feature.requested first so UI reacts even
+                // if PM call fails.
+                let _ = db_arc.insert_event(&ws_id, "user", "feature.requested",
+                    &kickoff_text, now_ms(), &[]);
+                let Some(provider) = providers.get(&provider_name) else { return; };
+                let pm = atelier_pm::Pm::new(provider, model);
+                let Ok((plan_summary, plan)) = pm.orchestrate_feature(
+                    &team_yaml, "(scaffold)", &kickoff_text).await else { return; };
+                for (role_name, task) in &plan {
+                    if let Some(role) = lib.get(role_name) {
+                        let mut updated = role.clone();
+                        updated.kickoff = task.clone();
+                        if let Ok(yaml) = serde_yaml::to_string(&updated) {
+                            let _ = std::fs::write(&updated.source, yaml);
+                        }
+                    }
+                }
+                let _ = db_arc.insert_event(&ws_id, "pm", "kickoff.plan.ready",
+                    &plan_summary, now_ms(), &[]);
+            });
+        }
+
         Ok(Response::new(ScaffoldProjectResponse {
             workspace: Some(ws_to_pb(&row)),
             written_paths: written,

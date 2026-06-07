@@ -364,12 +364,20 @@ final class AtelierClientModel: ObservableObject {
         }
     }
 
-    func scaffoldProject(proposal: Atelier_V1_ProjectProposal, parentDir: String) async -> Atelier_V1_ScaffoldProjectResponse? {
+    func scaffoldProject(proposal: Atelier_V1_ProjectProposal, parentDir: String,
+                         idea: String = "",
+                         provider: String = "anthropic",
+                         model: String = "claude-haiku-4-5-20251001")
+        async -> Atelier_V1_ScaffoldProjectResponse?
+    {
         guard let stub else { return nil }
         do {
             let req = Atelier_V1_ScaffoldProjectRequest.with {
                 $0.proposal = proposal
                 $0.parentDir = parentDir
+                $0.idea = idea
+                $0.provider = provider
+                $0.model = model
             }
             let resp = try await stub.scaffoldProject(req)
             await refreshWorkspaces()
