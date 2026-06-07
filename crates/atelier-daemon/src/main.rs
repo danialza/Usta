@@ -16,6 +16,8 @@ use atelier_proto::v1::{
     IndexProgress as PbIndexProgress, IndexRequest, ListEventsRequest, ListRolesRequest,
     ListTerminalsRequest, ListToolsRequest, OpenWorkspaceRequest, PingRequest, PingResponse,
     ProjectProposal as PbProjectProposal, ProposeProjectRequest, ProposedRole as PbProposedRole,
+    GrillQuestionsRequest, GrillQuestionsResponse, GrillQuestion as PbGrillQuestion,
+    RefineProposalRequest,
     ApproveToolRequest, ProviderInfo, ProviderList, PtyClientMsg, PublishEventRequest,
     RegenerateKickoffRequest, RegenerateKickoffResponse,
     OrchestrateFeatureRequest, OrchestrateFeatureResponse, AffectedRole as PbAffectedRole,
@@ -878,6 +880,32 @@ fn ws_to_pb(w: &WorkspaceRow) -> Workspace {
         path: w.path.clone(),
         name: w.name.clone(),
         opened_unix_ms: w.opened_unix_ms,
+    }
+}
+
+fn pb_proposal_to_pm(p: &PbProjectProposal) -> atelier_pm::ProjectProposal {
+    atelier_pm::ProjectProposal {
+        project_name: p.project_name.clone(),
+        project_slug: p.project_slug.clone(),
+        summary: p.summary.clone(),
+        first_steps: p.first_steps.clone(),
+        stack: p.stack.iter().map(|t| atelier_pm::StackTag {
+            name: t.name.clone(), category: t.category.clone(),
+        }).collect(),
+        team: p.team.iter().map(|r| atelier_pm::ProposedRole {
+            name: r.name.clone(),
+            emoji: r.emoji.clone(),
+            why: r.why.clone(),
+            recommended_provider: r.recommended_provider.clone(),
+            recommended_model: r.recommended_model.clone(),
+            tools: r.tools.clone(),
+            claude_skills: r.claude_skills.clone(),
+            publishes: r.publishes.clone(),
+            subscribes: r.subscribes.clone(),
+            system_prompt: r.system_prompt.clone(),
+            cli_command: r.cli_command.clone(),
+            kickoff: r.kickoff.clone(),
+        }).collect(),
     }
 }
 
@@ -2130,6 +2158,58 @@ impl Atelier for AtelierSvc {
             .map_err(|e| Status::internal(format!("pm propose: {e:#}")))?;
 
         Ok(Response::new(proposal_to_pb(proposal)))
+    }
+
+    async fn generate_grill_questions(
+        &self,
+        req: Request<GrillQuestionsRequest>,
+    ) -> Result<Response<GrillQuestionsResponse>, Status> {
+        let r = req.into_inner();
+        let proposal = r.proposal.ok_or_else(|| Status::invalid_argument("missing proposal"))?;
+        let provider_name = if r.provider.is_empty() { "anthropic".into() } else { r.provider };
+        let model = if r.model.is_empty() { "claude-haiku-4-5-20251001".into() } else { r.model };
+        let provider = self.providers.get(&provider_name)
+            .ok_or_else(|| Status::not_found(format!("unknown provider '{provider_name}'")))?;
+        let proposal_json = serde_json::to_string(&pb_proposal_to_pm(&proposal))
+            .map_err(|e| Status::internal(format!("serialize proposal: {e}")))?;
+        let pm = atelier_pm::Pm::new(provider, model);
+        let qs = pm.generate_grill_questions(&r.idea, &proposal_json)
+            .await
+            .map_err(|e| Status::internal(format!("grill: {e:#}")))?;
+        let items = qs.into_iter().map(|q| PbGrillQuestion {
+            id: q.id,
+            question: q.question,
+            rationale: q.rationale,
+            options: q.options,
+            allow_free_text: q.allow_free_text,
+        }).collect();
+        Ok(Response::new(GrillQuestionsResponse { items }))
+    }
+
+    async fn refine_proposal(
+        &self,
+        req: Request<RefineProposalRequest>,
+    ) -> Result<Response<PbProjectProposal>, Status> {
+        let r = req.into_inner();
+        let current = r.current_proposal.ok_or_else(|| Status::invalid_argument("missing current_proposal"))?;
+        let provider_name = if r.provider.is_empty() { "anthropic".into() } else { r.provider };
+        let model = if r.model.is_empty() { "claude-sonnet-4-6".into() } else { r.model };
+        let provider = self.providers.get(&provider_name)
+            .ok_or_else(|| Status::not_found(format!("unknown provider '{provider_name}'")))?;
+        let proposal_json = serde_json::to_string(&pb_proposal_to_pm(&current))
+            .map_err(|e| Status::internal(format!("serialize proposal: {e}")))?;
+        // Build (question, answer, rationale) triples by id-match.
+        let by_id: std::collections::HashMap<String, &PbGrillQuestion> =
+            r.questions.iter().map(|q| (q.id.clone(), q)).collect();
+        let pairs: Vec<(String, String, String)> = r.answers.iter()
+            .filter_map(|a| by_id.get(&a.id).map(|q|
+                (q.question.clone(), a.answer.clone(), q.rationale.clone())))
+            .collect();
+        let pm = atelier_pm::Pm::new(provider, model);
+        let refined = pm.refine_proposal(&r.idea, &proposal_json, &pairs)
+            .await
+            .map_err(|e| Status::internal(format!("refine: {e:#}")))?;
+        Ok(Response::new(proposal_to_pb(refined)))
     }
 
     async fn scaffold_project(

@@ -318,6 +318,52 @@ final class AtelierClientModel: ObservableObject {
         }
     }
 
+    func generateGrillQuestions(idea: String, proposal: Atelier_V1_ProjectProposal,
+                                provider: String = "anthropic",
+                                model: String = "claude-haiku-4-5-20251001")
+        async -> [Atelier_V1_GrillQuestion]
+    {
+        guard let stub else { return [] }
+        do {
+            let req = Atelier_V1_GrillQuestionsRequest.with {
+                $0.idea = idea; $0.proposal = proposal
+                $0.provider = provider; $0.model = model
+            }
+            let resp = try await stub.generateGrillQuestions(req)
+            return resp.items
+        } catch {
+            self.lastError = "grill: \(error)"
+            return []
+        }
+    }
+
+    func refineProposal(idea: String,
+                        current: Atelier_V1_ProjectProposal,
+                        questions: [Atelier_V1_GrillQuestion],
+                        answers: [(String, String)],
+                        provider: String = "anthropic",
+                        model: String = "claude-sonnet-4-6")
+        async -> Atelier_V1_ProjectProposal?
+    {
+        guard let stub else { return nil }
+        do {
+            let req = Atelier_V1_RefineProposalRequest.with {
+                $0.idea = idea
+                $0.currentProposal = current
+                $0.questions = questions
+                $0.answers = answers.map { id, ans in
+                    Atelier_V1_GrillAnswer.with { $0.id = id; $0.answer = ans }
+                }
+                $0.provider = provider
+                $0.model = model
+            }
+            return try await stub.refineProposal(req)
+        } catch {
+            self.lastError = "refine: \(error)"
+            return nil
+        }
+    }
+
     func scaffoldProject(proposal: Atelier_V1_ProjectProposal, parentDir: String) async -> Atelier_V1_ScaffoldProjectResponse? {
         guard let stub else { return nil }
         do {

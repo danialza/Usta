@@ -6,7 +6,7 @@ struct NewProjectWizard: View {
     @EnvironmentObject var client: AtelierClientModel
     @Environment(\.dismiss) private var dismiss
 
-    enum Step { case describe, review, scaffolding, done }
+    enum Step { case describe, review, grill, scaffolding, done }
 
     @State private var step: Step = .describe
     @State private var idea: String = ""
@@ -18,6 +18,10 @@ struct NewProjectWizard: View {
     @State private var working: Bool = false
     @State private var errorMsg: String? = nil
     @State private var openedWS: Atelier_V1_Workspace? = nil
+    // Grill flow
+    @State private var grillQuestions: [Atelier_V1_GrillQuestion] = []
+    @State private var grillAnswers: [String: String] = [:]
+    @State private var grillStatus: String = ""
 
     var onOpened: (Atelier_V1_Workspace) -> Void = { _ in }
 
@@ -48,6 +52,7 @@ struct NewProjectWizard: View {
         switch step {
         case .describe:    describeStep
         case .review:      reviewStep
+        case .grill:       grillStep
         case .scaffolding: scaffoldingStep
         case .done:        doneStep
         }
@@ -181,9 +186,19 @@ struct NewProjectWizard: View {
             HStack {
                 Button("Back") { step = .describe }
                 Spacer()
+                if working { ProgressView().scaleEffect(0.7).padding(.trailing, 6) }
+                Button {
+                    Task { await startGrill() }
+                } label: {
+                    Label("Refine with Grill", systemImage: "questionmark.bubble")
+                }
+                .buttonStyle(.bordered)
+                .disabled(working)
+                .help("PM asks 6-8 targeted questions to fill gaps before scaffolding")
                 Button("Create Project…") { Task { await scaffold() } }
                     .keyboardShortcut(.defaultAction)
                     .buttonStyle(.borderedProminent)
+                    .disabled(working)
             }
             .padding(14)
             .sheet(isPresented: $showAddRole) {
@@ -218,6 +233,100 @@ struct NewProjectWizard: View {
                 .clipShape(RoundedRectangle(cornerRadius: 4))
             }
         }
+    }
+
+    // MARK: grill
+
+    private var grillStep: some View {
+        VStack(spacing: 0) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "questionmark.bubble.fill").foregroundStyle(.tint)
+                        Text("Refine the plan").font(.title3.bold())
+                    }
+                    Text("PM has a few targeted questions before we scaffold. Tap an option or type your own. Skip questions you don't care about.")
+                        .font(.callout).foregroundStyle(AtelierTheme.dim)
+                    if grillQuestions.isEmpty {
+                        HStack(spacing: 10) {
+                            ProgressView().scaleEffect(0.7)
+                            Text(grillStatus.isEmpty ? "Generating questions…" : grillStatus)
+                                .foregroundStyle(AtelierTheme.dim)
+                        }
+                        .padding(.vertical, 24)
+                    } else {
+                        ForEach(Array(grillQuestions.enumerated()), id: \.offset) { idx, q in
+                            grillQuestionCard(index: idx, q: q)
+                        }
+                    }
+                    if let e = errorMsg {
+                        Text(e).font(.caption).foregroundStyle(.red)
+                    }
+                }
+                .padding(18)
+            }
+            Divider().overlay(AtelierTheme.border)
+            HStack {
+                Button("Cancel") { step = .review; errorMsg = nil }
+                Spacer()
+                if working { ProgressView().scaleEffect(0.7).padding(.trailing, 6) }
+                Button {
+                    Task { await applyGrill() }
+                } label: {
+                    Label("Apply Answers & Re-propose", systemImage: "sparkles")
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(working || grillQuestions.isEmpty || grillAnswers.values.allSatisfy { $0.trimmingCharacters(in: .whitespaces).isEmpty })
+            }
+            .padding(14)
+        }
+    }
+
+    private func grillQuestionCard(index: Int, q: Atelier_V1_GrillQuestion) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .top, spacing: 6) {
+                Text("\(index + 1).").font(.body.bold()).foregroundStyle(AtelierTheme.dim)
+                Text(q.question).font(.body.bold())
+            }
+            if !q.rationale.isEmpty {
+                Text(q.rationale).font(.caption).foregroundStyle(AtelierTheme.dim)
+            }
+            if !q.options.isEmpty {
+                FlowLayout(spacing: 6) {
+                    ForEach(q.options, id: \.self) { opt in
+                        let selected = grillAnswers[q.id] == opt
+                        Button {
+                            grillAnswers[q.id] = selected ? "" : opt
+                        } label: {
+                            Text(opt).font(.caption)
+                                .padding(.horizontal, 10).padding(.vertical, 4)
+                                .background(selected ? Color.accentColor.opacity(0.25) : AtelierTheme.cell)
+                                .overlay(RoundedRectangle(cornerRadius: 12).stroke(selected ? Color.accentColor : AtelierTheme.border))
+                                .clipShape(RoundedRectangle(cornerRadius: 12))
+                                .foregroundStyle(.primary)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+            if q.allowFreeText {
+                TextField("Or type your own answer…",
+                          text: Binding(
+                            get: { grillAnswers[q.id] ?? "" },
+                            set: { grillAnswers[q.id] = $0 }
+                          ))
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 12))
+                    .padding(8)
+                    .background(AtelierTheme.cell)
+                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(AtelierTheme.border))
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(AtelierTheme.cell.opacity(0.5))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(AtelierTheme.border))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 
     // MARK: scaffolding / done
@@ -261,6 +370,41 @@ struct NewProjectWizard: View {
             step = .review
         } else {
             errorMsg = client.lastError ?? "no proposal"
+        }
+    }
+
+    private func startGrill() async {
+        guard let p = proposal else { return }
+        step = .grill
+        grillQuestions = []
+        grillAnswers = [:]
+        grillStatus = "Generating questions…"
+        working = true; errorMsg = nil
+        defer { working = false }
+        let qs = await client.generateGrillQuestions(idea: idea, proposal: p, provider: provider)
+        grillQuestions = qs
+        if qs.isEmpty {
+            errorMsg = client.lastError ?? "no questions returned"
+        }
+    }
+
+    private func applyGrill() async {
+        guard let p = proposal else { return }
+        let answers: [(String, String)] = grillQuestions.compactMap { q in
+            let a = (grillAnswers[q.id] ?? "").trimmingCharacters(in: .whitespaces)
+            return a.isEmpty ? nil : (q.id, a)
+        }
+        guard !answers.isEmpty else { return }
+        working = true; errorMsg = nil
+        defer { working = false }
+        if let refined = await client.refineProposal(idea: idea, current: p,
+                                                     questions: grillQuestions,
+                                                     answers: answers,
+                                                     provider: provider, model: model) {
+            proposal = refined
+            step = .review
+        } else {
+            errorMsg = client.lastError ?? "refine failed"
         }
     }
 
