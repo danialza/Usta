@@ -261,6 +261,20 @@ final class WorkspaceBus: ObservableObject {
         if let starter = starterPool.first {
             return (starter.name, plainScore(starter), false)
         }
+        // No effectively-ready role → real cycle. If PM orchestrated a plan
+        // (kickoff.plan.ready), pick the first still-pending role from that
+        // plan over the "blocks most" heuristic. PM's plan = ground truth.
+        if !orchestrationOrder.isEmpty {
+            let pendingNames2 = Set(roles.filter { state(of: $0.name) == .pending }.map { $0.name })
+            if let firstPlanned = orchestrationOrder.first(where: { pendingNames2.contains($0) }) {
+                let pubs = Set(roles.first(where: { $0.name == firstPlanned })?.handoffPublishes ?? [])
+                let deps = roles.filter { pendingNames2.contains($0.name) }
+                    .reduce(0) { n, p in
+                        n + (p.handoffSubscribes.contains(where: { pubs.contains($0) }) ? 1 : 0)
+                    }
+                return (firstPlanned, deps, false)
+            }
+        }
         let pending = roles.filter { state(of: $0.name) == .pending }
         if pending.isEmpty { return nil }
         // For each pending role X, count how many OTHER pending roles
@@ -410,6 +424,30 @@ final class WorkspaceBus: ObservableObject {
         let oldIds = Set(events.map { $0.id })
         let newIds = Set(fresh.map { $0.id }).subtracting(oldIds)
         events = fresh.sorted(by: { $0.id < $1.id })
+        // Recover orchestration order from the most recent kickoff.plan.ready
+        // event so the bottleneck picker has a truth-source even when nobody
+        // clicked OrchestrateFeature in this session (scaffold auto-fires it
+        // server-side). Parse role-name mentions in order of appearance.
+        if orchestrationOrder.isEmpty,
+           let plan = events.reversed().first(where: { $0.topic == "kickoff.plan.ready" }) {
+            let txt = plan.summary.lowercased()
+            var found: [(name: String, pos: Int)] = []
+            for r in roles {
+                let needles = [
+                    r.name.lowercased(),
+                    r.name.lowercased().replacingOccurrences(of: "-", with: " "),
+                    "@\(r.name.lowercased())",
+                ]
+                for n in needles {
+                    if let pos = txt.range(of: n)?.lowerBound {
+                        found.append((r.name, txt.distance(from: txt.startIndex, to: pos)))
+                        break
+                    }
+                }
+            }
+            let ordered = found.sorted { $0.pos < $1.pos }.map { $0.name }
+            if !ordered.isEmpty { orchestrationOrder = ordered }
+        }
         if !newIds.isEmpty {
             freshIds = newIds
             // Notify subscriber roles about each new event so their panes
