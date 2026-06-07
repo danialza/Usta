@@ -741,6 +741,31 @@ fn render_role_brief(role: &RoleDef, workspace_path: &str) -> String {
         name = role.name,
         ws = workspace_path
     ));
+
+    // HARD RULE up top so claude can't miss it. Without publish_event, the
+    // event bus has no idea the role finished and the whole orchestration
+    // chain stalls. The rule must come BEFORE the role's system prompt so
+    // it's the first thing claude reads.
+    let pubs_csv = role.handoff_topics.publishes.join(", ");
+    out.push_str(&format!(
+        "## ⚠ HARD RULE — ALWAYS PUBLISH WHEN DONE\n\
+         The MOMENT you finish a milestone or deliver an artifact, your\n\
+         IMMEDIATE next action MUST be to call the MCP tool\n\
+         `mcp__atelier__publish_event(topic, summary)` — exactly ONE call\n\
+         per topic you completed. This is NOT optional.\n\n\
+         Your topics: [{pubs}]\n\
+         Pick the matching topic from that list. The summary is 1-2\n\
+         sentences naming the artifact + main outcome.\n\n\
+         If you skip publish_event, downstream roles (qa, security, devops)\n\
+         never get notified, the bus stays stale, the user is blocked. The\n\
+         orchestrator literally cannot detect 'done' any other way.\n\n\
+         WRONG: write a report and stop. Atelier never marks you done.\n\
+         RIGHT: write report → call publish_event → THEN you may end the turn.\n\n\
+         Also speak the line `Event <topic> published.` in your final\n\
+         message so the idle-watcher has a fallback signal if MCP fails.\n\n",
+        pubs = pubs_csv
+    ));
+
     out.push_str(&role.system_prompt);
     out.push_str("\n\n## Your handoff topics\n");
     if !role.handoff_topics.publishes.is_empty() {
@@ -754,7 +779,7 @@ fn render_role_brief(role: &RoleDef, workspace_path: &str) -> String {
          - publish_event(topic, summary): announce when you finish a milestone.\n\
          - list_events(topics?, limit?): see recent team activity.\n\
          - wait_for_event(topics, timeout_seconds?): block until upstream work lands.\n\
-         Always publish_event when you complete a task that affects others.\n",
+         REPEAT: publish_event is MANDATORY when you complete anything. See HARD RULE above.\n",
     );
     // Universal skills: every role gets these regardless of yaml, so the
     // whole team always has memory recall + interview-first + TDD + diagnose
