@@ -205,11 +205,46 @@ final class WorkspaceBus: ObservableObject {
         // suggest that role instead of pretending there's a cycle. This is
         // the natural project starter — e.g. product-manager with no
         // internal subscribes when the team has just been scaffolded.
-        // Pre-compute pending set + impact score (publishes-overlap count)
-        // for each ready role, then pick highest-impact ready as the natural
-        // starter. Loose match: exact topic equality is enough; the fuzzy
-        // matcher is main-actor and not callable here.
+        // "Effectively ready" = a role whose every unmet upstream sub has NO
+        // producer in this team (orphan). Orphan subs are dead deps —
+        // hallucinated by the PM yaml generator — and shouldn't block start.
+        let publishedSet = Set(events.map { $0.topic })
         let pendingNames = Set(roles.filter { state(of: $0.name) == .pending }.map { $0.name })
+        func subSatisfied(_ sub: String) -> Bool {
+            // Exact / loose match against published
+            if publishedSet.contains(sub) { return true }
+            if publishedSet.contains(where: {
+                $0.hasSuffix("." + sub) || sub.hasSuffix("." + $0) || $0 == sub
+            }) { return true }
+            return false
+        }
+        func hasProducer(_ sub: String) -> Bool {
+            roles.contains { other in
+                other.handoffPublishes.contains { p in
+                    p == sub || p.hasSuffix("." + sub) || sub.hasSuffix("." + p)
+                }
+            }
+        }
+        func effectivelyReady(_ r: Atelier_V1_Role) -> Bool {
+            if working.contains(r.name) { return false }
+            // Already published any of its declared topics since the last
+            // blocker → role is done, not a fresh starter
+            let latestBlockerMs = events.filter { Self.isBlockerTopic($0.topic) }
+                .map { $0.createdUnixMs }.max() ?? 0
+            let mineRecent = Set(events
+                .filter { $0.fromRole == r.name && $0.createdUnixMs > latestBlockerMs }
+                .map { $0.topic })
+            if !r.handoffPublishes.isEmpty,
+               r.handoffPublishes.contains(where: { mineRecent.contains($0) }) {
+                return false
+            }
+            for sub in r.handoffSubscribes {
+                if subSatisfied(sub) { continue }
+                if hasProducer(sub) { return false }   // real upstream still pending
+                // orphan sub → ignore
+            }
+            return true
+        }
         func plainScore(_ r: Atelier_V1_Role) -> Int {
             let pubs = Set(r.handoffPublishes)
             return roles.filter { pendingNames.contains($0.name) }
@@ -217,13 +252,13 @@ final class WorkspaceBus: ObservableObject {
                     n + (p.handoffSubscribes.contains(where: { pubs.contains($0) }) ? 1 : 0)
                 }
         }
-        let readyRoles = roles.filter { state(of: $0.name) == .ready }
+        let starterPool = roles.filter { effectivelyReady($0) }
             .sorted { a, b in
                 let sa = plainScore(a), sb = plainScore(b)
                 if sa != sb { return sa > sb }
                 return a.name < b.name
             }
-        if let starter = readyRoles.first {
+        if let starter = starterPool.first {
             return (starter.name, plainScore(starter), false)
         }
         let pending = roles.filter { state(of: $0.name) == .pending }
