@@ -162,7 +162,12 @@ final class WorkspaceBus: ObservableObject {
         switch s {
         case .working: return isOrchestrated ? 0 : 1
         case .ready:   return isOrchestrated ? 2 : 3
-        case .pending: return isOrchestrated ? 4 : (name == pinnedBottleneckName ? 5 : 6)
+        case .pending:
+            // Pinned bottleneck = "do this NOW to unblock everyone else".
+            // Beats orchestrated-pending so the bar's recommendation lines
+            // up with pane #1 in the grid.
+            if name == pinnedBottleneckName { return 2 }
+            return isOrchestrated ? 4 : 6
         case .done:    return 7
         }
     }

@@ -144,6 +144,17 @@ Rules:
   ui.component.added, design.spec.ready, tests.failing/tests.passed,
   security.finding/security.cleared, deploy.ready/deploy.rolled_back,
   data.event.added. Publishers + subscribers must connect (no orphan topics).
+- DEPENDENCY DIRECTION IS A DAG. Topics flow UPSTREAM → DOWNSTREAM only.
+  Roles that bootstrap the project (product-manager, pm, ui-ux when it
+  drives spec, requirements, lead, owner) MUST subscribe ONLY to
+  user-level events (`feature.requested`, `feature.blocked`) — never to
+  any topic published by a downstream role. Otherwise the team
+  deadlocks on its first run (PM waits ui-ux waits PM).
+  Bad:   product-manager.subscribes = ["design.spec.ready", "ui.component.added"]
+  Good:  product-manager.subscribes = ["feature.requested", "feature.blocked"]
+  Concretely: if role X publishes topic T and role Y subscribes T, then
+  Y must NOT publish any topic that X subscribes to. Break the cycle in
+  favor of upstream → downstream.
 - `name` is short kebab-case, unique.
 - `project_slug` is kebab-case and filesystem-safe.
 - emoji is a single grapheme.
@@ -229,6 +240,12 @@ Rules:
   tests.passing, tests.failing, security.finding, security.cleared,
   deploy.ready, requirements.defined. Every publisher must have at least
   one subscriber and vice versa (no orphan topics).
+- DEPENDENCY DIRECTION IS A DAG. Topics flow UPSTREAM → DOWNSTREAM only.
+  Bootstrap roles (product-manager, pm, lead, owner) MUST subscribe ONLY
+  to user-level events (`feature.requested`, `feature.blocked`) — never
+  to a topic any downstream role publishes. Otherwise the team
+  deadlocks. If role X publishes T and role Y subscribes T, then Y must
+  NOT publish any topic X subscribes to.
 - `name` is short kebab-case, unique within team.
 - emoji is a single grapheme.
 - recommended_model is a REAL id. Valid: claude-haiku-4-5-20251001,
