@@ -81,6 +81,11 @@ service Atelier {
   // a concrete task for each, writes them into role yamls, returns the plan.
   rpc OrchestrateFeature(OrchestrateFeatureRequest) returns (OrchestrateFeatureResponse);
 
+  // Orchestrate an issue (test fail, security finding, deploy rollback): PM
+  // identifies which upstream roles must fix it, writes targeted fix-tasks
+  // into their yamls. Reuses AffectedRole shape.
+  rpc OrchestrateIssue(OrchestrateIssueRequest) returns (OrchestrateFeatureResponse);
+
   // Anthropic rate-limit snapshot (parsed from last response headers).
   // Empty/zeros if no API call has run yet.
   rpc GetRateLimit(Empty) returns (RateLimitInfo);
@@ -93,6 +98,18 @@ message RateLimitInfo {
   int64 tokens_in_remaining    = 4;
   int64 tokens_out_remaining   = 5;
   int64 last_updated_unix_ms   = 6;
+}
+
+message OrchestrateIssueRequest {
+  string workspace_id = 1;
+  // Event that flagged the issue (e.g. {from_role:"qa", topic:"tests.failing",
+  // summary:"ContactForm test missing reset"}). Daemon passes its own
+  // event_id alternatively via issue_event_id.
+  string from_role     = 2;
+  string topic         = 3;
+  string summary       = 4;
+  string provider      = 5;  // default anthropic
+  string model         = 6;  // default haiku
 }
 
 message OrchestrateFeatureRequest {

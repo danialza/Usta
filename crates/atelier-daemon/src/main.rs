@@ -19,6 +19,7 @@ use atelier_proto::v1::{
     ApproveToolRequest, ProviderInfo, ProviderList, PtyClientMsg, PublishEventRequest,
     RegenerateKickoffRequest, RegenerateKickoffResponse,
     OrchestrateFeatureRequest, OrchestrateFeatureResponse, AffectedRole as PbAffectedRole,
+    OrchestrateIssueRequest,
     RateLimitInfo,
     PtyServerMsg, Role as PbRole, RoleChatRequest, RoleList, ScaffoldProjectRequest,
     ScaffoldProjectResponse,
@@ -470,6 +471,78 @@ fn collect_changed_files(root: &std::path::Path) -> Vec<String> {
 /// (except the publisher), running each as a headless agentic turn. Headless
 /// turns may read but not write/shell (no human to approve), and their own
 /// handoffs are recorded WITHOUT re-dispatching, to prevent storms.
+/// Topics that signal a downstream role flagged a blocker — should auto-fire
+/// OrchestrateIssue so PM writes fix-tasks for upstream owners.
+fn is_blocker_topic(topic: &str) -> bool {
+    let t = topic.to_lowercase();
+    if t == "feature.requested" { return false; }  // feature handled separately
+    let suffixes = [".failing", ".failed", ".finding", ".rejected",
+                    ".rolled_back", ".broken", ".blocked"];
+    suffixes.iter().any(|s| t.ends_with(s))
+}
+
+/// Spawn an OrchestrateIssue call in the background so the caller's
+/// publish_event RPC returns immediately. PM writes fix-tasks into the
+/// affected roles' yamls; UI picks them up on next role-list refresh.
+fn spawn_auto_orchestrate_issue(
+    db: Arc<atelier_core::db::Db>,
+    providers: Arc<ProviderRegistry>,
+    lib: RoleLibrary,
+    workspace_id: String,
+    workspace_root: Option<std::path::PathBuf>,
+    from_role: String,
+    topic: String,
+    summary: String,
+) {
+    tokio::spawn(async move {
+        // Build team yaml blob (workspace roles only)
+        let mut team_yaml = String::new();
+        for r in lib.iter() {
+            if r.scope != atelier_roles::RoleScope::Workspace { continue; }
+            if let Ok(s) = serde_yaml::to_string(r) {
+                team_yaml.push_str(&format!("---\n{s}"));
+            }
+        }
+        // Event log
+        let dbq = db.clone();
+        let wsq = workspace_id.clone();
+        let events = match tokio::task::spawn_blocking(move || dbq.list_events(&wsq, &[], 0, 200)).await {
+            Ok(Ok(e)) => e, _ => return,
+        };
+        let event_log = events.iter()
+            .map(|e| format!("@{} -> {}: {}", e.from_role, e.topic, e.summary))
+            .collect::<Vec<_>>().join("\n");
+        // Default PM provider
+        let Some(provider) = providers.get("anthropic") else { return };
+        let pm = atelier_pm::Pm::new(provider, "claude-haiku-4-5-20251001".to_string());
+        match pm.orchestrate_issue(&team_yaml, &event_log, &from_role, &topic, &summary).await {
+            Ok((plan_summary, plan)) => {
+                tracing::info!(topic = %topic, roles = plan.len(),
+                    "auto-orchestrate-issue: {plan_summary}");
+                for (role_name, task) in &plan {
+                    if let Some(role) = lib.get(role_name) {
+                        let mut updated = role.clone();
+                        updated.kickoff = task.clone();
+                        if let Ok(yaml) = serde_yaml::to_string(&updated) {
+                            let _ = std::fs::write(&updated.source, yaml);
+                        }
+                    }
+                }
+                // Publish a meta event so UI can toast
+                let summary_msg = format!("Issue plan ready ({} role(s)): {}",
+                    plan.len(),
+                    plan.iter().map(|(n,_)| format!("@{n}")).collect::<Vec<_>>().join(", "));
+                let _ = db.insert_event(&workspace_id, "pm", "issue.plan.ready",
+                    &summary_msg, now_ms(), &[]);
+            }
+            Err(e) => {
+                tracing::warn!(topic = %topic, error = %e, "auto-orchestrate-issue failed");
+            }
+        }
+        let _ = workspace_root;
+    });
+}
+
 fn dispatch_event(
     db: Arc<Db>,
     providers: Arc<ProviderRegistry>,
@@ -2120,9 +2193,24 @@ impl Atelier for AtelierSvc {
                 None => (*self.roles).clone(),
             };
             dispatch_event(
-                self.db.clone(), self.providers.clone(), lib,
-                ws.clone(), ws_root, from.clone(), topic.clone(), summary.clone(),
+                self.db.clone(), self.providers.clone(), lib.clone(),
+                ws.clone(), ws_root.clone(), from.clone(), topic.clone(), summary.clone(),
             );
+            // Auto-orchestrate issue: if this is a blocker topic (e.g.
+            // tests.failing, security.finding), spawn PM to write fix-tasks
+            // for the upstream roles that own the broken thing.
+            if is_blocker_topic(&topic) {
+                spawn_auto_orchestrate_issue(
+                    self.db.clone(),
+                    self.providers.clone(),
+                    lib,
+                    ws.clone(),
+                    ws_root,
+                    from.clone(),
+                    topic.clone(),
+                    summary.clone(),
+                );
+            }
         }
 
         Ok(Response::new(PbEvent {
@@ -2187,6 +2275,60 @@ impl Atelier for AtelierSvc {
             tokens_in_remaining: s.tokens_in_remaining,
             tokens_out_remaining: s.tokens_out_remaining,
             last_updated_unix_ms: s.last_updated_ms,
+        }))
+    }
+
+    async fn orchestrate_issue(
+        &self,
+        req: Request<OrchestrateIssueRequest>,
+    ) -> Result<Response<OrchestrateFeatureResponse>, Status> {
+        let r = req.into_inner();
+        if r.topic.trim().is_empty() {
+            return Err(Status::invalid_argument("issue topic required"));
+        }
+        let db = self.db.clone();
+        let ws_id = r.workspace_id.clone();
+        let ws = tokio::task::spawn_blocking(move || db.list_workspaces())
+            .await.unwrap()
+            .map_err(|e| Status::internal(e.to_string()))?
+            .into_iter().find(|w| w.id == ws_id)
+            .ok_or_else(|| Status::not_found("workspace not found"))?;
+        let lib = self.roles.with_workspace(std::path::Path::new(&ws.path));
+        let mut team_yaml = String::new();
+        for r in lib.iter() {
+            if r.scope != atelier_roles::RoleScope::Workspace { continue; }
+            if let Ok(s) = serde_yaml::to_string(r) { team_yaml.push_str(&format!("---\n{s}")); }
+        }
+        let db2 = self.db.clone();
+        let ws_id2 = r.workspace_id.clone();
+        let events = tokio::task::spawn_blocking(move || db2.list_events(&ws_id2, &[], 0, 200))
+            .await.unwrap()
+            .map_err(|e| Status::internal(e.to_string()))?;
+        let event_log = events.iter()
+            .map(|e| format!("@{} -> {}: {}", e.from_role, e.topic, e.summary))
+            .collect::<Vec<_>>().join("\n");
+        let provider_name = if r.provider.is_empty() { "anthropic".into() } else { r.provider };
+        let model = if r.model.is_empty() { "claude-haiku-4-5-20251001".into() } else { r.model };
+        let provider = self.providers.get(&provider_name)
+            .ok_or_else(|| Status::not_found(format!("unknown provider '{provider_name}'")))?;
+        let pm = atelier_pm::Pm::new(provider, model);
+        let (summary, plan) = pm.orchestrate_issue(
+            &team_yaml, &event_log, &r.from_role, &r.topic, &r.summary,
+        ).await.map_err(|e| Status::internal(format!("pm orchestrate_issue: {e}")))?;
+        let mut applied: Vec<PbAffectedRole> = Vec::new();
+        for (role_name, task) in &plan {
+            if let Some(role) = lib.get(role_name) {
+                let mut updated = role.clone();
+                updated.kickoff = task.clone();
+                if let Ok(yaml) = serde_yaml::to_string(&updated) {
+                    let _ = std::fs::write(&updated.source, yaml);
+                }
+                applied.push(PbAffectedRole { role_name: role_name.clone(), task: task.clone() });
+            }
+        }
+        Ok(Response::new(OrchestrateFeatureResponse {
+            plan_summary: summary,
+            roles: applied,
         }))
     }
 

@@ -316,6 +316,71 @@ impl Pm {
     /// Orchestrate a new feature request. Given the full team + event log,
     /// return a plan: which roles need to act and the exact task each.
     /// Returns (plan_summary, vec![(role_name, task_prompt)]).
+    /// Orchestrate an issue: a downstream role (qa/security/devops) found a
+    /// problem. PM identifies which UPSTREAM role(s) own the broken thing
+    /// and writes a fix-task for each. Returns (summary, [(role, task)]).
+    pub async fn orchestrate_issue(
+        &self,
+        team_yaml: &str,
+        event_log: &str,
+        issue_from: &str,
+        issue_topic: &str,
+        issue_summary: &str,
+    ) -> anyhow::Result<(String, Vec<(String, String)>)> {
+        let sys = r#"You are the PM in Atelier. A downstream role (qa/security/devops/etc) published an ISSUE event — tests failing, security finding, deploy rolled back, etc. Identify which UPSTREAM role(s) own the broken code and write each a concrete fix-task.
+
+Reply ONLY with a single fenced JSON block:
+{
+  "plan_summary": "one sentence: who must fix what",
+  "affected_roles": [
+    {
+      "role_name": "backend",
+      "task": "Fix POST /api/contacts to call res.json(payload) before res.end(). Re-run npm test until tests.passing. Files: src/server/index.ts:42. Publish api.implemented when green."
+    }
+  ]
+}
+
+Rules:
+- Pick the role whose published topic matches what the issue references (e.g. tests.failing about ContactForm → frontend; security.finding about SQL injection → backend).
+- Skip roles unrelated to the issue.
+- Task is imperative, references real files/topics from team + event log, no placeholders.
+- 2-4 sentences. End each task with "Publish <topic> when fixed." pointing at the topic the role originally published (so re-publish reopens downstream).
+- Order by dependency.
+- Output ONLY the JSON.
+"#;
+        let user = format!(
+            "TEAM:\n{team_yaml}\n\nEVENT BUS:\n{events}\n\nISSUE EVENT:\nfrom: @{issue_from}\ntopic: {issue_topic}\nsummary: {issue_summary}\n\nReturn the fix plan.",
+            team_yaml = team_yaml,
+            events = if event_log.is_empty() { "(none)" } else { event_log },
+            issue_from = issue_from,
+            issue_topic = issue_topic,
+            issue_summary = issue_summary,
+        );
+        let req = ChatRequest {
+            model: self.model.clone(),
+            system: Some(sys.into()),
+            max_tokens: Some(2048),
+            messages: vec![ChatMessage { role: "user".into(), content: user }],
+        };
+        let mut stream = self.provider.chat(req).await?;
+        let mut full = String::new();
+        while let Some(item) = stream.next().await {
+            match item? {
+                ChatDelta::Text(t) => full.push_str(&t),
+                ChatDelta::Done { .. } => break,
+            }
+        }
+        let body = extract_json(&full).ok_or_else(|| anyhow::anyhow!("no JSON in PM response"))?;
+        #[derive(serde::Deserialize)]
+        struct Plan { plan_summary: String, affected_roles: Vec<RolePlan> }
+        #[derive(serde::Deserialize)]
+        struct RolePlan { role_name: String, task: String }
+        let plan: Plan = serde_json::from_str(body)
+            .map_err(|e| anyhow::anyhow!("parse issue plan: {e}\n--- raw ---\n{body}"))?;
+        let pairs = plan.affected_roles.into_iter().map(|r| (r.role_name, r.task)).collect();
+        Ok((plan.plan_summary, pairs))
+    }
+
     pub async fn orchestrate_feature(
         &self,
         team_yaml: &str,

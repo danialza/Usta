@@ -71,6 +71,16 @@ final class WorkspaceBus: ObservableObject {
 
     func markWorking(_ name: String) { working.insert(name) }
 
+    /// Topics that should reopen done roles: explicit feature request,
+    /// failing tests, security findings, deploy rollbacks, blocked items.
+    static func isBlockerTopic(_ topic: String) -> Bool {
+        if topic == "feature.requested" { return true }
+        let t = topic.lowercased()
+        let suffixes = [".failing", ".failed", ".finding", ".rejected",
+                        ".rolled_back", ".broken", ".blocked"]
+        return suffixes.contains(where: { t.hasSuffix($0) })
+    }
+
     /// Loose topic match — `tests.passing` satisfies `qa.tests.passing` and
     /// vice-versa. Tolerates PM-side prefix mistakes so orchestration
     /// doesn't deadlock on naming drift.
@@ -96,11 +106,12 @@ final class WorkspaceBus: ObservableObject {
     /// - .pending otherwise
     func state(of name: String) -> RoleState {
         guard let r = roles.first(where: { $0.name == name }) else { return .pending }
-        // "Done" must be relative to the most recent user feature request —
-        // if the user added a new feature AFTER this role last published,
-        // role needs to act again, so it isn't done anymore.
+        // "Done" must be relative to the most recent BLOCKER event —
+        // feature.requested, or any *.failing / *.finding / *.failed /
+        // *.rejected / *.rolled_back. If a downstream role flagged a
+        // problem after this role last published, role needs to act again.
         let latestFeatureMs = events
-            .filter { $0.topic == "feature.requested" }
+            .filter { Self.isBlockerTopic($0.topic) }
             .map { $0.createdUnixMs }
             .max() ?? 0
         let allTopics = Set(events.map { $0.topic })
@@ -233,7 +244,7 @@ final class WorkspaceBus: ObservableObject {
     func unpublishedFor(_ name: String) -> [String] {
         guard let r = roles.first(where: { $0.name == name }) else { return [] }
         let latestFeatureMs = events
-            .filter { $0.topic == "feature.requested" }
+            .filter { Self.isBlockerTopic($0.topic) }
             .map { $0.createdUnixMs }
             .max() ?? 0
         let mine = Set(events
