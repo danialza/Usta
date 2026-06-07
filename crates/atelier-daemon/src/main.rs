@@ -213,7 +213,35 @@ fn spawn_idle_watcher(
                 let tid = t.id.clone();
                 let tail = tokio::task::spawn_blocking(move || dbq.read_term_log(&tid, TAIL_BYTES))
                     .await.ok().and_then(|r| r.ok()).unwrap_or_default();
-                let tail_str = String::from_utf8_lossy(&tail).to_lowercase();
+                let tail_str = {
+                    let raw = String::from_utf8_lossy(&tail).to_lowercase();
+                    // Strip ANSI escape sequences (CSI / OSC / etc.) — they
+                    // pollute extracted topic tokens with color codes like
+                    // \x1b[38;5;153m so the pool filter fails to match yaml.
+                    let mut out = String::with_capacity(raw.len());
+                    let bytes = raw.as_bytes();
+                    let mut i = 0;
+                    while i < bytes.len() {
+                        if bytes[i] == 0x1b {
+                            i += 1;
+                            if i < bytes.len() && bytes[i] == b'[' {
+                                i += 1;
+                                while i < bytes.len() && !(bytes[i] as char).is_ascii_alphabetic() { i += 1; }
+                                if i < bytes.len() { i += 1; }
+                            } else if i < bytes.len() && bytes[i] == b']' {
+                                i += 1;
+                                while i < bytes.len() && bytes[i] != 0x07 && bytes[i] != 0x1b { i += 1; }
+                                if i < bytes.len() { i += 1; }
+                            } else if i < bytes.len() {
+                                i += 1;
+                            }
+                        } else {
+                            out.push(bytes[i] as char);
+                            i += 1;
+                        }
+                    }
+                    out
+                };
                 // Fast path: claude explicitly logged "Event <topic> published"
                 // — accept after just 8s quiet (claude already announced done).
                 let has_explicit_pub = tail_str.contains("event ")
@@ -224,28 +252,10 @@ fn spawn_idle_watcher(
                 let hit = has_explicit_pub
                     || strong_markers.iter().any(|n| lower.contains(n));
                 if !hit { continue; }
-                // Real-work check: skip if NO files changed in workspace
-                // since this terminal launched. Stops claude-said-done-but-
-                // wrote-nothing false positives (welcome banner, summary
-                // monologue, etc.).
-                let ws_root_check = {
-                    let dbq = db.clone();
-                    let wsq = t.workspace_id.clone();
-                    let workspaces = tokio::task::spawn_blocking(move || dbq.list_workspaces())
-                        .await.ok().and_then(|r| r.ok()).unwrap_or_default();
-                    workspaces.into_iter().find(|w| w.id == wsq).map(|w| std::path::PathBuf::from(w.path))
-                };
-                let recent_files = ws_root_check.as_ref()
-                    .map(|r| collect_changed_files_since(r, t.created_unix_ms))
-                    .unwrap_or_default();
-                if recent_files.is_empty() {
-                    tracing::info!(role = %t.role, term = %t.id,
-                                   "idle-watcher: keyword hit but no file changes since launch — skipping");
-                    continue;
-                }
-                tracing::info!(role = %t.role, files = recent_files.len(),
-                               "idle-watcher: candidate completion detected");
-                // Find role + its unpublished topics
+                // Resolve workspace + role first so we can compute blocker ts
+                // before the file-change check (files written in a prior
+                // terminal session still count as "fresh" relative to the
+                // latest blocker event).
                 let ws_root = {
                     let dbq = db.clone();
                     let wsq = t.workspace_id.clone();
@@ -271,6 +281,28 @@ fn spawn_idle_watcher(
                     .filter(|e| is_blocker_topic_or_feature(&e.topic))
                     .map(|e| e.created_unix_ms)
                     .max().unwrap_or(0);
+                // Skip terminals that haven't logged anything since the
+                // latest blocker — they're stale and can't have valid
+                // completion claims for this round.
+                if latest_blocker_ms > 0 && last_ms < latest_blocker_ms {
+                    continue;
+                }
+                // Real-work check: count files written after the LATEST
+                // blocker for this workspace (or terminal launch — whichever
+                // is later). Lets resumed sessions credit prior writes.
+                // Use blocker timestamp when present (work in prior terminal
+                // sessions still counts); fall back to terminal launch.
+                let since_ms = if latest_blocker_ms > 0 { latest_blocker_ms } else { t.created_unix_ms };
+                let recent_files = ws_root.as_ref()
+                    .map(|r| collect_changed_files_since(r, since_ms))
+                    .unwrap_or_default();
+                if recent_files.is_empty() {
+                    tracing::info!(role = %t.role, term = %t.id, since_ms,
+                                   "idle-watcher: keyword hit but no file changes since blocker — skipping");
+                    continue;
+                }
+                tracing::info!(role = %t.role, files = recent_files.len(),
+                               "idle-watcher: candidate completion detected");
                 let mine_topics: std::collections::HashSet<String> = mine_events.iter()
                     .filter(|e| e.from_role == role_def.name && e.created_unix_ms > latest_blocker_ms)
                     .map(|e| e.topic.clone()).collect();
