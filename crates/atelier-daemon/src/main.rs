@@ -845,14 +845,27 @@ fn render_role_brief(role: &RoleDef, workspace_path: &str) -> String {
     // Caveman terse-mode: every claude pane shares one team voice — short,
     // technical, no filler. Cuts tokens ~75% across the whole project.
     out.push_str(
-        "\n## Voice\n\
+        "\n## Voice (CAVEMAN MODE — ALWAYS ON)\n\
          Respond terse like a smart caveman. Drop articles (a/an/the), \
          filler (just/really/basically), pleasantries (sure/of course), \
          hedging. Fragments OK. Short synonyms (big not extensive, fix \
          not 'implement a solution for'). Technical terms exact. Code \
          blocks unchanged. Errors quoted exact. Pattern: '[thing] \
          [action] [reason]. [next step].' One paragraph max unless \
-         multi-step sequence where order matters.\n",
+         multi-step sequence where order matters. Stay caveman every \
+         response, every turn — no drift back to verbose mode.\n",
+    );
+    // Memory: before reasoning, recall prior decisions; after any \
+    // meaningful change, consolidate notes for future sessions.
+    out.push_str(
+        "\n## Memory (ALWAYS ON)\n\
+         On the FIRST turn of every session, silently consider what you \
+         previously decided / learned on this project (file layout, naming \
+         conventions, prior bug-fixes, design constraints). Pull from \
+         CLAUDE.md, .atelier/memory.md, README.md, recent git log. After \
+         shipping a non-trivial change, append a one-line note to \
+         .atelier/memory.md under a `## <role>` heading — date, what \
+         changed, why. Keep notes short; future-you will thank you.\n",
     );
     out
 }
@@ -1204,7 +1217,24 @@ impl Atelier for AtelierSvc {
                         let roleq = r.role.clone();
                         let prev = tokio::task::spawn_blocking(move || dbq.previous_terminal_id(&wsq, &roleq))
                             .await.ok().and_then(|x| x.ok()).flatten();
-                        if prev.is_some() { " --continue" } else { "" }
+                        // Only use --continue when BOTH our DB has a prior
+                        // term AND claude actually has a session file for
+                        // this cwd. Otherwise claude prints "No conversation
+                        // found to continue" and dies before any prompt.
+                        // Claude stores sessions at:
+                        //   ~/.claude/projects/<cwd-escaped>/<uuid>.jsonl
+                        // Path escape = replace each `/` with `-`.
+                        let has_session = if prev.is_some() {
+                            let encoded = workspace.path.replace('/', "-");
+                            let home = std::env::var("HOME").unwrap_or_default();
+                            let dir = std::path::PathBuf::from(home)
+                                .join(".claude").join("projects").join(&encoded);
+                            std::fs::read_dir(&dir).map(|rd|
+                                rd.filter_map(|e| e.ok()).any(|e|
+                                    e.path().extension().map(|x| x == "jsonl").unwrap_or(false))
+                            ).unwrap_or(false)
+                        } else { false };
+                        if has_session { " --continue" } else { "" }
                     };
                     effective_command = format!(
                         "unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN; {head}{cont} --append-system-prompt \"$(cat {rel})\" {tail}",
