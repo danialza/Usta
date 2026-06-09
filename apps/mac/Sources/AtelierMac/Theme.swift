@@ -1,17 +1,89 @@
 import SwiftUI
+import AppKit
 
-/// Atelier dark palette. Tracks the proposal mockup
-/// (Atelier-Mockups.html in the repo root).
+// MARK: - Appearance manager (system / dark / light)
+
+enum AppearanceMode: String, CaseIterable, Identifiable {
+    case system, dark, light
+    var id: String { rawValue }
+    var label: String {
+        switch self {
+        case .system: return "System"
+        case .dark:   return "Dark"
+        case .light:  return "Light"
+        }
+    }
+    var icon: String {
+        switch self {
+        case .system: return "circle.lefthalf.filled"
+        case .dark:   return "moon.fill"
+        case .light:  return "sun.max.fill"
+        }
+    }
+}
+
+@MainActor
+final class AppearanceManager: ObservableObject {
+    @AppStorage("atelierAppearance") var mode: AppearanceMode = .system {
+        didSet { objectWillChange.send() }
+    }
+    /// Map to SwiftUI ColorScheme override (nil = follow system).
+    var preferred: ColorScheme? {
+        switch mode {
+        case .system: return nil
+        case .dark:   return .dark
+        case .light:  return .light
+        }
+    }
+    static let shared = AppearanceManager()
+}
+
+// AppStorage doesn't natively know about our enum; route via raw String.
+@propertyWrapper
+struct AppStorageMode: DynamicProperty {
+    @AppStorage("atelierAppearance") private var raw: String = AppearanceMode.system.rawValue
+    var wrappedValue: AppearanceMode {
+        get { AppearanceMode(rawValue: raw) ?? .system }
+        nonmutating set { raw = newValue.rawValue }
+    }
+    var projectedValue: Binding<AppearanceMode> {
+        Binding(get: { wrappedValue }, set: { wrappedValue = $0 })
+    }
+}
+
+// MARK: - Dynamic colors (NSColor name+provider so light/dark resolve live)
+
+private func dyn(_ name: String, light: NSColor, dark: NSColor) -> Color {
+    Color(nsColor: NSColor(name: NSColor.Name(name)) { appearance in
+        let isDark = appearance.bestMatch(from: [.darkAqua, .vibrantDark, .accessibilityHighContrastDarkAqua, .accessibilityHighContrastVibrantDark]) != nil
+        return isDark ? dark : light
+    })
+}
+
+private func rgb(_ r: Int, _ g: Int, _ b: Int, _ a: CGFloat = 1) -> NSColor {
+    NSColor(srgbRed: CGFloat(r) / 255, green: CGFloat(g) / 255, blue: CGFloat(b) / 255, alpha: a)
+}
+
+/// Atelier palette — 2026 minimal. Soft warm-neutral grays, deep slate dark,
+/// off-white light. Pairs auto-switch with the system or user override.
 enum AtelierTheme {
-    static let bg          = Color(red: 0.102, green: 0.102, blue: 0.122) // #1a1a1f
-    static let panel       = Color(red: 0.082, green: 0.082, blue: 0.094) // #15151a
-    static let cell        = Color(red: 0.059, green: 0.059, blue: 0.071) // #0f0f12
-    static let border      = Color(red: 0.165, green: 0.165, blue: 0.188) // #2a2a30
-    static let sidebar     = Color(red: 0.102, green: 0.102, blue: 0.122) // #1a1a1f
-    static let dim         = Color(red: 0.533, green: 0.533, blue: 0.580) // #888
-    static let dim2        = Color(red: 0.400, green: 0.400, blue: 0.420) // #666
+    // Surface stack: bg < panel < cell. Border > separators above cells.
+    static let bg      = dyn("bg",      light: rgb(248, 249, 251), dark: rgb(13, 14, 18))
+    static let panel   = dyn("panel",   light: rgb(255, 255, 255), dark: rgb(20, 22, 28))
+    static let cell    = dyn("cell",    light: rgb(243, 245, 248), dark: rgb(26, 29, 36))
+    static let border  = dyn("border",  light: rgb(228, 231, 237), dark: rgb(42, 46, 56))
+    static let sidebar = dyn("sidebar", light: rgb(250, 251, 253), dark: rgb(16, 17, 22))
+    // Text dimming tiers.
+    static let dim     = dyn("dim",     light: rgb(107, 114, 128), dark: rgb(141, 146, 160))
+    static let dim2    = dyn("dim2",    light: rgb(156, 163, 175), dark: rgb(100, 105, 118))
 
-    /// Role badge palette. Mirrors the mockup's role-badge classes.
+    // Standard radii (use these everywhere instead of magic numbers).
+    static let radiusSmall:  CGFloat = 6
+    static let radiusMedium: CGFloat = 10
+    static let radiusLarge:  CGFloat = 14
+
+    /// Role badge palette. Same hues across themes; SwiftUI handles
+    /// contrast against panel/cell since these are saturated accents.
     static func roleColor(for name: String) -> Color {
         switch name.lowercased() {
         case "frontend", "front":              return Color(red: 0.055, green: 0.647, blue: 0.914) // #0ea5e9
@@ -25,7 +97,6 @@ enum AtelierTheme {
         case "ml", "ai":                       return Color(red: 0.643, green: 0.333, blue: 0.969) // #a455f7
         case "qa", "test", "qaengineer":       return Color(red: 0.090, green: 0.518, blue: 0.620) // #176c9e
         default:
-            // Stable hash → pastel
             var h: UInt32 = 5381
             for b in name.utf8 { h = (h << 5).addingReportingOverflow(h).0.addingReportingOverflow(UInt32(b)).0 }
             let hue = Double(h % 360) / 360.0
@@ -47,5 +118,38 @@ enum AtelierTheme {
         case "qa", "test":    return "🧪"
         default:              return fallback.isEmpty ? "•" : fallback
         }
+    }
+}
+
+// MARK: - Theme toggle pill (header)
+
+/// 3-segment pill: System · Dark · Light. Lives in the workspace header.
+struct AppearanceToggle: View {
+    @ObservedObject var manager: AppearanceManager
+    var body: some View {
+        HStack(spacing: 0) {
+            ForEach(AppearanceMode.allCases) { m in
+                Button {
+                    manager.mode = m
+                } label: {
+                    Image(systemName: m.icon)
+                        .font(.system(size: 11, weight: .medium))
+                        .frame(width: 28, height: 22)
+                        .foregroundStyle(manager.mode == m ? Color.primary : AtelierTheme.dim)
+                        .background(
+                            manager.mode == m
+                                ? AtelierTheme.cell
+                                : Color.clear
+                        )
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                }
+                .buttonStyle(.plain)
+                .help(m.label)
+            }
+        }
+        .padding(2)
+        .background(AtelierTheme.panel)
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(AtelierTheme.border))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 }

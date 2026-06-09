@@ -4,12 +4,15 @@ import SwiftUI
 struct AtelierApp: App {
     @StateObject private var client = AtelierClientModel()
     @StateObject private var settings = AppSettings()
+    @StateObject private var appearance = AppearanceManager.shared
 
     var body: some Scene {
         WindowGroup("Atelier") {
             ContentView()
                 .environmentObject(client)
                 .environmentObject(settings)
+                .environmentObject(appearance)
+                .preferredColorScheme(appearance.preferred)
                 .frame(minWidth: 900, minHeight: 600)
                 .task {
                     client.applySocket(settings.socketPath)
