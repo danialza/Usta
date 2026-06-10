@@ -22,7 +22,7 @@ struct ContentView: View {
             }
         }
         .preferredColorScheme(.dark)
-        .background(UstaTheme.bg)
+        .background(UstaTheme.smoothBackground.ignoresSafeArea())
         .sheet(isPresented: $showNewProject) {
             NewProjectWizard(onOpened: { ws in selection = ws })
                 .environmentObject(client)
@@ -552,55 +552,24 @@ struct WorkspaceDetailView: View {
                 .menuIndicator(.hidden)
                 .fixedSize()
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(ws.name).font(.system(size: 16, weight: .semibold))
+                    Text(ws.name)
+                        .font(.system(size: 16, weight: .semibold))
+                        .lineLimit(1)
+                        .truncationMode(.tail)
                     Text(ws.path).font(.system(size: 11))
                         .foregroundStyle(UstaTheme.dim)
-                        .textSelection(.enabled).lineLimit(1)
+                        .textSelection(.enabled)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
                 }
-                Spacer()
-                modePicker
-                RateLimitChip(model: rate)
-                toolbarButton("Run App", systemImage: "play.rectangle.fill") {
-                    PreviewRunner.run(at: ws.path)
-                }
-                .help(PreviewRunner.describe(at: ws.path))
-                toolbarButton("Refresh", systemImage: "arrow.clockwise") {
-                    Task {
-                        roles = await client.listRoles(workspaceID: ws.id)
-                        bus.updateRoles(roles)
-                        bus.refreshNow(workspaceID: ws.id)
-                    }
-                }
-                toolbarButton(showActivity ? "Hide Activity" : "Activity",
-                              systemImage: "dot.radiowaves.left.and.right") {
-                    showActivity.toggle()
-                }
-                toolbarButton("Add Role", systemImage: "plus") {
-                    showAddRole = true
-                }
-                toolbarButton("Apply Team", systemImage: "person.3.sequence") {
-                    showApplyTeam = true
-                }
-                if !roles.isEmpty && mode == .assistants {
-                    toolbarButton(
-                        grillMoreLoading ? "Grilling…" : "Grill More",
-                        systemImage: grillMoreLoading ? "hourglass" : "questionmark.bubble"
-                    ) {
-                        if !grillMoreLoading { Task { await openGrillMore() } }
-                    }
-                }
-                if !roles.isEmpty && mode == .assistants {
-                    toolbarButton(
-                        startingTeam ? "Starting…" : "Start Team",
-                        systemImage: startingTeam ? "hourglass" : "play.fill"
-                    ) {
-                        if !startingTeam { Task { await startTeamSequentially() } }
-                    }
-                }
-                if mode == .terminals {
-                    toolbarButton("New Terminal", systemImage: "plus.rectangle.on.rectangle") {
-                        Task { await grid.newTerminal(workspaceID: ws.id, client: client) }
-                    }
+                .layoutPriority(0.5)
+                Spacer(minLength: 8)
+                // Responsive trailing toolbar: full labels → icon-only →
+                // ultra-compact (primary + overflow Menu).
+                ViewThatFits(in: .horizontal) {
+                    toolbarRow(compact: false, includeOverflow: false)
+                    toolbarRow(compact: true,  includeOverflow: false)
+                    toolbarRow(compact: true,  includeOverflow: true)
                 }
             }
             if !roles.isEmpty && mode == .assistants {
@@ -842,20 +811,111 @@ struct WorkspaceDetailView: View {
         }
     }
 
+    /// One adaptive layout — full labels, icon-only, or icon + overflow Menu.
+    @ViewBuilder
+    private func toolbarRow(compact: Bool, includeOverflow: Bool) -> some View {
+        HStack(spacing: 8) {
+            modePicker
+            RateLimitChip(model: rate)
+            tbBtn("Run App", "play.rectangle.fill", compact: compact) {
+                PreviewRunner.run(at: ws.path)
+            }
+            tbBtn("Refresh", "arrow.clockwise", compact: compact) {
+                Task {
+                    roles = await client.listRoles(workspaceID: ws.id)
+                    bus.updateRoles(roles)
+                    bus.refreshNow(workspaceID: ws.id)
+                }
+            }
+            if !roles.isEmpty && mode == .assistants {
+                tbBtn(startingTeam ? "Starting…" : "Start Team",
+                      startingTeam ? "hourglass" : "play.fill",
+                      compact: compact) {
+                    if !startingTeam { Task { await startTeamSequentially() } }
+                }
+            }
+            if includeOverflow {
+                Menu {
+                    Button(showActivity ? "Hide Activity" : "Activity") { showActivity.toggle() }
+                    Button("Add Role") { showAddRole = true }
+                    Button("Apply Team") { showApplyTeam = true }
+                    if !roles.isEmpty && mode == .assistants {
+                        Button(grillMoreLoading ? "Grilling…" : "Grill More") {
+                            if !grillMoreLoading { Task { await openGrillMore() } }
+                        }
+                    }
+                    if mode == .terminals {
+                        Button("New Terminal") {
+                            Task { await grid.newTerminal(workspaceID: ws.id, client: client) }
+                        }
+                    }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                        .font(.caption.weight(.medium))
+                        .frame(width: 30, height: 24)
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                .help("More")
+            } else {
+                tbBtn(showActivity ? "Hide Activity" : "Activity",
+                      "dot.radiowaves.left.and.right", compact: compact) {
+                    showActivity.toggle()
+                }
+                tbBtn("Add Role", "plus", compact: compact) { showAddRole = true }
+                tbBtn("Apply Team", "person.3.sequence", compact: compact) { showApplyTeam = true }
+                if !roles.isEmpty && mode == .assistants {
+                    tbBtn(grillMoreLoading ? "Grilling…" : "Grill More",
+                          grillMoreLoading ? "hourglass" : "questionmark.bubble",
+                          compact: compact) {
+                        if !grillMoreLoading { Task { await openGrillMore() } }
+                    }
+                }
+                if mode == .terminals {
+                    tbBtn("New Terminal", "plus.rectangle.on.rectangle", compact: compact) {
+                        Task { await grid.newTerminal(workspaceID: ws.id, client: client) }
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func tbBtn(_ title: String, _ icon: String, compact: Bool, action: @escaping () -> Void) -> some View {
+        if compact { toolbarIcon(title, systemImage: icon, action: action) }
+        else       { toolbarButton(title, systemImage: icon, action: action) }
+    }
+
     private func toolbarButton(_ title: String, systemImage: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             HStack(spacing: 6) {
                 Image(systemName: systemImage)
-                Text(title)
+                Text(title).lineLimit(1)
             }
             .font(.caption.weight(.medium))
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
             .background(UstaTheme.panel)
-            .overlay(RoundedRectangle(cornerRadius: 6).stroke(UstaTheme.border))
-            .clipShape(RoundedRectangle(cornerRadius: 6))
+            .overlay(RoundedRectangle(cornerRadius: UstaTheme.radiusSmall).stroke(UstaTheme.border))
+            .clipShape(RoundedRectangle(cornerRadius: UstaTheme.radiusSmall))
         }
         .buttonStyle(.plain)
+        .fixedSize()
+        .help(title)
+    }
+
+    /// Icon-only variant — used when the window is too narrow for labels.
+    private func toolbarIcon(_ title: String, systemImage: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .font(.caption.weight(.medium))
+                .frame(width: 30, height: 24)
+                .background(UstaTheme.panel)
+                .overlay(RoundedRectangle(cornerRadius: UstaTheme.radiusSmall).stroke(UstaTheme.border))
+                .clipShape(RoundedRectangle(cornerRadius: UstaTheme.radiusSmall))
+        }
+        .buttonStyle(.plain)
+        .help(title)
     }
 
     private var empty: some View {

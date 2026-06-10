@@ -70,4 +70,17 @@ enum UstaTheme {
         startPoint: .leading,
         endPoint: .trailing
     )
+
+    /// Very subtle vertical gradient for the root canvas. Two stops only
+    /// (cheap to render), top a touch warmer toward purple, bottom the
+    /// deep navy. Adds depth without GPU cost.
+    static let smoothBackground = LinearGradient(
+        stops: [
+            .init(color: Color(red: 0.039, green: 0.043, blue: 0.094), location: 0.0),  // #0a0b18
+            .init(color: bg,                                            location: 0.55), // #050810
+            .init(color: Color(red: 0.027, green: 0.020, blue: 0.063), location: 1.0),  // #07051030 nudge toward purple
+        ],
+        startPoint: .top,
+        endPoint: .bottom
+    )
 }
