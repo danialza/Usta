@@ -48,7 +48,7 @@ struct ContentView: View {
         HStack(spacing: 8) {
             Image(systemName: "rectangle.3.group.bubble")
                 .foregroundStyle(.tint)
-            Text("Atelier").font(.headline)
+            Text("Usta").font(.headline)
             Spacer()
             Circle()
                 .fill(client.connected ? Color.green : Color.red)

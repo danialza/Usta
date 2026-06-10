@@ -1,0 +1,17 @@
+<svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Usta">
+  <!-- Outer hexagon (the workshop) -->
+  <path d="M32 4 L56 18 L56 46 L32 60 L8 46 L8 18 Z"
+        fill="none" stroke="url(#stroke)" stroke-width="3"
+        stroke-linejoin="round"/>
+  <!-- Three inner cells — three masters at work -->
+  <path d="M32 14 L40 19 L40 27 L32 32 L24 27 L24 19 Z" fill="#fbbf24"/>
+  <path d="M20 34 L28 39 L28 47 L20 52 L12 47 L12 39 Z" fill="#22d3ee"/>
+  <path d="M44 34 L52 39 L52 47 L44 52 L36 47 L36 39 Z" fill="#b794f4"/>
+  <defs>
+    <linearGradient id="stroke" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%"   stop-color="#fbbf24"/>
+      <stop offset="50%"  stop-color="#22d3ee"/>
+      <stop offset="100%" stop-color="#b794f4"/>
+    </linearGradient>
+  </defs>
+</svg>

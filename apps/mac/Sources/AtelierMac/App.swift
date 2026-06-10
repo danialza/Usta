@@ -6,7 +6,7 @@ struct AtelierApp: App {
     @StateObject private var settings = AppSettings()
 
     var body: some Scene {
-        WindowGroup("Atelier") {
+        WindowGroup("Usta") {
             ContentView()
                 .environmentObject(client)
                 .environmentObject(settings)

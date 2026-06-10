@@ -54,8 +54,8 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
   "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <key>CFBundleName</key>                    <string>Atelier</string>
-    <key>CFBundleDisplayName</key>             <string>Atelier</string>
+    <key>CFBundleName</key>                    <string>Usta</string>
+    <key>CFBundleDisplayName</key>             <string>Usta</string>
     <key>CFBundleIdentifier</key>              <string>dev.atelier.Atelier</string>
     <key>CFBundleVersion</key>                 <string>0.1.0</string>
     <key>CFBundleShortVersionString</key>      <string>0.1.0</string>
@@ -64,7 +64,7 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
     <key>LSMinimumSystemVersion</key>          <string>15.0</string>
     <key>NSHighResolutionCapable</key>         <true/>
     <key>NSPrincipalClass</key>                <string>NSApplication</string>
-    <key>NSAppleEventsUsageDescription</key>   <string>Atelier coordinates terminals and agents on your behalf.</string>
+    <key>NSAppleEventsUsageDescription</key>   <string>Usta coordinates terminals and agents on your behalf.</string>
 </dict>
 </plist>
 PLIST
