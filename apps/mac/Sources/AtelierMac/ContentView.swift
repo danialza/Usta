@@ -21,24 +21,7 @@ struct ContentView: View {
                 NavigationSplitView { sidebar } detail: { detail }
             }
         }
-        .background(
-            ZStack {
-                AtelierTheme.bg
-                if AppearanceManager.shared.isGlossy {
-                    // Apple-gloss base: pastel gradient washes behind the
-                    // frosted panels so the materials have hues to refract.
-                    LinearGradient(
-                        colors: [
-                            Color(red: 0.91, green: 0.95, blue: 1.00),
-                            Color(red: 0.98, green: 0.93, blue: 0.99),
-                            Color(red: 1.00, green: 0.96, blue: 0.92),
-                        ],
-                        startPoint: .topLeading, endPoint: .bottomTrailing
-                    ).opacity(0.55)
-                }
-            }
-            .ignoresSafeArea()
-        )
+        .background(AtelierTheme.bg.ignoresSafeArea())
         .sheet(isPresented: $showNewProject) {
             NewProjectWizard(onOpened: { ws in selection = ws })
                 .environmentObject(client)
