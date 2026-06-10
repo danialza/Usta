@@ -30,149 +30,6 @@ final class WorkspaceBus: ObservableObject {
     /// Have we asked for notification permission?
     private var notifAuthRequested = false
 
-    // MARK: Precomputed snapshot caches (invalidated by refresh / mutations)
-
-    /// Generation tag — bumped when events/roles/working change. Cache key.
-    private var snapGen: UInt64 = 0
-    private var cachedSnapGen: UInt64 = .max
-    private var cachedStates: [String: RoleState] = [:]
-    private var cachedReadyNow: [String] = []
-    private var cachedBottleneck: (name: String, dependents: Int, cycle: Bool)? = nil
-    private var cachedOrderedNames: [String] = []
-    private var cachedUnpub: [String: [String]] = [:]
-    private var cachedMissing: [String: [(topic: String, from: String)]] = [:]
-    private var cachedLatestBlockerMs: Int64 = 0
-    private var cachedAllPublishedTopics: Set<String> = []
-    private var cachedPubsByRole: [String: [String]] = [:]
-
-    /// Force snapshot rebuild on next access. Call after events/roles/working
-    /// mutate.
-    private func invalidateSnapshot() { snapGen &+= 1 }
-
-    /// Build the precomputed snapshot if events/roles changed since last
-    /// build. O(events + roles²) once per change, then O(1) lookups.
-    private func ensureSnapshot() {
-        if cachedSnapGen == snapGen { return }
-        cachedSnapGen = snapGen
-
-        cachedLatestBlockerMs = events
-            .filter { Self.isBlockerTopic($0.topic) }
-            .map { $0.createdUnixMs }.max() ?? 0
-        cachedAllPublishedTopics = Set(events.map { $0.topic })
-
-        // Per-role mine-recent topic set (events after blocker, fromRole match)
-        var mineRecentByRole: [String: Set<String>] = [:]
-        for r in roles { mineRecentByRole[r.name] = [] }
-        for ev in events where ev.createdUnixMs > cachedLatestBlockerMs {
-            mineRecentByRole[ev.fromRole, default: []].insert(ev.topic)
-        }
-
-        cachedPubsByRole = [:]
-        for r in roles { cachedPubsByRole[r.name] = r.handoffPublishes }
-
-        // States
-        cachedStates = [:]
-        for r in roles {
-            cachedStates[r.name] = computeState(role: r, mineRecent: mineRecentByRole[r.name] ?? [])
-        }
-        // readyNow
-        cachedReadyNow = roles
-            .filter { cachedStates[$0.name] == .ready }
-            .map { $0.name }
-        // unpublished per role
-        cachedUnpub = [:]
-        for r in roles {
-            let mine = mineRecentByRole[r.name] ?? []
-            cachedUnpub[r.name] = r.handoffPublishes.filter { topic in
-                !Self.topicMatches(topic, in: mine)
-            }
-        }
-        // missing per role (lazy producer map)
-        var topicToProducer: [String: String] = [:]
-        for r in roles {
-            for p in r.handoffPublishes where topicToProducer[p] == nil {
-                topicToProducer[p] = r.name
-            }
-        }
-        cachedMissing = [:]
-        for r in roles {
-            let unmet = r.handoffSubscribes
-                .filter { !Self.topicMatches($0, in: cachedAllPublishedTopics) }
-            cachedMissing[r.name] = unmet.map { topic in
-                let prod = topicToProducer[topic]
-                    ?? roles.first(where: { rr in
-                        rr.handoffPublishes.contains(where: { Self.topicMatches(topic, in: [$0]) })
-                    })?.name ?? "?"
-                return (topic, prod)
-            }
-        }
-        // Bottleneck + ordered names use already-cached data
-        cachedBottleneck = computeBottleneck()
-        cachedOrderedNames = computeOrderedNames()
-
-        // Sync sticky pin
-        if let bn = cachedBottleneck {
-            if pinnedBottleneckName != bn.name { pinnedBottleneckName = bn.name }
-        }
-    }
-
-    /// Cheap topo + priority sort, run once per snapshot. Mirrors
-    /// orderedRoles' algorithm but uses cached states.
-    private func computeOrderedNames() -> [String] {
-        var producers: [String: Set<String>] = [:]
-        for r in roles { for t in r.handoffPublishes { producers[t, default: []].insert(r.name) } }
-        var tier: [String: Int] = [:]
-        var remaining = roles
-        var t = 1
-        while !remaining.isEmpty {
-            let ready = remaining.filter { r in
-                r.handoffSubscribes.allSatisfy { topic in
-                    (producers[topic] ?? []).allSatisfy { p in p == r.name || tier[p] != nil }
-                }
-            }
-            if ready.isEmpty { for r in remaining { tier[r.name] = t }; break }
-            for r in ready { tier[r.name] = t }
-            let done = Set(ready.map { $0.name })
-            remaining.removeAll { done.contains($0.name) }
-            t += 1
-        }
-        // priority(of:) reads cachedStates which is already populated.
-        return roles.sorted { a, b in
-            let pa = priorityFromCache(a.name), pb = priorityFromCache(b.name)
-            if pa != pb { return pa < pb }
-            let ta = tier[a.name] ?? 99, tb = tier[b.name] ?? 99
-            if ta != tb { return ta < tb }
-            return a.name < b.name
-        }.map { $0.name }
-    }
-
-    /// Same as priority(of:) but skips ensureSnapshot (called during build).
-    private func priorityFromCache(_ name: String) -> Int {
-        let s = cachedStates[name] ?? .pending
-        let isOrch = orchestrationOrder.contains(name)
-        switch s {
-        case .working: return isOrch ? 0 : 1
-        case .ready:   return isOrch ? 2 : 3
-        case .pending:
-            if name == pinnedBottleneckName { return 2 }
-            return isOrch ? 4 : 6
-        case .done: return 7
-        }
-    }
-
-    /// Internal state computation — uses precomputed mineRecent set.
-    private func computeState(role r: Atelier_V1_Role, mineRecent: Set<String>) -> RoleState {
-        let pubs = r.handoffPublishes
-        let subs = r.handoffSubscribes
-        let pubsDone = !pubs.isEmpty && pubs.contains { Self.topicMatches($0, in: mineRecent) }
-        if pubsDone { return .done }
-        if working.contains(r.name) { return .working }
-        let subsMet = subs.isEmpty || subs.allSatisfy {
-            Self.topicMatches($0, in: cachedAllPublishedTopics)
-        }
-        return subsMet ? .ready : .pending
-    }
-
     struct ToastItem: Identifiable, Equatable {
         let id = UUID()
         let kind: Kind
@@ -212,8 +69,7 @@ final class WorkspaceBus: ObservableObject {
     /// once the role becomes .done.
     @Published var working: Set<String> = []
 
-    func markWorking(_ name: String) { working.insert(name); invalidateSnapshot() }
-    func unmarkWorking(_ name: String) { working.remove(name); invalidateSnapshot() }
+    func markWorking(_ name: String) { working.insert(name) }
 
     /// Topics that should reopen done roles: explicit feature request,
     /// failing tests, security findings, deploy rollbacks, blocked items.
@@ -249,14 +105,11 @@ final class WorkspaceBus: ObservableObject {
     /// - .ready if every subscribed topic has been published by SOMEONE
     /// - .pending otherwise
     func state(of name: String) -> RoleState {
-        ensureSnapshot()
-        return cachedStates[name] ?? .pending
-    }
-
-    /// Legacy uncached implementation — keep as private for ensureSnapshot
-    /// fallback if a caller mutates `working` synchronously.
-    private func stateUncached(of name: String) -> RoleState {
         guard let r = roles.first(where: { $0.name == name }) else { return .pending }
+        // "Done" must be relative to the most recent BLOCKER event —
+        // feature.requested, or any *.failing / *.finding / *.failed /
+        // *.rejected / *.rolled_back. If a downstream role flagged a
+        // problem after this role last published, role needs to act again.
         let latestFeatureMs = events
             .filter { Self.isBlockerTopic($0.topic) }
             .map { $0.createdUnixMs }
@@ -322,18 +175,6 @@ final class WorkspaceBus: ObservableObject {
     /// Stable ordering for all role-list UI. Sorts by priority, tie-breaks
     /// by topological tier (upstream first), then alphabetic.
     func orderedRoles(_ all: [Atelier_V1_Role]) -> [Atelier_V1_Role] {
-        ensureSnapshot()
-        // Cached when input matches workspace roles (almost always).
-        if all.count == roles.count
-            && Set(all.map { $0.name }) == Set(roles.map { $0.name })
-            && !cachedOrderedNames.isEmpty {
-            let pos = Dictionary(uniqueKeysWithValues: cachedOrderedNames.enumerated().map { ($1, $0) })
-            return all.sorted { (pos[$0.name] ?? .max) < (pos[$1.name] ?? .max) }
-        }
-        return _orderedRolesUncached(all)
-    }
-
-    private func _orderedRolesUncached(_ all: [Atelier_V1_Role]) -> [Atelier_V1_Role] {
         // Cheap topo tier — same algo as AssistantsGrid stepFor but reusable.
         var producers: [String: Set<String>] = [:]
         for r in all { for t in r.handoffPublishes { producers[t, default: []].insert(r.name) } }
@@ -365,12 +206,6 @@ final class WorkspaceBus: ObservableObject {
     /// roles transitively wait on each pending role's outputs; pick the max.
     /// Used when the bus is deadlocked — UI tells user where to type.
     func bottleneck() -> (name: String, dependents: Int, cycle: Bool)? {
-        ensureSnapshot()
-        return cachedBottleneck
-    }
-
-    /// Heavy lifter — runs once per snapshot generation.
-    private func computeBottleneck() -> (name: String, dependents: Int, cycle: Bool)? {
         // First: if ANY role is ready (no missing upstream) but hasn't acted,
         // suggest that role instead of pretending there's a cycle. This is
         // the natural project starter — e.g. product-manager with no
@@ -486,13 +321,31 @@ final class WorkspaceBus: ObservableObject {
     /// republished SINCE the most recent feature.requested event). Used by
     /// "Mark done" to know what to backfill.
     func unpublishedFor(_ name: String) -> [String] {
-        ensureSnapshot()
-        return cachedUnpub[name] ?? []
+        guard let r = roles.first(where: { $0.name == name }) else { return [] }
+        let latestFeatureMs = events
+            .filter { Self.isBlockerTopic($0.topic) }
+            .map { $0.createdUnixMs }
+            .max() ?? 0
+        let mine = Set(events
+            .filter { $0.fromRole == name && $0.createdUnixMs > latestFeatureMs }
+            .map { $0.topic })
+        return r.handoffPublishes.filter { topic in
+            !Self.topicMatches(topic, in: mine)
+        }
     }
 
     func missingFor(_ name: String) -> [(topic: String, from: String)] {
-        ensureSnapshot()
-        return cachedMissing[name] ?? []
+        guard let r = roles.first(where: { $0.name == name }) else { return [] }
+        let published = Set(events.map { $0.topic })
+        return r.handoffSubscribes
+            .filter { !Self.topicMatches($0, in: published) }
+            .map { topic in
+                // Find producer with fuzzy match too.
+                let pub = roles.first(where: { r in
+                    r.handoffPublishes.contains(where: { Self.topicMatches(topic, in: [$0]) })
+                })?.name ?? "?"
+                return (topic, pub)
+            }
     }
 
     /// Roles currently ready to act (have all upstream events) but not done.
@@ -525,7 +378,6 @@ final class WorkspaceBus: ObservableObject {
     func start(workspaceID: String, client: AtelierClientModel, roles: [Atelier_V1_Role]) {
         self.client = client
         self.roles = roles
-        invalidateSnapshot()
         pollTask?.cancel()
         pollTask = Task { [weak self] in
             await self?.refresh(workspaceID: workspaceID)
@@ -539,7 +391,7 @@ final class WorkspaceBus: ObservableObject {
 
     func stop() { pollTask?.cancel(); pollTask = nil }
 
-    func updateRoles(_ rs: [Atelier_V1_Role]) { self.roles = rs; invalidateSnapshot() }
+    func updateRoles(_ rs: [Atelier_V1_Role]) { self.roles = rs }
 
     /// Trigger an immediate refresh outside the poll cadence (Refresh button).
     func refreshNow(workspaceID: String) {
@@ -577,7 +429,6 @@ final class WorkspaceBus: ObservableObject {
         let oldIds = Set(events.map { $0.id })
         let newIds = Set(fresh.map { $0.id }).subtracting(oldIds)
         events = fresh.sorted(by: { $0.id < $1.id })
-        invalidateSnapshot()
         // Recover orchestration order from the most recent kickoff.plan.ready
         // event so the bottleneck picker has a truth-source even when nobody
         // clicked OrchestrateFeature in this session (scaffold auto-fires it
