@@ -4,13 +4,16 @@ import SwiftUI
 struct AtelierApp: App {
     @StateObject private var client = AtelierClientModel()
     @StateObject private var settings = AppSettings()
+    @StateObject private var appearance = AppearanceManager.shared
 
     var body: some Scene {
         WindowGroup("Atelier") {
             ContentView()
                 .environmentObject(client)
                 .environmentObject(settings)
-                .preferredColorScheme(.dark)
+                .environmentObject(appearance)
+                .preferredColorScheme(appearance.preferred)
+                .id(appearance.mode)         // force redraw on toggle
                 .frame(minWidth: 900, minHeight: 600)
                 .task {
                     client.applySocket(settings.socketPath)
