@@ -74,35 +74,7 @@ struct AssistantsGrid: View {
         }()
         let steps = stepFor
         Group {
-            if shown.isEmpty {
-                empty
-            } else if shown.count == 1 {
-                AssistantPane(
-                    workspaceID: workspaceID,
-                    role: shown[0],
-                    collapsed: collapsed.contains(shown[0].name),
-                    onToggleCollapse: { toggle(shown[0].name) },
-                    // In single-pane mode the pane already fills available
-                    // space → "maximize" toggles back to All instead.
-                    isMaximized: true,
-                    onToggleMaximize: {
-                        maximized = nil
-                        onClearFocus?()
-                    },
-                    step: 1,
-                    stateColor: stateColor(bus.state(of: shown[0].name))
-                )
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(AtelierTheme.cell)
-                .clipShape(RoundedRectangle(cornerRadius: 10))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10)
-                        .stroke(AtelierTheme.roleColor(for: shown[0].name).opacity(0.35))
-                )
-                .padding(10)
-            } else {
-                grid(shown)
-            }
+            if shown.isEmpty { empty } else { grid(shown) }
         }
         .onChange(of: focus) { _, _ in reconcileMaximize() }
     }
@@ -146,8 +118,16 @@ struct AssistantsGrid: View {
                             role: role,
                             collapsed: collapsed.contains(role.name),
                             onToggleCollapse: { toggle(role.name) },
-                            isMaximized: maximized == role.name,
-                            onToggleMaximize: { toggleMax(role.name) },
+                            isMaximized: shown.count == 1 ? true : (maximized == role.name),
+                            onToggleMaximize: {
+                                if shown.count == 1 {
+                                    // Single pane (focused) → exit back to All.
+                                    maximized = nil
+                                    onClearFocus?()
+                                } else {
+                                    toggleMax(role.name)
+                                }
+                            },
                             step: displayStep[role.name],
                             stateColor: stateColor(bus.state(of: role.name))
                         )
@@ -161,7 +141,8 @@ struct AssistantsGrid: View {
                     }
                 }
                 .padding(10)
-                .animation(.easeInOut(duration: 0.35), value: ordered.map(\.name))
+                // No implicit animation here — pty render in each pane
+                // is GPU-heavy, animating positions stutters the whole grid.
             }
         }
     }
