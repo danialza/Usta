@@ -4,42 +4,51 @@ import AppKit
 // MARK: - Appearance manager (system / dark / light)
 
 enum AppearanceMode: String, CaseIterable, Identifiable {
-    case dark, light
+    case system, dark, light, gloss
     var id: String { rawValue }
     var label: String {
         switch self {
-        case .dark:  return "Dark"
-        case .light: return "Light"
+        case .system: return "System"
+        case .dark:   return "Dark"
+        case .light:  return "Light"
+        case .gloss:  return "Apple Gloss"
         }
     }
     var icon: String {
         switch self {
-        case .dark:  return "moon.fill"
-        case .light: return "sun.max.fill"
+        case .system: return "circle.lefthalf.filled"
+        case .dark:   return "moon.fill"
+        case .light:  return "sun.max.fill"
+        case .gloss:  return "sparkles"
         }
     }
 }
 
 @MainActor
 final class AppearanceManager: ObservableObject {
-    @AppStorage("atelierAppearance") var mode: AppearanceMode = .dark {
+    @AppStorage("atelierAppearance") var mode: AppearanceMode = .system {
         didSet { objectWillChange.send() }
     }
-    var preferred: ColorScheme {
+    /// Map to SwiftUI ColorScheme override (nil = follow system).
+    var preferred: ColorScheme? {
         switch mode {
-        case .dark:  return .dark
-        case .light: return .light
+        case .system: return nil
+        case .dark:   return .dark
+        case .light, .gloss: return .light    // Gloss = light base + materials
         }
     }
+    /// True when surfaces should use Apple-style frosted materials +
+    /// subtle sheen instead of flat colors.
+    var isGlossy: Bool { mode == .gloss }
     static let shared = AppearanceManager()
 }
 
 // AppStorage doesn't natively know about our enum; route via raw String.
 @propertyWrapper
 struct AppStorageMode: DynamicProperty {
-    @AppStorage("atelierAppearance") private var raw: String = AppearanceMode.dark.rawValue
+    @AppStorage("atelierAppearance") private var raw: String = AppearanceMode.system.rawValue
     var wrappedValue: AppearanceMode {
-        get { AppearanceMode(rawValue: raw) ?? .dark }
+        get { AppearanceMode(rawValue: raw) ?? .system }
         nonmutating set { raw = newValue.rawValue }
     }
     var projectedValue: Binding<AppearanceMode> {
@@ -114,6 +123,64 @@ enum AtelierTheme {
         case "qa", "test":    return "🧪"
         default:              return fallback.isEmpty ? "•" : fallback
         }
+    }
+}
+
+// MARK: - Apple Gloss surface modifier
+
+/// Wraps any view's background with a glassmorphic material + subtle
+/// top-edge highlight + soft inner glow. Apple Vision OS / iOS 26 style.
+/// No-op when gloss mode is off — caller passes the manager and decides.
+struct AppleGlossSurface: ViewModifier {
+    var cornerRadius: CGFloat = AtelierTheme.radiusMedium
+    var enabled: Bool = true
+    func body(content: Content) -> some View {
+        if enabled {
+            content
+                .background(
+                    ZStack {
+                        // Frosted layer
+                        RoundedRectangle(cornerRadius: cornerRadius)
+                            .fill(.ultraThinMaterial)
+                        // Subtle white sheen top-edge
+                        RoundedRectangle(cornerRadius: cornerRadius)
+                            .fill(LinearGradient(
+                                colors: [
+                                    Color.white.opacity(0.45),
+                                    Color.white.opacity(0.08),
+                                    Color.clear
+                                ],
+                                startPoint: .top,
+                                endPoint: .center
+                            ))
+                            .blendMode(.plusLighter)
+                            .opacity(0.6)
+                        // Faint inner border ring
+                        RoundedRectangle(cornerRadius: cornerRadius)
+                            .strokeBorder(
+                                LinearGradient(
+                                    colors: [
+                                        Color.white.opacity(0.55),
+                                        Color.white.opacity(0.10),
+                                    ],
+                                    startPoint: .top, endPoint: .bottom),
+                                lineWidth: 1
+                            )
+                    }
+                )
+                .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
+                .shadow(color: Color.black.opacity(0.08), radius: 12, x: 0, y: 4)
+        } else {
+            content
+        }
+    }
+}
+
+extension View {
+    /// Apply Apple-Gloss treatment when the appearance manager says gloss
+    /// mode is on. Otherwise leaves the view alone.
+    func appleGloss(_ enabled: Bool, radius: CGFloat = AtelierTheme.radiusMedium) -> some View {
+        modifier(AppleGlossSurface(cornerRadius: radius, enabled: enabled))
     }
 }
 
