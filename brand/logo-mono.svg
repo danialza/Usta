@@ -1,0 +1,10 @@
+<svg viewBox="0 0 256 256" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Usta">
+  <title>Usta</title>
+  <desc>Monochrome mark — three vertical agent panes joined by a single U base</desc>
+  <g fill="currentColor">
+    <path d="M 38 36 L 70 28 L 90 56 L 90 156 L 58 168 L 58 76 Z"/>
+    <path d="M 105 26 L 137 18 L 157 46 L 157 188 L 125 200 L 125 66 Z"/>
+    <path d="M 172 36 L 204 28 L 224 56 L 224 156 L 192 168 L 192 76 Z"/>
+    <path d="M 58 156 L 90 156 L 90 200 L 172 200 L 172 156 L 204 156 L 204 200 L 192 220 L 70 220 L 58 200 Z"/>
+  </g>
+</svg>

@@ -93,11 +93,11 @@ struct AssistantsGrid: View {
                     stateColor: stateColor(bus.state(of: shown[0].name))
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(AtelierTheme.cell)
+                .background(UstaTheme.cell)
                 .clipShape(RoundedRectangle(cornerRadius: 10))
                 .overlay(
                     RoundedRectangle(cornerRadius: 10)
-                        .stroke(AtelierTheme.roleColor(for: shown[0].name).opacity(0.35))
+                        .stroke(UstaTheme.roleColor(for: shown[0].name).opacity(0.35))
                 )
                 .padding(10)
             } else {
@@ -152,11 +152,11 @@ struct AssistantsGrid: View {
                             stateColor: stateColor(bus.state(of: role.name))
                         )
                         .frame(minHeight: collapsed.contains(role.name) ? 56 : 360)
-                        .background(AtelierTheme.cell)
+                        .background(UstaTheme.cell)
                         .clipShape(RoundedRectangle(cornerRadius: 10))
                         .overlay(
                             RoundedRectangle(cornerRadius: 10)
-                                .stroke(AtelierTheme.roleColor(for: role.name).opacity(0.35))
+                                .stroke(UstaTheme.roleColor(for: role.name).opacity(0.35))
                         )
                     }
                 }
@@ -186,10 +186,10 @@ struct AssistantsGrid: View {
     private var empty: some View {
         VStack(spacing: 12) {
             Image(systemName: "person.3.sequence").font(.system(size: 38))
-                .foregroundStyle(AtelierTheme.dim2)
-            Text("No assistants yet.").foregroundStyle(AtelierTheme.dim)
+                .foregroundStyle(UstaTheme.dim2)
+            Text("No assistants yet.").foregroundStyle(UstaTheme.dim)
             Text("Run Apply Team to let the PM build a project team.")
-                .font(.caption).foregroundStyle(AtelierTheme.dim2)
+                .font(.caption).foregroundStyle(UstaTheme.dim2)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }

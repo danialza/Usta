@@ -13,7 +13,7 @@ final class RateLimitModel: ObservableObject {
 
     private var pollTask: Task<Void, Never>? = nil
 
-    func start(client: AtelierClientModel, onCap: @escaping (String) -> Void) {
+    func start(client: UstaClientModel, onCap: @escaping (String) -> Void) {
         pollTask?.cancel()
         pollTask = Task { [weak self] in
             while !Task.isCancelled {

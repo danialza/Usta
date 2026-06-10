@@ -7,7 +7,7 @@ final class TerminalGridModel: ObservableObject {
     @Published var sessions: [TerminalSession] = []
     private var loadedFor: String? = nil
 
-    func load(workspaceID: String, client: AtelierClientModel) async {
+    func load(workspaceID: String, client: UstaClientModel) async {
         if loadedFor == workspaceID && !sessions.isEmpty { return }
         loadedFor = workspaceID
         sessions.removeAll()
@@ -23,12 +23,12 @@ final class TerminalGridModel: ObservableObject {
         }
     }
 
-    func newTerminal(workspaceID: String, client: AtelierClientModel) async {
+    func newTerminal(workspaceID: String, client: UstaClientModel) async {
         guard let t = await client.createTerminal(workspaceID: workspaceID) else { return }
         attach(terminal: t, client: client)
     }
 
-    func closeTerminal(id: String, client: AtelierClientModel) async {
+    func closeTerminal(id: String, client: UstaClientModel) async {
         await client.closeTerminal(id: id)
         if let i = sessions.firstIndex(where: { $0.id == id }) {
             sessions[i].stop()
@@ -36,7 +36,7 @@ final class TerminalGridModel: ObservableObject {
         }
     }
 
-    private func attach(terminal: Atelier_V1_Terminal, client: AtelierClientModel) {
+    private func attach(terminal: Atelier_V1_Terminal, client: UstaClientModel) {
         let session = TerminalSession(
             id: terminal.id,
             title: "\(terminal.shell) — \(URL(fileURLWithPath: terminal.cwd).lastPathComponent)"

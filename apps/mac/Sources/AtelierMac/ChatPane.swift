@@ -3,17 +3,17 @@ import AtelierProto
 
 extension Notification.Name {
     /// Posted with `object: role.name` to ask a pane to send its kickoff.
-    static let atelierKickoffRole = Notification.Name("AtelierKickoffRole")
+    static let atelierKickoffRole = Notification.Name("UstaKickoffRole")
     /// Posted with `object: subscriberRoleName` when a new event lands
     /// whose topic that role subscribes to. Pane reacts by regenerating.
-    static let atelierEventForRole = Notification.Name("AtelierEventForRole")
+    static let atelierEventForRole = Notification.Name("UstaEventForRole")
     /// Posted with `object: roleName` by the bus when a role should have
     /// its kickoff auto-regenerated (becomes bottleneck or newly ready).
     /// Pane dedups: only runs if regeneratedKickoff is nil.
-    static let atelierAutoRegenerate = Notification.Name("AtelierAutoRegenerate")
+    static let atelierAutoRegenerate = Notification.Name("UstaAutoRegenerate")
     /// Posted with `object: roleName` after OrchestrateFeature wrote a new
     /// kickoff into the role's yaml. Pane should re-show banner.
-    static let atelierResetKickoff = Notification.Name("AtelierResetKickoff")
+    static let atelierResetKickoff = Notification.Name("UstaResetKickoff")
 }
 
 enum ChatItemKind { case user, assistant, tool, approval }
@@ -50,7 +50,7 @@ final class ChatPaneModel: ObservableObject {
     private var activeReplyID: UUID? = nil
     private(set) var historyLoaded = false
 
-    func resolveApproval(_ msgID: UUID, callID: String, allow: Bool, client: AtelierClientModel) {
+    func resolveApproval(_ msgID: UUID, callID: String, allow: Bool, client: UstaClientModel) {
         client.approveTool(callID: callID, allow: allow)
         if let i = messages.firstIndex(where: { $0.id == msgID }) {
             messages[i].resolved = true
@@ -58,7 +58,7 @@ final class ChatPaneModel: ObservableObject {
         }
     }
 
-    func loadHistory(client: AtelierClientModel) async {
+    func loadHistory(client: UstaClientModel) async {
         if historyLoaded { return }
         historyLoaded = true
         let items = await client.getHistory(workspaceID: workspaceID, agentRole: role.name)
@@ -75,7 +75,7 @@ final class ChatPaneModel: ObservableObject {
         messages = restored + messages
     }
 
-    func send(_ text: String, provider: String, model: String, client: AtelierClientModel) {
+    func send(_ text: String, provider: String, model: String, client: UstaClientModel) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         messages.append(ChatMessage(kind: .user, role: "user", emoji: "🧑", content: trimmed))
@@ -156,7 +156,7 @@ struct AssistantPane: View {
     var onToggleMaximize: (() -> Void)? = nil
     var step: Int? = nil
     var stateColor: Color? = nil
-    @EnvironmentObject var client: AtelierClientModel
+    @EnvironmentObject var client: UstaClientModel
     @EnvironmentObject var bus: WorkspaceBus
     @StateObject private var model: ChatPaneModel
 
@@ -215,13 +215,13 @@ struct AssistantPane: View {
             if !collapsed {
                 capabilities
                 kickoffBanner
-                Divider().overlay(AtelierTheme.border)
+                Divider().overlay(UstaTheme.border)
                 bodyContent
             }
         }
         .frame(maxWidth: .infinity, alignment: .topLeading)
         .clipped()
-        .background(AtelierTheme.cell)
+        .background(UstaTheme.cell)
         .onReceive(NotificationCenter.default.publisher(for: .atelierKickoffRole)) { note in
             guard let name = note.object as? String, name == role.name else { return }
             if kickoffSent || role.kickoff.isEmpty { return }
@@ -278,7 +278,7 @@ struct AssistantPane: View {
                 cliView
             } else {
                 transcript
-                Divider().overlay(AtelierTheme.border)
+                Divider().overlay(UstaTheme.border)
                 composer
             }
         }
@@ -288,7 +288,7 @@ struct AssistantPane: View {
     static func defaultCommand(provider: String, model: String) -> String {
         switch provider {
         case "anthropic":
-            // Pass --model so the picked Atelier model (haiku/sonnet/opus)
+            // Pass --model so the picked Usta model (haiku/sonnet/opus)
             // actually reaches the claude CLI session. Without it, claude
             // uses its own account default (usually sonnet).
             return model.isEmpty ? "claude" : "claude --model \(model)"
@@ -316,7 +316,7 @@ struct AssistantPane: View {
                         .foregroundStyle(.white)
                     Text(err)
                         .font(.system(size: 10, design: .monospaced))
-                        .foregroundStyle(AtelierTheme.dim)
+                        .foregroundStyle(UstaTheme.dim)
                         .multilineTextAlignment(.center)
                         .lineLimit(4)
                         .padding(.horizontal, 24)
@@ -337,7 +337,7 @@ struct AssistantPane: View {
                         .buttonStyle(.bordered)
                     }
                     Text("Hint: `\(cliCommand)` — ensure it's installed and in PATH.")
-                        .font(.caption2).foregroundStyle(AtelierTheme.dim)
+                        .font(.caption2).foregroundStyle(UstaTheme.dim)
                 }
                 .padding()
             } else {
@@ -345,7 +345,7 @@ struct AssistantPane: View {
                     ProgressView().scaleEffect(0.7)
                     Text(cliLaunching ? "starting \(cliCommand)…" : "preparing…")
                         .font(.system(size: 11, design: .monospaced))
-                        .foregroundStyle(AtelierTheme.dim)
+                        .foregroundStyle(UstaTheme.dim)
                     Button("Switch to chat") { backend = .chat }
                         .buttonStyle(.plain)
                         .font(.caption2)
@@ -431,13 +431,13 @@ struct AssistantPane: View {
                         .font(.system(size: 10, weight: .bold))
                         .foregroundStyle(.white)
                         .frame(width: 18, height: 18)
-                        .background(Circle().fill(stateColor ?? AtelierTheme.roleColor(for: role.name)))
+                        .background(Circle().fill(stateColor ?? UstaTheme.roleColor(for: role.name)))
                         .help("Step \(n) · \(stateLabel())")
                 }
                 let emoji = role.emoji.isEmpty
-                    ? AtelierTheme.roleEmoji(for: role.name, fallback: "•") : role.emoji
+                    ? UstaTheme.roleEmoji(for: role.name, fallback: "•") : role.emoji
                 Text(emoji).font(.title3)
-                Circle().fill(AtelierTheme.roleColor(for: role.name)).frame(width: 7, height: 7)
+                Circle().fill(UstaTheme.roleColor(for: role.name)).frame(width: 7, height: 7)
                 Text(role.name).font(.system(size: 13, weight: .semibold))
                     .lineLimit(1).truncationMode(.tail)
                 if model.isStreaming {
@@ -457,7 +457,7 @@ struct AssistantPane: View {
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    .foregroundStyle(AtelierTheme.dim)
+                    .foregroundStyle(UstaTheme.dim)
                     .help(isMaximized ? "Restore (show all)" : "Maximize (focus this pane)")
                 }
                 if let toggle = onToggleCollapse {
@@ -468,13 +468,13 @@ struct AssistantPane: View {
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    .foregroundStyle(AtelierTheme.dim)
+                    .foregroundStyle(UstaTheme.dim)
                     .help(collapsed ? "Expand body" : "Collapse to header")
                 }
             }
             if !role.description_p.isEmpty {
                 Text(role.description_p).font(.system(size: 10))
-                    .foregroundStyle(AtelierTheme.dim).lineLimit(1)
+                    .foregroundStyle(UstaTheme.dim).lineLimit(1)
             }
             skillIndicatorRow
             // Row 2: controls — picker, provider, model, relaunch, gear
@@ -535,14 +535,14 @@ struct AssistantPane: View {
                     Image(systemName: "arrow.clockwise").font(.caption)
                 }
                 .buttonStyle(.borderless)
-                .foregroundStyle(AtelierTheme.dim)
+                .foregroundStyle(UstaTheme.dim)
                 .help("Relaunch CLI")
             }
             Button { showRoleEditor = true } label: {
                 Image(systemName: "gearshape").font(.caption)
             }
             .buttonStyle(.borderless)
-            .foregroundStyle(AtelierTheme.dim)
+            .foregroundStyle(UstaTheme.dim)
             .help("Edit role")
         }
     }
@@ -574,10 +574,10 @@ struct AssistantPane: View {
                     tag("skill:\(s)", color: .purple, full: "Claude skill: \(s) — \(Self.skillDescribe(s))")
                 }
                 ForEach(pubs, id: \.self) { p in
-                    tag("↑\(p)", color: AtelierTheme.roleColor(for: role.name), full: "publishes \(p) — \(Self.topicDescribe(p))")
+                    tag("↑\(p)", color: UstaTheme.roleColor(for: role.name), full: "publishes \(p) — \(Self.topicDescribe(p))")
                 }
                 ForEach(subs, id: \.self) { s in
-                    tag("↓\(s)", color: AtelierTheme.dim, full: "subscribes \(s) — \(Self.topicDescribe(s))")
+                    tag("↓\(s)", color: UstaTheme.dim, full: "subscribes \(s) — \(Self.topicDescribe(s))")
                 }
             }
             .padding(.horizontal, 10)
@@ -619,7 +619,7 @@ struct AssistantPane: View {
             .background((active ? Color.green : Color.gray).opacity(0.10))
             .overlay(Capsule().stroke((active ? Color.green : Color.gray).opacity(0.35)))
             .clipShape(Capsule())
-            .foregroundStyle(active ? Color.green : AtelierTheme.dim)
+            .foregroundStyle(active ? Color.green : UstaTheme.dim)
         }
         .buttonStyle(.plain)
         .help(active
@@ -718,7 +718,7 @@ struct AssistantPane: View {
                 Image(systemName: "xmark").font(.caption2)
             }
             .buttonStyle(.borderless)
-            .foregroundStyle(AtelierTheme.dim)
+            .foregroundStyle(UstaTheme.dim)
         }
         .padding(8)
         .background(Color.orange.opacity(0.10))
@@ -746,7 +746,7 @@ struct AssistantPane: View {
                         .font(.system(size: 11, weight: .medium)).foregroundStyle(.tint)
                 } else {
                     Text("Wait for upstream events, or type follow-up in terminal below.")
-                        .font(.system(size: 10)).foregroundStyle(AtelierTheme.dim)
+                        .font(.system(size: 10)).foregroundStyle(UstaTheme.dim)
                 }
             }
             Spacer(minLength: 0)
@@ -776,11 +776,11 @@ struct AssistantPane: View {
                             .foregroundStyle(.gray)
                         Text("\(m.topic)").font(.system(size: 10, design: .monospaced))
                             .foregroundStyle(.secondary)
-                        Text("from @\(m.from)").font(.system(size: 10)).foregroundStyle(AtelierTheme.dim)
+                        Text("from @\(m.from)").font(.system(size: 10)).foregroundStyle(UstaTheme.dim)
                     }
                 }
                 if missing.count > 4 {
-                    Text("…+\(missing.count - 4) more").font(.system(size: 9)).foregroundStyle(AtelierTheme.dim)
+                    Text("…+\(missing.count - 4) more").font(.system(size: 9)).foregroundStyle(UstaTheme.dim)
                 }
             }
             Spacer(minLength: 0)
@@ -809,7 +809,7 @@ struct AssistantPane: View {
                 .disabled(regenInFlight)
                 .help("Ask PM to write the next task even though upstream isn't ready (best-effort).")
                 Text("or type freely in terminal ↓").font(.system(size: 9))
-                    .foregroundStyle(AtelierTheme.dim)
+                    .foregroundStyle(UstaTheme.dim)
             }
         }
         .padding(8)
@@ -991,7 +991,7 @@ struct AssistantPane: View {
                 Text("Approve \(msg.toolName)?").font(.system(size: 12, weight: .semibold))
             }
             Text(msg.toolInput).font(.system(size: 10, design: .monospaced))
-                .foregroundStyle(AtelierTheme.dim).lineLimit(3)
+                .foregroundStyle(UstaTheme.dim).lineLimit(3)
             if msg.resolved {
                 Text(msg.toolOutput == "approved" ? "✓ approved" : "✕ denied")
                     .font(.system(size: 11))
@@ -1019,7 +1019,7 @@ struct AssistantPane: View {
                     .font(.system(size: 10)).foregroundStyle(.orange)
                 Text(msg.toolName).font(.system(size: 11, weight: .semibold))
                 Text(msg.toolInput).font(.system(size: 10, design: .monospaced))
-                    .foregroundStyle(AtelierTheme.dim).lineLimit(1)
+                    .foregroundStyle(UstaTheme.dim).lineLimit(1)
                 if msg.pending { ProgressView().scaleEffect(0.4) }
             }
             if !msg.toolOutput.isEmpty {
@@ -1031,13 +1031,13 @@ struct AssistantPane: View {
                     } else {
                         Text(msg.toolOutput)
                             .font(.system(size: 10, design: .monospaced))
-                            .foregroundStyle(AtelierTheme.dim)
+                            .foregroundStyle(UstaTheme.dim)
                             .lineLimit(10)
                     }
                 }
                 .padding(6)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(AtelierTheme.cell)
+                .background(UstaTheme.cell)
                 .clipShape(RoundedRectangle(cornerRadius: 4))
             }
         }
@@ -1053,7 +1053,7 @@ struct AssistantPane: View {
             ForEach(Array(text.split(separator: "\n", omittingEmptySubsequences: false).prefix(20).enumerated()), id: \.offset) { _, raw in
                 let line = String(raw)
                 let color: Color = line.hasPrefix("- ") ? .red
-                    : line.hasPrefix("+ ") ? .green : AtelierTheme.dim
+                    : line.hasPrefix("+ ") ? .green : UstaTheme.dim
                 let bg: Color = line.hasPrefix("- ") ? Color.red.opacity(0.10)
                     : line.hasPrefix("+ ") ? Color.green.opacity(0.10) : .clear
                 Text(line.isEmpty ? " " : line)

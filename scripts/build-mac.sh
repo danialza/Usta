@@ -48,6 +48,9 @@ MCP_BIN="$ROOT/target/release/atelier-mcp"
 mkdir -p "$APP/Contents/Resources/roles"
 cp "$ROOT/roles/"*.yaml "$APP/Contents/Resources/roles/" 2>/dev/null || true
 
+# Bundle the Usta app icon.
+[ -f "$ROOT/brand/Usta.icns" ] && cp "$ROOT/brand/Usta.icns" "$APP/Contents/Resources/Usta.icns"
+
 cat > "$APP/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
@@ -60,6 +63,7 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
     <key>CFBundleVersion</key>                 <string>0.1.0</string>
     <key>CFBundleShortVersionString</key>      <string>0.1.0</string>
     <key>CFBundleExecutable</key>              <string>Atelier</string>
+    <key>CFBundleIconFile</key>                <string>Usta</string>
     <key>CFBundlePackageType</key>             <string>APPL</string>
     <key>LSMinimumSystemVersion</key>          <string>15.0</string>
     <key>NSHighResolutionCapable</key>         <true/>

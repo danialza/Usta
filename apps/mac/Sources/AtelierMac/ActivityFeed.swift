@@ -12,9 +12,9 @@ struct ActivityFeed: View {
     var body: some View {
         VStack(spacing: 0) {
             header
-            Divider().overlay(AtelierTheme.border)
+            Divider().overlay(UstaTheme.border)
             nextBanner
-            Divider().overlay(AtelierTheme.border)
+            Divider().overlay(UstaTheme.border)
             if bus.events.isEmpty {
                 emptyState
             } else {
@@ -28,7 +28,7 @@ struct ActivityFeed: View {
                 }
             }
         }
-        .background(AtelierTheme.panel)
+        .background(UstaTheme.panel)
     }
 
     private var header: some View {
@@ -36,7 +36,7 @@ struct ActivityFeed: View {
             Image(systemName: "dot.radiowaves.left.and.right").foregroundStyle(.tint)
             Text("Team Activity").font(.headline)
             Spacer()
-            Text("\(bus.events.count)").font(.caption2).foregroundStyle(AtelierTheme.dim)
+            Text("\(bus.events.count)").font(.caption2).foregroundStyle(UstaTheme.dim)
         }
         .padding(10)
     }
@@ -51,7 +51,7 @@ struct ActivityFeed: View {
                     .foregroundStyle(headerColor(ready: ready, working: working, allDone: allDone))
                 Text(headerTitle(ready: ready, working: working, allDone: allDone))
                     .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(AtelierTheme.dim)
+                    .foregroundStyle(UstaTheme.dim)
                 Spacer()
             }
             if let w = working {
@@ -72,7 +72,7 @@ struct ActivityFeed: View {
             }
         }
         .padding(.horizontal, 10).padding(.vertical, 8)
-        .background(AtelierTheme.cell.opacity(0.4))
+        .background(UstaTheme.cell.opacity(0.4))
     }
 
     private func headerIcon(ready: [String], working: String?, allDone: Bool) -> String {
@@ -99,7 +99,7 @@ struct ActivityFeed: View {
     private func bottleneckRow(_ bn: (name: String, dependents: Int, cycle: Bool)) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
-                Circle().fill(AtelierTheme.roleColor(for: bn.name)).frame(width: 6, height: 6)
+                Circle().fill(UstaTheme.roleColor(for: bn.name)).frame(width: 6, height: 6)
                 Text("@\(bn.name)").font(.system(size: 12, weight: .semibold))
                 Text("blocks \(bn.dependents)").font(.system(size: 9))
                     .padding(.horizontal, 4).padding(.vertical, 1)
@@ -133,7 +133,7 @@ struct ActivityFeed: View {
         let conflicts = bus.conflicts(with: name)
         return VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 6) {
-                Circle().fill(AtelierTheme.roleColor(for: name)).frame(width: 6, height: 6)
+                Circle().fill(UstaTheme.roleColor(for: name)).frame(width: 6, height: 6)
                 Text("@\(name)").font(.system(size: 12, weight: .medium))
                 Spacer()
                 Button {
@@ -164,10 +164,10 @@ struct ActivityFeed: View {
 
     private var emptyState: some View {
         VStack(spacing: 8) {
-            Image(systemName: "tray").font(.system(size: 28)).foregroundStyle(AtelierTheme.dim2)
-            Text("No handoffs yet.").font(.caption).foregroundStyle(AtelierTheme.dim)
+            Image(systemName: "tray").font(.system(size: 28)).foregroundStyle(UstaTheme.dim2)
+            Text("No handoffs yet.").font(.caption).foregroundStyle(UstaTheme.dim)
             Text("When an assistant publishes an event, it appears here and downstream roles auto-react.")
-                .font(.system(size: 10)).foregroundStyle(AtelierTheme.dim2)
+                .font(.system(size: 10)).foregroundStyle(UstaTheme.dim2)
                 .multilineTextAlignment(.center)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -179,13 +179,13 @@ struct ActivityFeed: View {
         let subs = bus.subscribers(of: e.topic).filter { $0 != e.fromRole }
         return VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
-                Circle().fill(AtelierTheme.roleColor(for: e.fromRole)).frame(width: 7, height: 7)
+                Circle().fill(UstaTheme.roleColor(for: e.fromRole)).frame(width: 7, height: 7)
                 Text("@\(e.fromRole)").font(.system(size: 11, weight: .semibold))
                 Text(e.topic).font(.system(size: 10))
                     .padding(.horizontal, 5).padding(.vertical, 1)
-                    .background(AtelierTheme.cell)
+                    .background(UstaTheme.cell)
                     .clipShape(Capsule())
-                    .foregroundStyle(AtelierTheme.dim)
+                    .foregroundStyle(UstaTheme.dim)
                 Spacer()
                 if isFresh {
                     Text("NEW")
@@ -215,7 +215,7 @@ struct ActivityFeed: View {
                     }
                     if e.filesChanged.count > 6 {
                         Text("…+\(e.filesChanged.count - 6) more")
-                            .font(.system(size: 9)).foregroundStyle(AtelierTheme.dim)
+                            .font(.system(size: 9)).foregroundStyle(UstaTheme.dim)
                     }
                 }
             }
@@ -235,10 +235,10 @@ struct ActivityFeed: View {
         }
         .padding(8)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(isFresh ? Color.orange.opacity(0.08) : AtelierTheme.cell)
+        .background(isFresh ? Color.orange.opacity(0.08) : UstaTheme.cell)
         .overlay(
             RoundedRectangle(cornerRadius: 6)
-                .stroke(isFresh ? Color.orange.opacity(0.6) : AtelierTheme.border)
+                .stroke(isFresh ? Color.orange.opacity(0.6) : UstaTheme.border)
         )
         .clipShape(RoundedRectangle(cornerRadius: 6))
     }

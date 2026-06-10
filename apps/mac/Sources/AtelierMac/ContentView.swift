@@ -3,7 +3,7 @@ import AppKit
 import AtelierProto
 
 struct ContentView: View {
-    @EnvironmentObject var client: AtelierClientModel
+    @EnvironmentObject var client: UstaClientModel
     @EnvironmentObject var settings: AppSettings
     @State private var selection: Atelier_V1_Workspace?
     @State private var showNewProject = false
@@ -22,7 +22,7 @@ struct ContentView: View {
             }
         }
         .preferredColorScheme(.dark)
-        .background(AtelierTheme.bg)
+        .background(UstaTheme.bg)
         .sheet(isPresented: $showNewProject) {
             NewProjectWizard(onOpened: { ws in selection = ws })
                 .environmentObject(client)
@@ -37,29 +37,28 @@ struct ContentView: View {
     private var sidebar: some View {
         VStack(alignment: .leading, spacing: 0) {
             statusHeader
-            Divider().overlay(AtelierTheme.border)
+            Divider().overlay(UstaTheme.border)
             sidebarBody
         }
-        .background(AtelierTheme.sidebar)
+        .background(UstaTheme.sidebar)
         .navigationSplitViewColumnWidth(min: 240, ideal: 260, max: 320)
     }
 
     private var statusHeader: some View {
         HStack(spacing: 8) {
-            Image(systemName: "rectangle.3.group.bubble")
-                .foregroundStyle(.tint)
+            UstaLogo(size: 22)
             Text("Usta").font(.headline)
             Spacer()
             Circle()
                 .fill(client.connected ? Color.green : Color.red)
                 .frame(width: 8, height: 8)
             Text(client.daemonVersion.map { "v\($0)" } ?? "—")
-                .font(.caption2).foregroundStyle(AtelierTheme.dim)
+                .font(.caption2).foregroundStyle(UstaTheme.dim)
             Button { showSettings = true } label: {
                 Image(systemName: "gearshape").font(.caption)
             }
             .buttonStyle(.plain)
-            .foregroundStyle(AtelierTheme.dim)
+            .foregroundStyle(UstaTheme.dim)
         }
         .padding(14)
     }
@@ -102,7 +101,7 @@ struct ContentView: View {
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .fixedSize()
-        .foregroundStyle(AtelierTheme.dim)
+        .foregroundStyle(UstaTheme.dim)
     }
 
     @ViewBuilder
@@ -114,7 +113,7 @@ struct ContentView: View {
             HStack {
                 Text(title.uppercased())
                     .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(AtelierTheme.dim2)
+                    .foregroundStyle(UstaTheme.dim2)
                     .tracking(1)
                 Spacer()
                 trailing
@@ -125,7 +124,7 @@ struct ContentView: View {
     }
 
     private func sidebarPlaceholder(_ s: String) -> some View {
-        Text(s).font(.caption).foregroundStyle(AtelierTheme.dim)
+        Text(s).font(.caption).foregroundStyle(UstaTheme.dim)
             .padding(.horizontal, 8).padding(.vertical, 4)
     }
 
@@ -133,20 +132,20 @@ struct ContentView: View {
     private var detail: some View {
         if let ws = selection {
             WorkspaceDetailView(ws: ws)
-                .background(AtelierTheme.bg)
+                .background(UstaTheme.bg)
         } else {
             VStack(spacing: 14) {
                 Image(systemName: "rectangle.3.group.bubble")
                     .font(.system(size: 50, weight: .light))
-                    .foregroundStyle(AtelierTheme.dim2)
+                    .foregroundStyle(UstaTheme.dim2)
                 Text("Pick a workspace from the sidebar.")
-                    .foregroundStyle(AtelierTheme.dim)
+                    .foregroundStyle(UstaTheme.dim)
                 if let err = client.lastError {
                     Text(err).font(.caption).foregroundStyle(.red).padding(.top, 8)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(AtelierTheme.bg)
+            .background(UstaTheme.bg)
         }
     }
 
@@ -176,7 +175,7 @@ struct WorkspaceRow: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(ws.name).font(.system(size: 13, weight: .medium))
                 Text(ws.path).font(.system(size: 11))
-                    .foregroundStyle(AtelierTheme.dim).lineLimit(1)
+                    .foregroundStyle(UstaTheme.dim).lineLimit(1)
             }
             Spacer(minLength: 0)
             if hover, let onRemove {
@@ -184,14 +183,14 @@ struct WorkspaceRow: View {
                     Image(systemName: "xmark.circle.fill").font(.caption)
                 }
                 .buttonStyle(.borderless)
-                .foregroundStyle(AtelierTheme.dim)
+                .foregroundStyle(UstaTheme.dim)
                 .help("Remove from list")
             }
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 6)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(selected ? AtelierTheme.border : Color.clear)
+        .background(selected ? UstaTheme.border : Color.clear)
         .clipShape(RoundedRectangle(cornerRadius: 6))
         .contentShape(Rectangle())
         .onTapGesture { onTap() }
@@ -234,14 +233,14 @@ struct WelcomeView: View {
     var body: some View {
         ZStack(alignment: .topTrailing) {
             LinearGradient(
-                colors: [Color(red: 0.12, green: 0.10, blue: 0.18), AtelierTheme.bg],
+                colors: [Color(red: 0.12, green: 0.10, blue: 0.18), UstaTheme.bg],
                 startPoint: .top, endPoint: .bottom
             )
             Button(action: onSettings) {
                 Image(systemName: "gearshape").font(.title3)
             }
             .buttonStyle(.plain)
-            .foregroundStyle(AtelierTheme.dim)
+            .foregroundStyle(UstaTheme.dim)
             .padding(20)
             VStack(spacing: 20) {
                 ZStack {
@@ -255,14 +254,14 @@ struct WelcomeView: View {
                         .font(.system(size: 36, weight: .light))
                         .foregroundStyle(.white)
                 }
-                Text("Welcome to Atelier").font(.system(size: 30, weight: .semibold))
+                Text("Welcome to Usta").font(.system(size: 30, weight: .semibold))
                 Text("Your AI engineering team, on your desktop")
-                    .foregroundStyle(AtelierTheme.dim)
+                    .foregroundStyle(UstaTheme.dim)
                 HStack(spacing: 18) {
                     welcomeCard(
                         icon: "folder.badge.plus",
                         title: "Open Existing Project",
-                        desc: "Point at a folder. Atelier analyzes the codebase and suggests a team of specialists tailored to your stack.",
+                        desc: "Point at a folder. Usta analyzes the codebase and suggests a team of specialists tailored to your stack.",
                         action: onOpen
                     )
                     welcomeCard(
@@ -286,16 +285,16 @@ struct WelcomeView: View {
                 Image(systemName: icon).font(.system(size: 28))
                     .foregroundStyle(.tint)
                 Text(title).font(.system(size: 16, weight: .semibold))
-                Text(desc).font(.system(size: 12)).foregroundStyle(AtelierTheme.dim)
+                Text(desc).font(.system(size: 12)).foregroundStyle(UstaTheme.dim)
                     .lineSpacing(2)
                 Spacer(minLength: 0)
             }
             .padding(20)
             .frame(maxWidth: .infinity, minHeight: 150, maxHeight: 180, alignment: .topLeading)
-            .background(AtelierTheme.panel)
+            .background(UstaTheme.panel)
             .overlay(
                 RoundedRectangle(cornerRadius: 12)
-                    .stroke(disabled ? AtelierTheme.border : Color.accentColor.opacity(0.6),
+                    .stroke(disabled ? UstaTheme.border : Color.accentColor.opacity(0.6),
                             lineWidth: disabled ? 1 : 1.2)
             )
             .clipShape(RoundedRectangle(cornerRadius: 12))
@@ -310,7 +309,7 @@ enum DetailMode { case assistants, terminals }
 
 struct WorkspaceDetailView: View {
     let ws: Atelier_V1_Workspace
-    @EnvironmentObject var client: AtelierClientModel
+    @EnvironmentObject var client: UstaClientModel
     @StateObject private var grid = TerminalGridModel()
     @State private var roles: [Atelier_V1_Role] = []
     @State private var selectedRole: Atelier_V1_Role? = nil   // focus a single assistant
@@ -337,28 +336,28 @@ struct WorkspaceDetailView: View {
         HStack(spacing: 0) {
             VStack(spacing: 0) {
                 header
-                Divider().overlay(AtelierTheme.border)
+                Divider().overlay(UstaTheme.border)
                 switch mode {
                 case .assistants:
                     AssistantsGrid(workspaceID: ws.id, roles: roles, focus: selectedRole?.name,
                                    onClearFocus: { selectedRole = nil })
                         .environmentObject(bus)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .background(AtelierTheme.bg)
+                        .background(UstaTheme.bg)
                 case .terminals:
                     if grid.sessions.isEmpty { empty } else { terminals }
                 }
             }
             .frame(maxWidth: .infinity)
             if showActivity {
-                Divider().overlay(AtelierTheme.border)
+                Divider().overlay(UstaTheme.border)
                 ActivityFeed(workspaceID: ws.id)
                     .environmentObject(bus)
                     .frame(width: 320)
             }
         }
         .environmentObject(bus)
-        .background(AtelierTheme.bg)
+        .background(UstaTheme.bg)
         .overlay(alignment: .topTrailing) {
             ToastStack().environmentObject(bus)
         }
@@ -426,19 +425,19 @@ struct WorkspaceDetailView: View {
                 Spacer()
                 Button("Close") { showGrillMore = false }.buttonStyle(.borderless)
             }.padding(14)
-            Divider().overlay(AtelierTheme.border)
+            Divider().overlay(UstaTheme.border)
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     Text("Answer what's relevant. Skip the rest. Your answers will be sent to PM as a refinement request — affected roles get fresh tasks.")
-                        .font(.callout).foregroundStyle(AtelierTheme.dim)
+                        .font(.callout).foregroundStyle(UstaTheme.dim)
                     ForEach(Array(grillMoreQs.enumerated()), id: \.offset) { idx, q in
                         VStack(alignment: .leading, spacing: 8) {
                             HStack(alignment: .top, spacing: 6) {
-                                Text("\(idx + 1).").font(.body.bold()).foregroundStyle(AtelierTheme.dim)
+                                Text("\(idx + 1).").font(.body.bold()).foregroundStyle(UstaTheme.dim)
                                 Text(q.question).font(.body.bold())
                             }
                             if !q.rationale.isEmpty {
-                                Text(q.rationale).font(.caption).foregroundStyle(AtelierTheme.dim)
+                                Text(q.rationale).font(.caption).foregroundStyle(UstaTheme.dim)
                             }
                             if !q.options.isEmpty {
                                 FlowLayout(spacing: 6) {
@@ -447,8 +446,8 @@ struct WorkspaceDetailView: View {
                                         Button { grillMoreAns[q.id] = selected ? "" : opt } label: {
                                             Text(opt).font(.caption)
                                                 .padding(.horizontal, 10).padding(.vertical, 4)
-                                                .background(selected ? Color.accentColor.opacity(0.25) : AtelierTheme.cell)
-                                                .overlay(RoundedRectangle(cornerRadius: 12).stroke(selected ? Color.accentColor : AtelierTheme.border))
+                                                .background(selected ? Color.accentColor.opacity(0.25) : UstaTheme.cell)
+                                                .overlay(RoundedRectangle(cornerRadius: 12).stroke(selected ? Color.accentColor : UstaTheme.border))
                                                 .clipShape(RoundedRectangle(cornerRadius: 12))
                                                 .foregroundStyle(.primary)
                                         }.buttonStyle(.plain)
@@ -461,18 +460,18 @@ struct WorkspaceDetailView: View {
                                             get: { grillMoreAns[q.id] ?? "" },
                                             set: { grillMoreAns[q.id] = $0 }))
                                     .textFieldStyle(.plain).font(.system(size: 12))
-                                    .padding(8).background(AtelierTheme.cell)
-                                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(AtelierTheme.border))
+                                    .padding(8).background(UstaTheme.cell)
+                                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(UstaTheme.border))
                             }
                         }
                         .padding(12).frame(maxWidth: .infinity, alignment: .leading)
-                        .background(AtelierTheme.cell.opacity(0.5))
-                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(AtelierTheme.border))
+                        .background(UstaTheme.cell.opacity(0.5))
+                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(UstaTheme.border))
                         .clipShape(RoundedRectangle(cornerRadius: 8))
                     }
                 }.padding(18)
             }
-            Divider().overlay(AtelierTheme.border)
+            Divider().overlay(UstaTheme.border)
             HStack {
                 Spacer()
                 Button {
@@ -483,7 +482,7 @@ struct WorkspaceDetailView: View {
             }.padding(14)
         }
         .frame(minWidth: 640, minHeight: 520)
-        .background(AtelierTheme.panel)
+        .background(UstaTheme.panel)
     }
 
     private func applyGrillMore() async {
@@ -555,7 +554,7 @@ struct WorkspaceDetailView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(ws.name).font(.system(size: 16, weight: .semibold))
                     Text(ws.path).font(.system(size: 11))
-                        .foregroundStyle(AtelierTheme.dim)
+                        .foregroundStyle(UstaTheme.dim)
                         .textSelection(.enabled).lineLimit(1)
                 }
                 Spacer()
@@ -624,11 +623,11 @@ struct WorkspaceDetailView: View {
                 HStack(spacing: 6) {
                     Image(systemName: "lightbulb").font(.system(size: 11))
                     Text("Add new feature or change…")
-                        .font(.system(size: 11)).foregroundStyle(AtelierTheme.dim)
+                        .font(.system(size: 11)).foregroundStyle(UstaTheme.dim)
                     Spacer()
                 }
                 .padding(.horizontal, 10).padding(.vertical, 6)
-                .background(AtelierTheme.cell.opacity(0.4))
+                .background(UstaTheme.cell.opacity(0.4))
                 .clipShape(RoundedRectangle(cornerRadius: 6))
             }
             .buttonStyle(.plain)
@@ -651,7 +650,7 @@ struct WorkspaceDetailView: View {
                 Button {
                     showNewFeature = false; newFeatureText = ""
                 } label: { Image(systemName: "xmark").font(.caption2) }
-                    .buttonStyle(.borderless).foregroundStyle(AtelierTheme.dim)
+                    .buttonStyle(.borderless).foregroundStyle(UstaTheme.dim)
             }
             .padding(.horizontal, 10).padding(.vertical, 6)
             .background(Color.yellow.opacity(0.08))
@@ -781,7 +780,7 @@ struct WorkspaceDetailView: View {
                 }
             }
             Text("\(done.count)/\(total) done")
-                .font(.system(size: 10)).foregroundStyle(AtelierTheme.dim)
+                .font(.system(size: 10)).foregroundStyle(UstaTheme.dim)
         }
         .padding(.horizontal, 12).padding(.vertical, 8)
         .background(color.opacity(0.10))
@@ -852,8 +851,8 @@ struct WorkspaceDetailView: View {
             .font(.caption.weight(.medium))
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
-            .background(AtelierTheme.panel)
-            .overlay(RoundedRectangle(cornerRadius: 6).stroke(AtelierTheme.border))
+            .background(UstaTheme.panel)
+            .overlay(RoundedRectangle(cornerRadius: 6).stroke(UstaTheme.border))
             .clipShape(RoundedRectangle(cornerRadius: 6))
         }
         .buttonStyle(.plain)
@@ -862,9 +861,9 @@ struct WorkspaceDetailView: View {
     private var empty: some View {
         VStack(spacing: 14) {
             Image(systemName: "terminal").font(.system(size: 38))
-                .foregroundStyle(AtelierTheme.dim2)
+                .foregroundStyle(UstaTheme.dim2)
             Text("No terminals open in this workspace.")
-                .foregroundStyle(AtelierTheme.dim)
+                .foregroundStyle(UstaTheme.dim)
             Button {
                 Task { await grid.newTerminal(workspaceID: ws.id, client: client) }
             } label: {
@@ -894,9 +893,9 @@ struct WorkspaceDetailView: View {
     private var applyTeamSheet: some View {
         VStack(spacing: 16) {
             Text("Apply Team").font(.title2.bold())
-            Text("Atelier will analyze \(ws.name) and write a custom team to .atelier/roles/.")
+            Text("Usta will analyze \(ws.name) and write a custom team to .atelier/roles/.")
                 .multilineTextAlignment(.center)
-                .foregroundStyle(AtelierTheme.dim)
+                .foregroundStyle(UstaTheme.dim)
             if let r = applyResult {
                 Text(r).font(.caption).foregroundStyle(.green)
             }
@@ -914,7 +913,7 @@ struct WorkspaceDetailView: View {
         }
         .padding(24)
         .frame(width: 420)
-        .background(AtelierTheme.panel)
+        .background(UstaTheme.panel)
     }
 
     private func runApplyTeam() async {
@@ -996,8 +995,8 @@ struct RoleChipAll: View {
         Button(action: onTap) {
             Text("All").font(.system(size: 11, weight: .medium))
                 .padding(.horizontal, 12).padding(.vertical, 5)
-                .background(selected ? Color.accentColor.opacity(0.3) : AtelierTheme.panel)
-                .overlay(Capsule().stroke(selected ? Color.accentColor : AtelierTheme.border,
+                .background(selected ? Color.accentColor.opacity(0.3) : UstaTheme.panel)
+                .overlay(Capsule().stroke(selected ? Color.accentColor : UstaTheme.border,
                                           lineWidth: selected ? 1.2 : 1))
                 .clipShape(Capsule())
         }
@@ -1016,14 +1015,14 @@ struct RoleChip: View {
         Button(action: onTap) {
             HStack(spacing: 6) {
                 Circle()
-                    .fill(AtelierTheme.roleColor(for: role.name))
+                    .fill(UstaTheme.roleColor(for: role.name))
                     .frame(width: 8, height: 8)
                     .opacity(working ? (pulse ? 0.3 : 1.0) : 1.0)
                     .scaleEffect(working ? (pulse ? 1.4 : 1.0) : 1.0)
                     .animation(working ? .easeInOut(duration: 0.65).repeatForever(autoreverses: true) : .default,
                                value: pulse)
                 let emoji = role.emoji.isEmpty
-                    ? AtelierTheme.roleEmoji(for: role.name, fallback: "•")
+                    ? UstaTheme.roleEmoji(for: role.name, fallback: "•")
                     : role.emoji
                 Text("\(emoji) \(role.name)")
                     .font(.system(size: 11, weight: .medium))
@@ -1035,11 +1034,11 @@ struct RoleChip: View {
             .onChange(of: working) { _, new in pulse = new }
             .padding(.horizontal, 10)
             .padding(.vertical, 5)
-            .background(selected ? AtelierTheme.roleColor(for: role.name).opacity(0.30)
-                                : AtelierTheme.panel)
+            .background(selected ? UstaTheme.roleColor(for: role.name).opacity(0.30)
+                                : UstaTheme.panel)
             .overlay(Capsule().stroke(
                 working ? Color.red
-                    : (selected ? AtelierTheme.roleColor(for: role.name) : AtelierTheme.border),
+                    : (selected ? UstaTheme.roleColor(for: role.name) : UstaTheme.border),
                 lineWidth: working ? 1.6 : (selected ? 1.2 : 1)
             ))
             .overlay(
@@ -1063,7 +1062,7 @@ struct TerminalCell: View {
             HStack(spacing: 8) {
                 roleBadge
                 Text(session.title)
-                    .font(.caption).foregroundStyle(AtelierTheme.dim).lineLimit(1)
+                    .font(.caption).foregroundStyle(UstaTheme.dim).lineLimit(1)
                 Spacer()
                 Circle()
                     .fill(session.alive ? Color.green : Color.gray)
@@ -1072,25 +1071,25 @@ struct TerminalCell: View {
                     Image(systemName: "xmark").font(.caption2)
                 }
                 .buttonStyle(.borderless)
-                .foregroundStyle(AtelierTheme.dim)
+                .foregroundStyle(UstaTheme.dim)
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
-            .background(AtelierTheme.panel)
-            Divider().overlay(AtelierTheme.border)
+            .background(UstaTheme.panel)
+            Divider().overlay(UstaTheme.border)
             PtyTerminalView(session: session)
                 .frame(minHeight: 220)
                 .clipped()
         }
-        .background(AtelierTheme.cell)
+        .background(UstaTheme.cell)
         .clipShape(RoundedRectangle(cornerRadius: 8))
-        .overlay(RoundedRectangle(cornerRadius: 8).stroke(AtelierTheme.border))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(UstaTheme.border))
     }
 
     private var roleBadge: some View {
         let name = session.roleName ?? "terminal"
-        let color = AtelierTheme.roleColor(for: name)
-        let emoji = AtelierTheme.roleEmoji(for: name, fallback: session.roleEmoji ?? "")
+        let color = UstaTheme.roleColor(for: name)
+        let emoji = UstaTheme.roleEmoji(for: name, fallback: session.roleEmoji ?? "")
         return HStack(spacing: 4) {
             Text(emoji)
             Text(name)

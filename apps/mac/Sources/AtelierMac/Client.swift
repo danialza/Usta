@@ -7,7 +7,7 @@ import SwiftProtobuf
 
 /// Observable model holding a long-lived gRPC connection to atelierd over UDS.
 @MainActor
-final class AtelierClientModel: ObservableObject {
+final class UstaClientModel: ObservableObject {
     @Published var connected: Bool = false
     @Published var daemonVersion: String? = nil
     @Published var workspaces: [Atelier_V1_Workspace] = []

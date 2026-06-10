@@ -373,9 +373,9 @@ final class WorkspaceBus: ObservableObject {
     }
 
     private var pollTask: Task<Void, Never>? = nil
-    private weak var client: AtelierClientModel?
+    private weak var client: UstaClientModel?
 
-    func start(workspaceID: String, client: AtelierClientModel, roles: [Atelier_V1_Role]) {
+    func start(workspaceID: String, client: UstaClientModel, roles: [Atelier_V1_Role]) {
         self.client = client
         self.roles = roles
         pollTask?.cancel()

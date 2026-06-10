@@ -1,8 +1,8 @@
 import SwiftUI
 
 @main
-struct AtelierApp: App {
-    @StateObject private var client = AtelierClientModel()
+struct UstaApp: App {
+    @StateObject private var client = UstaClientModel()
     @StateObject private var settings = AppSettings()
 
     var body: some Scene {

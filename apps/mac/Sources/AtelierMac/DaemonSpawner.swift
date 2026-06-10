@@ -71,7 +71,7 @@ enum DaemonSpawner {
     /// Path of the rolling daemon log file. Created on first spawn.
     static func logFileURL() -> URL {
         let logs = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("Logs/Atelier", isDirectory: true)
+            .appendingPathComponent("Logs/Usta", isDirectory: true)
         try? FileManager.default.createDirectory(at: logs, withIntermediateDirectories: true)
         return logs.appendingPathComponent("atelierd.log")
     }

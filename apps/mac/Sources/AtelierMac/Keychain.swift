@@ -5,7 +5,7 @@ import Security
 /// of plaintext UserDefaults. Generic-password items, scoped by a fixed
 /// service + per-key account name.
 enum Keychain {
-    private static let service = "dev.atelier.Atelier"
+    private static let service = "dev.atelier.Usta"
     /// In-process cache so repeated reads of the same account don't re-hit
     /// SecItem (each call can pop a password prompt for unsigned binaries).
     nonisolated(unsafe) private static var cache: [String: String] = [:]

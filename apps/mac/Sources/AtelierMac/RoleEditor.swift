@@ -67,8 +67,8 @@ struct RoleEditor: View {
                         TextEditor(text: $systemPrompt)
                             .scrollContentBackground(.hidden)
                             .padding(6)
-                            .background(AtelierTheme.cell)
-                            .overlay(RoundedRectangle(cornerRadius: 6).stroke(AtelierTheme.border))
+                            .background(UstaTheme.cell)
+                            .overlay(RoundedRectangle(cornerRadius: 6).stroke(UstaTheme.border))
                             .frame(minHeight: 120)
                             .font(.system(size: 12))
                     }
@@ -85,7 +85,7 @@ struct RoleEditor: View {
         }
         .padding(18)
         .frame(width: 520, height: 600)
-        .background(AtelierTheme.panel)
+        .background(UstaTheme.panel)
     }
 
     private func pair(_ label: String, _ placeholder: String, _ bind: Binding<String>) -> some View {

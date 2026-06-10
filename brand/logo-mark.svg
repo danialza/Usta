@@ -1,0 +1,76 @@
+<svg viewBox="0 0 256 256" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Usta">
+  <title>Usta</title>
+  <desc>Three vertical agent panes joined by a single U base — multi-agent IDE</desc>
+  <defs>
+    <linearGradient id="paneTeal" x1="0" y1="0" x2="0.4" y2="1">
+      <stop offset="0%"   stop-color="#34E8B8"/>
+      <stop offset="55%"  stop-color="#2DD4A7"/>
+      <stop offset="100%" stop-color="#1FB389"/>
+    </linearGradient>
+    <linearGradient id="panePurple" x1="0" y1="0" x2="0.6" y2="1">
+      <stop offset="0%"   stop-color="#8B7CF6"/>
+      <stop offset="55%"  stop-color="#7C6CF0"/>
+      <stop offset="100%" stop-color="#6347D9"/>
+    </linearGradient>
+    <linearGradient id="panePink" x1="0" y1="0" x2="0.4" y2="1">
+      <stop offset="0%"   stop-color="#F472B6"/>
+      <stop offset="55%"  stop-color="#EC4899"/>
+      <stop offset="100%" stop-color="#D62D80"/>
+    </linearGradient>
+    <linearGradient id="baseU" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%"   stop-color="#2DD4A7"/>
+      <stop offset="50%"  stop-color="#7C6CF0"/>
+      <stop offset="100%" stop-color="#EC4899"/>
+    </linearGradient>
+    <linearGradient id="bottomGlow" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%"   stop-color="#7C6CF0" stop-opacity="0.95"/>
+      <stop offset="100%" stop-color="#6347D9" stop-opacity="0.85"/>
+    </linearGradient>
+  </defs>
+
+  <!-- LEFT pane (teal) - vertical I-bar leaning right top -->
+  <path d="M 38 36
+           L 70 28
+           L 90 56
+           L 90 156
+           L 58 168
+           L 58 76
+           Z" fill="url(#paneTeal)"/>
+
+  <!-- CENTER pane (purple) - tallest -->
+  <path d="M 105 26
+           L 137 18
+           L 157 46
+           L 157 188
+           L 125 200
+           L 125 66
+           Z" fill="url(#panePurple)"/>
+
+  <!-- RIGHT pane (pink) -->
+  <path d="M 172 36
+           L 204 28
+           L 224 56
+           L 224 156
+           L 192 168
+           L 192 76
+           Z" fill="url(#panePink)"/>
+
+  <!-- BOTTOM U-base (gradient connecting all three) -->
+  <path d="M 58 156
+           L 90 156
+           L 90 200
+           L 172 200
+           L 172 156
+           L 204 156
+           L 204 200
+           L 192 220
+           L 70 220
+           L 58 200
+           Z" fill="url(#baseU)" opacity="0.92"/>
+
+  <!-- Subtle 3D depth shadow on the U base front -->
+  <path d="M 90 200
+           L 90 220
+           L 172 220
+           L 172 200 Z" fill="#1F1640" opacity="0.45"/>
+</svg>

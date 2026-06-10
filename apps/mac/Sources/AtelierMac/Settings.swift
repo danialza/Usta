@@ -140,7 +140,7 @@ final class OllamaManager: ObservableObject {
 
 struct SettingsView: View {
     @EnvironmentObject var settings: AppSettings
-    @EnvironmentObject var client: AtelierClientModel
+    @EnvironmentObject var client: UstaClientModel
     @StateObject private var ollama = OllamaManager()
     @State private var status: String? = nil
     @State private var pullModel: String = "qwen2.5-coder:7b"
@@ -163,7 +163,7 @@ struct SettingsView: View {
             .padding(24)
         }
         .frame(width: 560, height: 640)
-        .background(AtelierTheme.bg)
+        .background(UstaTheme.bg)
         .toolbar {
             ToolbarItem(placement: .confirmationAction) {
                 Button("Done") { dismiss() }
@@ -221,7 +221,7 @@ struct SettingsView: View {
                     }
                     .help("Open atelierd.log in Console.app")
                 }
-                Text("Daemon log: ~/Library/Logs/Atelier/atelierd.log · Auto-rotates at 4 MB")
+                Text("Daemon log: ~/Library/Logs/Usta/atelierd.log · Auto-rotates at 4 MB")
                     .font(.caption2).foregroundStyle(.secondary)
                 Text("Keys are passed to the daemon when you start it from here. After changing a key, Restart daemon.")
                     .font(.caption2).foregroundStyle(.secondary)
@@ -305,7 +305,7 @@ struct SettingsView: View {
                         .font(.caption2).foregroundStyle(.orange)
                         .fixedSize(horizontal: false, vertical: true)
                 } else {
-                    Text("Fast/tiny: qwen2.5-coder:1.5b (~1GB) — has tool-calling. Bigger: 7b, llama3.1:8b. Ollama is local & free, runs separately from Atelier.")
+                    Text("Fast/tiny: qwen2.5-coder:1.5b (~1GB) — has tool-calling. Bigger: 7b, llama3.1:8b. Ollama is local & free, runs separately from Usta.")
                         .font(.caption2).foregroundStyle(.tertiary)
                         .fixedSize(horizontal: false, vertical: true)
                 }

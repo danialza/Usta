@@ -1,27 +1,46 @@
-<svg viewBox="0 0 320 80" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Usta">
-  <g transform="translate(8 8)">
-    <!-- Mark -->
-    <path d="M32 4 L56 18 L56 46 L32 60 L8 46 L8 18 Z"
-          fill="none" stroke="url(#stroke)" stroke-width="3"
-          stroke-linejoin="round"/>
-    <path d="M32 14 L40 19 L40 27 L32 32 L24 27 L24 19 Z" fill="#fbbf24"/>
-    <path d="M20 34 L28 39 L28 47 L20 52 L12 47 L12 39 Z" fill="#22d3ee"/>
-    <path d="M44 34 L52 39 L52 47 L44 52 L36 47 L36 39 Z" fill="#b794f4"/>
-  </g>
-  <!-- Wordmark -->
-  <text x="88" y="50"
-        font-family="ui-sans-serif, system-ui, -apple-system, 'Inter', sans-serif"
-        font-size="40" font-weight="700" letter-spacing="-1.5"
-        fill="#e8e9f3">Usta</text>
-  <text x="88" y="68"
-        font-family="ui-sans-serif, system-ui, 'Inter', sans-serif"
-        font-size="11" font-weight="500" letter-spacing="4"
-        fill="#8b8da1">AI ENGINEERING TEAM</text>
+<svg viewBox="0 0 720 240" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Usta — AI engineering team">
+  <title>Usta</title>
+  <desc>Usta wordmark with three-pane mark — AI engineering team</desc>
   <defs>
-    <linearGradient id="stroke" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%"   stop-color="#fbbf24"/>
-      <stop offset="50%"  stop-color="#22d3ee"/>
-      <stop offset="100%" stop-color="#b794f4"/>
+    <linearGradient id="paneTeal" x1="0" y1="0" x2="0.4" y2="1">
+      <stop offset="0%"   stop-color="#34E8B8"/>
+      <stop offset="55%"  stop-color="#2DD4A7"/>
+      <stop offset="100%" stop-color="#1FB389"/>
+    </linearGradient>
+    <linearGradient id="panePurple" x1="0" y1="0" x2="0.6" y2="1">
+      <stop offset="0%"   stop-color="#8B7CF6"/>
+      <stop offset="55%"  stop-color="#7C6CF0"/>
+      <stop offset="100%" stop-color="#6347D9"/>
+    </linearGradient>
+    <linearGradient id="panePink" x1="0" y1="0" x2="0.4" y2="1">
+      <stop offset="0%"   stop-color="#F472B6"/>
+      <stop offset="55%"  stop-color="#EC4899"/>
+      <stop offset="100%" stop-color="#D62D80"/>
+    </linearGradient>
+    <linearGradient id="baseU" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%"   stop-color="#2DD4A7"/>
+      <stop offset="50%"  stop-color="#7C6CF0"/>
+      <stop offset="100%" stop-color="#EC4899"/>
+    </linearGradient>
+    <linearGradient id="taglineGrad" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%"   stop-color="#34E8B8"/>
+      <stop offset="50%"  stop-color="#8B7CF6"/>
+      <stop offset="100%" stop-color="#F472B6"/>
     </linearGradient>
   </defs>
+  <g transform="translate(15 15) scale(0.82)">
+    <path d="M 38 36 L 70 28 L 90 56 L 90 156 L 58 168 L 58 76 Z" fill="url(#paneTeal)"/>
+    <path d="M 105 26 L 137 18 L 157 46 L 157 188 L 125 200 L 125 66 Z" fill="url(#panePurple)"/>
+    <path d="M 172 36 L 204 28 L 224 56 L 224 156 L 192 168 L 192 76 Z" fill="url(#panePink)"/>
+    <path d="M 58 156 L 90 156 L 90 200 L 172 200 L 172 156 L 204 156 L 204 200 L 192 220 L 70 220 L 58 200 Z" fill="url(#baseU)" opacity="0.92"/>
+    <path d="M 90 200 L 90 220 L 172 220 L 172 200 Z" fill="#1F1640" opacity="0.45"/>
+  </g>
+  <text x="240" y="148"
+        font-family="ui-sans-serif, -apple-system, 'Inter', system-ui, sans-serif"
+        font-size="132" font-weight="600" letter-spacing="-4"
+        fill="#F0F1F7">Usta</text>
+  <text x="242" y="188"
+        font-family="ui-sans-serif, -apple-system, 'Inter', system-ui, sans-serif"
+        font-size="20" font-weight="500" letter-spacing="8"
+        fill="url(#taglineGrad)">AI ENGINEERING TEAM</text>
 </svg>

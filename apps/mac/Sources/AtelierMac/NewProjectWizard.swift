@@ -3,7 +3,7 @@ import AppKit
 import AtelierProto
 
 struct NewProjectWizard: View {
-    @EnvironmentObject var client: AtelierClientModel
+    @EnvironmentObject var client: UstaClientModel
     @Environment(\.dismiss) private var dismiss
 
     enum Step { case describe, review, grill, scaffolding, done }
@@ -28,11 +28,11 @@ struct NewProjectWizard: View {
     var body: some View {
         VStack(spacing: 0) {
             header
-            Divider().overlay(AtelierTheme.border)
+            Divider().overlay(UstaTheme.border)
             content
         }
         .frame(minWidth: 640, minHeight: 520)
-        .background(AtelierTheme.panel)
+        .background(UstaTheme.panel)
         .task { providers = await client.listProviders() }
     }
 
@@ -65,12 +65,12 @@ struct NewProjectWizard: View {
             Text("What do you want to build?")
                 .font(.title3.bold())
             Text("Describe the project in 1–3 sentences. The PM agent will pick a stack and assemble a team of specialist assistants.")
-                .font(.callout).foregroundStyle(AtelierTheme.dim)
+                .font(.callout).foregroundStyle(UstaTheme.dim)
             TextEditor(text: $idea)
                 .scrollContentBackground(.hidden)
                 .padding(8)
-                .background(AtelierTheme.cell)
-                .overlay(RoundedRectangle(cornerRadius: 6).stroke(AtelierTheme.border))
+                .background(UstaTheme.cell)
+                .overlay(RoundedRectangle(cornerRadius: 6).stroke(UstaTheme.border))
                 .frame(minHeight: 140)
                 .font(.system(size: 13))
 
@@ -142,7 +142,7 @@ struct NewProjectWizard: View {
                     HStack(alignment: .top, spacing: 14) {
                         VStack(alignment: .leading) {
                             Text(p.projectName).font(.title2.bold())
-                            Text(p.projectSlug).font(.caption).foregroundStyle(AtelierTheme.dim)
+                            Text(p.projectSlug).font(.caption).foregroundStyle(UstaTheme.dim)
                         }
                         Spacer()
                     }
@@ -182,7 +182,7 @@ struct NewProjectWizard: View {
                 }
                 .padding(18)
             }
-            Divider().overlay(AtelierTheme.border)
+            Divider().overlay(UstaTheme.border)
             HStack {
                 Button("Back") { step = .describe }
                 Spacer()
@@ -214,7 +214,7 @@ struct NewProjectWizard: View {
     private func sectionLabel(_ s: String) -> some View {
         Text(s.uppercased())
             .font(.system(size: 10, weight: .semibold))
-            .foregroundStyle(AtelierTheme.dim2)
+            .foregroundStyle(UstaTheme.dim2)
             .tracking(1)
     }
 
@@ -224,12 +224,12 @@ struct NewProjectWizard: View {
                 HStack(spacing: 4) {
                     Text(t.0).font(.caption)
                     if !t.1.isEmpty {
-                        Text(t.1).font(.system(size: 9)).foregroundStyle(AtelierTheme.dim)
+                        Text(t.1).font(.system(size: 9)).foregroundStyle(UstaTheme.dim)
                     }
                 }
                 .padding(.horizontal, 8).padding(.vertical, 3)
-                .background(AtelierTheme.cell)
-                .overlay(RoundedRectangle(cornerRadius: 4).stroke(AtelierTheme.border))
+                .background(UstaTheme.cell)
+                .overlay(RoundedRectangle(cornerRadius: 4).stroke(UstaTheme.border))
                 .clipShape(RoundedRectangle(cornerRadius: 4))
             }
         }
@@ -246,12 +246,12 @@ struct NewProjectWizard: View {
                         Text("Refine the plan").font(.title3.bold())
                     }
                     Text("PM has a few targeted questions before we scaffold. Tap an option or type your own. Skip questions you don't care about.")
-                        .font(.callout).foregroundStyle(AtelierTheme.dim)
+                        .font(.callout).foregroundStyle(UstaTheme.dim)
                     if grillQuestions.isEmpty {
                         HStack(spacing: 10) {
                             ProgressView().scaleEffect(0.7)
                             Text(grillStatus.isEmpty ? "Generating questions…" : grillStatus)
-                                .foregroundStyle(AtelierTheme.dim)
+                                .foregroundStyle(UstaTheme.dim)
                         }
                         .padding(.vertical, 24)
                     } else {
@@ -265,7 +265,7 @@ struct NewProjectWizard: View {
                 }
                 .padding(18)
             }
-            Divider().overlay(AtelierTheme.border)
+            Divider().overlay(UstaTheme.border)
             HStack {
                 Button("Cancel") { step = .review; errorMsg = nil }
                 Spacer()
@@ -285,11 +285,11 @@ struct NewProjectWizard: View {
     private func grillQuestionCard(index: Int, q: Atelier_V1_GrillQuestion) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .top, spacing: 6) {
-                Text("\(index + 1).").font(.body.bold()).foregroundStyle(AtelierTheme.dim)
+                Text("\(index + 1).").font(.body.bold()).foregroundStyle(UstaTheme.dim)
                 Text(q.question).font(.body.bold())
             }
             if !q.rationale.isEmpty {
-                Text(q.rationale).font(.caption).foregroundStyle(AtelierTheme.dim)
+                Text(q.rationale).font(.caption).foregroundStyle(UstaTheme.dim)
             }
             if !q.options.isEmpty {
                 FlowLayout(spacing: 6) {
@@ -300,8 +300,8 @@ struct NewProjectWizard: View {
                         } label: {
                             Text(opt).font(.caption)
                                 .padding(.horizontal, 10).padding(.vertical, 4)
-                                .background(selected ? Color.accentColor.opacity(0.25) : AtelierTheme.cell)
-                                .overlay(RoundedRectangle(cornerRadius: 12).stroke(selected ? Color.accentColor : AtelierTheme.border))
+                                .background(selected ? Color.accentColor.opacity(0.25) : UstaTheme.cell)
+                                .overlay(RoundedRectangle(cornerRadius: 12).stroke(selected ? Color.accentColor : UstaTheme.border))
                                 .clipShape(RoundedRectangle(cornerRadius: 12))
                                 .foregroundStyle(.primary)
                         }
@@ -318,14 +318,14 @@ struct NewProjectWizard: View {
                     .textFieldStyle(.plain)
                     .font(.system(size: 12))
                     .padding(8)
-                    .background(AtelierTheme.cell)
-                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(AtelierTheme.border))
+                    .background(UstaTheme.cell)
+                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(UstaTheme.border))
             }
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(AtelierTheme.cell.opacity(0.5))
-        .overlay(RoundedRectangle(cornerRadius: 8).stroke(AtelierTheme.border))
+        .background(UstaTheme.cell.opacity(0.5))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(UstaTheme.border))
         .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 
@@ -334,7 +334,7 @@ struct NewProjectWizard: View {
     private var scaffoldingStep: some View {
         VStack(spacing: 16) {
             ProgressView()
-            Text("Creating project + writing roles…").foregroundStyle(AtelierTheme.dim)
+            Text("Creating project + writing roles…").foregroundStyle(UstaTheme.dim)
             if let e = errorMsg { Text(e).font(.caption).foregroundStyle(.red) }
             Spacer()
         }
@@ -347,7 +347,7 @@ struct NewProjectWizard: View {
             Image(systemName: "checkmark.circle.fill").font(.system(size: 48)).foregroundStyle(.green)
             if let ws = openedWS {
                 Text("Created \(ws.name)").font(.title3.bold())
-                Text(ws.path).font(.caption).foregroundStyle(AtelierTheme.dim).textSelection(.enabled)
+                Text(ws.path).font(.caption).foregroundStyle(UstaTheme.dim).textSelection(.enabled)
             }
             Button("Open Workspace") {
                 if let ws = openedWS { onOpened(ws); dismiss() }
@@ -457,7 +457,7 @@ struct ProposedRoleCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
-                Text(role.emoji.isEmpty ? AtelierTheme.roleEmoji(for: role.name, fallback: "•") : role.emoji)
+                Text(role.emoji.isEmpty ? UstaTheme.roleEmoji(for: role.name, fallback: "•") : role.emoji)
                 Text(role.name).font(.body.bold())
                 Spacer()
                 providerMenu
@@ -467,22 +467,22 @@ struct ProposedRoleCard: View {
                         .buttonStyle(.borderless).foregroundStyle(.red)
                 }
             }
-            Text(role.why).font(.caption).foregroundStyle(AtelierTheme.dim)
+            Text(role.why).font(.caption).foregroundStyle(UstaTheme.dim)
             if !role.tools.isEmpty {
                 Text("tools: \(role.tools.joined(separator: ", "))")
-                    .font(.system(size: 10)).foregroundStyle(AtelierTheme.dim2)
+                    .font(.system(size: 10)).foregroundStyle(UstaTheme.dim2)
             }
             if !role.claudeSkills.isEmpty {
                 Text("skills: \(role.claudeSkills.joined(separator: ", "))")
-                    .font(.system(size: 10)).foregroundStyle(AtelierTheme.dim2)
+                    .font(.system(size: 10)).foregroundStyle(UstaTheme.dim2)
             }
         }
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(AtelierTheme.cell)
+        .background(UstaTheme.cell)
         .overlay(
             RoundedRectangle(cornerRadius: 8)
-                .stroke(AtelierTheme.roleColor(for: role.name).opacity(0.5))
+                .stroke(UstaTheme.roleColor(for: role.name).opacity(0.5))
         )
         .clipShape(RoundedRectangle(cornerRadius: 8))
     }
