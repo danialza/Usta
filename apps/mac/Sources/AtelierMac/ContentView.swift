@@ -559,7 +559,6 @@ struct WorkspaceDetailView: View {
                         .textSelection(.enabled).lineLimit(1)
                 }
                 Spacer()
-                AppearanceToggle(manager: AppearanceManager.shared)
                 modePicker
                 RateLimitChip(model: rate)
                 toolbarButton("Run App", systemImage: "play.rectangle.fill") {
