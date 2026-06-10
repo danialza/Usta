@@ -26,6 +26,9 @@ struct UstaApp: App {
                 }
         }
         .defaultSize(width: 1200, height: 760)
+        // Hide the title bar — keep traffic lights, drop the "Usta" text
+        // strip. Sidebar header has our brand mark already.
+        .windowStyle(.hiddenTitleBar)
 
         Settings {
             SettingsView()
