@@ -2,45 +2,40 @@
   <title>Usta</title>
   <desc>Usta wordmark with three-pane mark — AI engineering team</desc>
   <defs>
-    <linearGradient id="paneTeal" x1="0" y1="0" x2="0.4" y2="1">
-      <stop offset="0%"   stop-color="#34E8B8"/>
-      <stop offset="55%"  stop-color="#2DD4A7"/>
-      <stop offset="100%" stop-color="#1FB389"/>
+    <linearGradient id="paneCyan" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#3DECFF"/><stop offset="55%" stop-color="#15D5F0"/><stop offset="100%" stop-color="#0BB1CC"/>
     </linearGradient>
-    <linearGradient id="panePurple" x1="0" y1="0" x2="0.6" y2="1">
-      <stop offset="0%"   stop-color="#8B7CF6"/>
-      <stop offset="55%"  stop-color="#7C6CF0"/>
-      <stop offset="100%" stop-color="#6347D9"/>
+    <linearGradient id="paneBlue" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#5A9DFF"/><stop offset="55%" stop-color="#5A7BF0"/><stop offset="100%" stop-color="#4B5FD8"/>
     </linearGradient>
-    <linearGradient id="panePink" x1="0" y1="0" x2="0.4" y2="1">
-      <stop offset="0%"   stop-color="#F472B6"/>
-      <stop offset="55%"  stop-color="#EC4899"/>
-      <stop offset="100%" stop-color="#D62D80"/>
+    <linearGradient id="panePink" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#FF6BC4"/><stop offset="55%" stop-color="#F45BA5"/><stop offset="100%" stop-color="#E14C8E"/>
     </linearGradient>
-    <linearGradient id="baseU" x1="0" y1="0" x2="1" y2="0">
-      <stop offset="0%"   stop-color="#2DD4A7"/>
-      <stop offset="50%"  stop-color="#7C6CF0"/>
-      <stop offset="100%" stop-color="#EC4899"/>
+    <linearGradient id="baseLeft" x1="0" y1="0" x2="1" y2="0.5">
+      <stop offset="0%" stop-color="#4B5FD8"/><stop offset="100%" stop-color="#7C5FF0"/>
+    </linearGradient>
+    <linearGradient id="baseRight" x1="0" y1="0" x2="1" y2="0.5">
+      <stop offset="0%" stop-color="#9760EE"/><stop offset="100%" stop-color="#6A4DD8"/>
     </linearGradient>
     <linearGradient id="taglineGrad" x1="0" y1="0" x2="1" y2="0">
-      <stop offset="0%"   stop-color="#34E8B8"/>
-      <stop offset="50%"  stop-color="#8B7CF6"/>
-      <stop offset="100%" stop-color="#F472B6"/>
+      <stop offset="0%" stop-color="#15D5F0"/><stop offset="50%" stop-color="#7C5FF0"/><stop offset="100%" stop-color="#F45BA5"/>
     </linearGradient>
   </defs>
   <g transform="translate(15 15) scale(0.82)">
-    <path d="M 38 36 L 70 28 L 90 56 L 90 156 L 58 168 L 58 76 Z" fill="url(#paneTeal)"/>
-    <path d="M 105 26 L 137 18 L 157 46 L 157 188 L 125 200 L 125 66 Z" fill="url(#panePurple)"/>
-    <path d="M 172 36 L 204 28 L 224 56 L 224 156 L 192 168 L 192 76 Z" fill="url(#panePink)"/>
-    <path d="M 58 156 L 90 156 L 90 200 L 172 200 L 172 156 L 204 156 L 204 200 L 192 220 L 70 220 L 58 200 Z" fill="url(#baseU)" opacity="0.92"/>
-    <path d="M 90 200 L 90 220 L 172 220 L 172 200 Z" fill="#1F1640" opacity="0.45"/>
+    <path d="M 38 30 L 70 30 L 70 160 L 38 168 Z" fill="url(#paneCyan)"/>
+    <path d="M 78 32 L 102 32 L 102 158 L 78 168 Z" fill="url(#paneCyan)" opacity="0.92"/>
+    <path d="M 110 30 L 134 30 L 134 160 L 110 160 Z" fill="url(#paneBlue)"/>
+    <path d="M 142 30 L 166 30 L 166 160 L 142 160 Z" fill="url(#paneBlue)"/>
+    <path d="M 174 32 L 198 32 L 198 158 L 174 168 Z" fill="url(#panePink)" opacity="0.92"/>
+    <path d="M 206 30 L 238 30 L 238 168 L 206 160 Z" fill="url(#panePink)"/>
+    <path d="M 38 168 L 128 215 L 128 235 L 38 195 Z" fill="url(#baseLeft)"/>
+    <path d="M 128 215 L 238 168 L 238 195 L 128 235 Z" fill="url(#baseRight)"/>
+    <path d="M 122 215 L 134 215 L 128 240 Z" fill="#1A0F40" opacity="0.5"/>
   </g>
   <text x="240" y="148"
         font-family="ui-sans-serif, -apple-system, 'Inter', system-ui, sans-serif"
-        font-size="132" font-weight="600" letter-spacing="-4"
-        fill="#F0F1F7">Usta</text>
+        font-size="132" font-weight="600" letter-spacing="-4" fill="#F0F1F7">Usta</text>
   <text x="242" y="188"
         font-family="ui-sans-serif, -apple-system, 'Inter', system-ui, sans-serif"
-        font-size="20" font-weight="500" letter-spacing="8"
-        fill="url(#taglineGrad)">AI ENGINEERING TEAM</text>
+        font-size="20" font-weight="500" letter-spacing="8" fill="url(#taglineGrad)">AI ENGINEERING TEAM</text>
 </svg>

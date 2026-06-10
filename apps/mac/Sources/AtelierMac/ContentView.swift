@@ -22,7 +22,7 @@ struct ContentView: View {
             }
         }
         .preferredColorScheme(.dark)
-        .background(UstaTheme.smoothBackground.ignoresSafeArea())
+        .background(BrandBackground().ignoresSafeArea())
         .sheet(isPresented: $showNewProject) {
             NewProjectWizard(onOpened: { ws in selection = ws })
                 .environmentObject(client)

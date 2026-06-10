@@ -1,7 +1,8 @@
 import SwiftUI
 
-/// Inline SVG-equivalent Usta mark. Draws the three vertical agent panes
-/// joined by a U base, using the brand gradient. Scales by `size`.
+/// Inline SwiftUI rendering of the Usta mark. Six vertical agent panes
+/// (cyan / blue / pink, each split into two columns) sitting on a U base.
+/// Cheap to render — uses Canvas + drawingGroup for GPU rasterization.
 struct UstaLogo: View {
     var size: CGFloat = 24
     var monochrome: Bool = false
@@ -9,77 +10,114 @@ struct UstaLogo: View {
 
     var body: some View {
         Canvas { ctx, _ in
-            let s = size / 256.0   // SVG viewBox is 256
+            let s = size / 256.0
+            func sc(_ x: CGFloat) -> CGFloat { x * s }
 
-            func scale(_ x: CGFloat) -> CGFloat { x * s }
+            // Six pane rects (left two cyan, mid two blue, right two pink)
+            let leftA = Path { p in
+                p.move(to: .init(x: sc(38),  y: sc(30)))
+                p.addLine(to: .init(x: sc(70),  y: sc(30)))
+                p.addLine(to: .init(x: sc(70),  y: sc(160)))
+                p.addLine(to: .init(x: sc(38),  y: sc(168)))
+                p.closeSubpath()
+            }
+            let leftB = Path { p in
+                p.move(to: .init(x: sc(78),  y: sc(32)))
+                p.addLine(to: .init(x: sc(102), y: sc(32)))
+                p.addLine(to: .init(x: sc(102), y: sc(158)))
+                p.addLine(to: .init(x: sc(78),  y: sc(168)))
+                p.closeSubpath()
+            }
+            let midA = Path { p in
+                p.move(to: .init(x: sc(110), y: sc(30)))
+                p.addLine(to: .init(x: sc(134), y: sc(30)))
+                p.addLine(to: .init(x: sc(134), y: sc(160)))
+                p.addLine(to: .init(x: sc(110), y: sc(160)))
+                p.closeSubpath()
+            }
+            let midB = Path { p in
+                p.move(to: .init(x: sc(142), y: sc(30)))
+                p.addLine(to: .init(x: sc(166), y: sc(30)))
+                p.addLine(to: .init(x: sc(166), y: sc(160)))
+                p.addLine(to: .init(x: sc(142), y: sc(160)))
+                p.closeSubpath()
+            }
+            let rightA = Path { p in
+                p.move(to: .init(x: sc(174), y: sc(32)))
+                p.addLine(to: .init(x: sc(198), y: sc(32)))
+                p.addLine(to: .init(x: sc(198), y: sc(158)))
+                p.addLine(to: .init(x: sc(174), y: sc(168)))
+                p.closeSubpath()
+            }
+            let rightB = Path { p in
+                p.move(to: .init(x: sc(206), y: sc(30)))
+                p.addLine(to: .init(x: sc(238), y: sc(30)))
+                p.addLine(to: .init(x: sc(238), y: sc(168)))
+                p.addLine(to: .init(x: sc(206), y: sc(160)))
+                p.closeSubpath()
+            }
 
-            // Pane TEAL — leans right (top-left)
-            let teal = Path { p in
-                p.move(to:    .init(x: scale(38),  y: scale(36)))
-                p.addLine(to: .init(x: scale(70),  y: scale(28)))
-                p.addLine(to: .init(x: scale(90),  y: scale(56)))
-                p.addLine(to: .init(x: scale(90),  y: scale(156)))
-                p.addLine(to: .init(x: scale(58),  y: scale(168)))
-                p.addLine(to: .init(x: scale(58),  y: scale(76)))
+            // U-base left + right
+            let baseL = Path { p in
+                p.move(to: .init(x: sc(38),  y: sc(168)))
+                p.addLine(to: .init(x: sc(128), y: sc(215)))
+                p.addLine(to: .init(x: sc(128), y: sc(235)))
+                p.addLine(to: .init(x: sc(38),  y: sc(195)))
                 p.closeSubpath()
             }
-            // Pane PURPLE — tallest, center
-            let purple = Path { p in
-                p.move(to:    .init(x: scale(105), y: scale(26)))
-                p.addLine(to: .init(x: scale(137), y: scale(18)))
-                p.addLine(to: .init(x: scale(157), y: scale(46)))
-                p.addLine(to: .init(x: scale(157), y: scale(188)))
-                p.addLine(to: .init(x: scale(125), y: scale(200)))
-                p.addLine(to: .init(x: scale(125), y: scale(66)))
+            let baseR = Path { p in
+                p.move(to: .init(x: sc(128), y: sc(215)))
+                p.addLine(to: .init(x: sc(238), y: sc(168)))
+                p.addLine(to: .init(x: sc(238), y: sc(195)))
+                p.addLine(to: .init(x: sc(128), y: sc(235)))
                 p.closeSubpath()
             }
-            // Pane PINK — right
-            let pink = Path { p in
-                p.move(to:    .init(x: scale(172), y: scale(36)))
-                p.addLine(to: .init(x: scale(204), y: scale(28)))
-                p.addLine(to: .init(x: scale(224), y: scale(56)))
-                p.addLine(to: .init(x: scale(224), y: scale(156)))
-                p.addLine(to: .init(x: scale(192), y: scale(168)))
-                p.addLine(to: .init(x: scale(192), y: scale(76)))
-                p.closeSubpath()
-            }
-            // U base
-            let baseU = Path { p in
-                p.move(to:    .init(x: scale(58),  y: scale(156)))
-                p.addLine(to: .init(x: scale(90),  y: scale(156)))
-                p.addLine(to: .init(x: scale(90),  y: scale(200)))
-                p.addLine(to: .init(x: scale(172), y: scale(200)))
-                p.addLine(to: .init(x: scale(172), y: scale(156)))
-                p.addLine(to: .init(x: scale(204), y: scale(156)))
-                p.addLine(to: .init(x: scale(204), y: scale(200)))
-                p.addLine(to: .init(x: scale(192), y: scale(220)))
-                p.addLine(to: .init(x: scale(70),  y: scale(220)))
-                p.addLine(to: .init(x: scale(58),  y: scale(200)))
+            let fold = Path { p in
+                p.move(to: .init(x: sc(122), y: sc(215)))
+                p.addLine(to: .init(x: sc(134), y: sc(215)))
+                p.addLine(to: .init(x: sc(128), y: sc(240)))
                 p.closeSubpath()
             }
 
             if monochrome {
-                ctx.fill(teal,   with: .color(tint))
-                ctx.fill(purple, with: .color(tint))
-                ctx.fill(pink,   with: .color(tint))
-                ctx.fill(baseU,  with: .color(tint))
-            } else {
-                ctx.fill(teal,   with: .linearGradient(
-                    Gradient(colors: [Color(hex: 0x34E8B8), Color(hex: 0x2DD4A7), Color(hex: 0x1FB389)]),
-                    startPoint: .zero, endPoint: .init(x: size * 0.4, y: size)))
-                ctx.fill(purple, with: .linearGradient(
-                    Gradient(colors: [Color(hex: 0x8B7CF6), Color(hex: 0x7C6CF0), Color(hex: 0x6347D9)]),
-                    startPoint: .zero, endPoint: .init(x: size * 0.6, y: size)))
-                ctx.fill(pink,   with: .linearGradient(
-                    Gradient(colors: [Color(hex: 0xF472B6), Color(hex: 0xEC4899), Color(hex: 0xD62D80)]),
-                    startPoint: .zero, endPoint: .init(x: size * 0.4, y: size)))
-                ctx.fill(baseU, with: .linearGradient(
-                    Gradient(colors: [Color(hex: 0x2DD4A7), Color(hex: 0x7C6CF0), Color(hex: 0xEC4899)]),
-                    startPoint: .zero, endPoint: .init(x: size, y: 0)))
+                let t = tint
+                ctx.fill(leftA,  with: .color(t))
+                ctx.fill(leftB,  with: .color(t.opacity(0.92)))
+                ctx.fill(midA,   with: .color(t))
+                ctx.fill(midB,   with: .color(t))
+                ctx.fill(rightA, with: .color(t.opacity(0.92)))
+                ctx.fill(rightB, with: .color(t))
+                ctx.fill(baseL,  with: .color(t.opacity(0.85)))
+                ctx.fill(baseR,  with: .color(t.opacity(0.85)))
+                return
             }
+
+            // Brand gradients — vertical for panes, diagonal for base
+            let cyan = Gradient(colors: [Color(hex: 0x3DECFF), Color(hex: 0x15D5F0), Color(hex: 0x0BB1CC)])
+            let blue = Gradient(colors: [Color(hex: 0x5A9DFF), Color(hex: 0x5A7BF0), Color(hex: 0x4B5FD8)])
+            let pink = Gradient(colors: [Color(hex: 0xFF6BC4), Color(hex: 0xF45BA5), Color(hex: 0xE14C8E)])
+            let baseLG = Gradient(colors: [Color(hex: 0x4B5FD8), Color(hex: 0x7C5FF0)])
+            let baseRG = Gradient(colors: [Color(hex: 0x9760EE), Color(hex: 0x6A4DD8)])
+
+            func verticalShading(_ g: Gradient) -> GraphicsContext.Shading {
+                .linearGradient(g, startPoint: .init(x: 0, y: 0), endPoint: .init(x: 0, y: size))
+            }
+            func diagonalShading(_ g: Gradient) -> GraphicsContext.Shading {
+                .linearGradient(g, startPoint: .init(x: 0, y: 0), endPoint: .init(x: size, y: size * 0.5))
+            }
+
+            ctx.fill(leftA,  with: verticalShading(cyan))
+            ctx.fill(leftB,  with: verticalShading(cyan))
+            ctx.fill(midA,   with: verticalShading(blue))
+            ctx.fill(midB,   with: verticalShading(blue))
+            ctx.fill(rightA, with: verticalShading(pink))
+            ctx.fill(rightB, with: verticalShading(pink))
+            ctx.fill(baseL,  with: diagonalShading(baseLG))
+            ctx.fill(baseR,  with: diagonalShading(baseRG))
+            ctx.fill(fold,   with: .color(Color(hex: 0x1A0F40).opacity(0.55)))
         }
         .frame(width: size, height: size)
-        .drawingGroup()                              // rasterize → cheap to compose
+        .drawingGroup()
     }
 }
 
