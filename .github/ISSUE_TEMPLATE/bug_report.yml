@@ -1,0 +1,39 @@
+name: Bug report
+description: Something is broken or behaving unexpectedly.
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: Describe the bug. Include screenshots/screen recordings if you have them.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open workspace X
+        2. Tap chip Y
+        3. ...
+    validations:
+      required: true
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version
+      placeholder: e.g. 15.2
+    validations:
+      required: true
+  - type: input
+    id: usta-version
+    attributes:
+      label: Usta version / commit
+      placeholder: e.g. 0.1.0 or commit hash
+  - type: textarea
+    id: logs
+    attributes:
+      label: Daemon log
+      description: Last ~100 lines of `~/Library/Logs/Atelier/atelierd.log` if relevant.
+      render: shell
