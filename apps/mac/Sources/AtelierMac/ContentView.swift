@@ -333,6 +333,7 @@ struct WorkspaceDetailView: View {
     @State private var grillMoreAns: [String: String] = [:]
     @StateObject private var bus = WorkspaceBus()
     @StateObject private var rate = RateLimitModel()
+    @StateObject private var termCache = TerminalSessionCache()
 
     var body: some View {
         HStack(spacing: 0) {
@@ -358,6 +359,7 @@ struct WorkspaceDetailView: View {
             }
         }
         .environmentObject(bus)
+        .environmentObject(termCache)
         .overlay(alignment: .topTrailing) {
             ToastStack().environmentObject(bus)
         }

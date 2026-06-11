@@ -158,6 +158,7 @@ struct AssistantPane: View {
     var stateColor: Color? = nil
     @EnvironmentObject var client: UstaClientModel
     @EnvironmentObject var bus: WorkspaceBus
+    @EnvironmentObject var termCache: TerminalSessionCache
     @StateObject private var model: ChatPaneModel
 
     enum Backend: String { case chat, cli }
@@ -356,6 +357,13 @@ struct AssistantPane: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .task {
+            // FAST PATH: this role already has a live session from a prior
+            // pane mount → just rebind. No new RPC, no scrollback replay.
+            if cliSession == nil, let cached = termCache.session(for: role.name) {
+                cliSession = cached
+                cliError = nil
+                return
+            }
             // Auto-launch as soon as the CLI pane appears (no manual button).
             if cliSession == nil && !cliLaunching && cliError == nil {
                 let cmd = cliCommand.trimmingCharacters(in: .whitespaces)
@@ -394,6 +402,7 @@ struct AssistantPane: View {
             return
         }
         cliSession = session
+        termCache.store(session, for: role.name)      // survive view re-mount
         cliError = nil
         // Auto-activate universal skills on every fresh CLI session: type
         // `/caveman:caveman` then `/memsearch:memory-recall` after pty has
@@ -527,6 +536,7 @@ struct AssistantPane: View {
             if backend == .cli {
                 Button {
                     cliSession?.stop()
+                    termCache.drop(role: role.name)   // forget cache on relaunch
                     cliSession = nil
                     activatedSkills.removeAll()
                     cliCommand = !role.cliCommand.isEmpty ? role.cliCommand
