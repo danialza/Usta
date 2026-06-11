@@ -23,6 +23,12 @@
   <strong>Native macOS</strong>
 </p>
 
+<br/>
+
+<img src="brand/screenshots/03-workspace.png" alt="Usta workspace — 5 specialist roles working in parallel" width="100%" />
+
+<sub>One workspace. Five specialists. One shared event bus.</sub>
+
 </div>
 
 ---
@@ -70,21 +76,57 @@ I wanted AI tooling that worked the same way. So I built it.
 ### Build from source
 
 ```bash
-git clone https://github.com/danialza/atelier.git
-cd atelier
+git clone https://github.com/danialza/Usta.git
+cd Usta
 bash scripts/build-mac.sh
 open dist/Atelier.app
 ```
 
 Requires macOS 15+, Xcode CLT, Rust stable.
 
-### First run
+### First run — a guided walkthrough
 
-1. **Settings → API Keys** — paste your Anthropic key (stored in macOS Keychain).
-   If you use Claude Code with Pro/Max login, no key needed.
-2. **New Project** — describe what you want to build in 1–3 sentences. PM proposes a team. Optionally hit **Refine with Grill** to answer targeted clarifying questions.
-3. **Create** — Usta scaffolds the project, writes role yamls, and auto-orchestrates the kickoff.
-4. **Watch the team** — open the suggested pane, click **Generate prompt**, hit Send. Events fire. Downstream roles wake up.
+#### 1. Launch — pick how you start
+
+<img src="brand/screenshots/01-welcome.png" alt="Welcome screen" width="100%" />
+
+Two paths:
+- **Open Existing Project** — point at any folder. Usta scans the codebase and the PM proposes a team that fits the stack.
+- **Start From Scratch** — describe what you want to build. The PM picks a stack, drafts a folder layout, and assembles a team.
+
+Before any of this, open the gear icon (top-right) → paste your Anthropic API key. It's stored in macOS Keychain, never on disk. If you already use Claude Code with a Pro/Max login, no key needed.
+
+#### 2. Describe the project — let PM design the team
+
+<img src="brand/screenshots/02-new-project.png" alt="New Project wizard" width="100%" />
+
+One field. 1–3 sentences. The PM agent reads it, picks a stack, decides which roles to spawn, and writes each role's brief. Optionally hit **Refine with Grill** to answer targeted clarifying questions before scaffolding.
+
+#### 3. Watch the team work
+
+<img src="brand/screenshots/03-workspace.png" alt="Workspace — multi-role grid" width="100%" />
+
+This is the workspace view. Each card is one specialist running its own real terminal (Claude Code, Gemini, or Ollama — pick per role). Top of each card: the role chip + skills + provider/model picker.
+
+Top toolbar:
+- **Role chips** — All / @backend / @devops / @frontend / @security / @ui-ux. Click to filter.
+- **Run App** — boots whatever dev server the project scaffolded.
+- **Start Team** — kicks off all roles in dependency order.
+- **Add Role** — spawn a new specialist mid-project.
+- **Grill More** — get the PM to ask more targeted questions.
+- **Activity** (right) — every event published on the bus, in order.
+
+Pane bar (blue): the **Next Action** banner. PM tells you which role to run next and gives you a generated prompt. One click ships it to that pane.
+
+#### 4. Focus a single role
+
+<img src="brand/screenshots/04-role-focus.png" alt="Single role maximized" width="100%" />
+
+Maximize any pane (top-right corner) to focus one specialist. The terminal is a real PTY — same keyboard shortcuts, same scrollback. Skills (mattpocock, caveman, memory) are pre-loaded; click a skill chip to invoke it.
+
+#### 5. Ship a new feature
+
+Type a request in the **"Add new feature or change…"** field at the top. PM re-plans which roles are needed for *just that change*, publishes scoped tasks, and only those roles wake up. Done roles stay done.
 
 ---
 

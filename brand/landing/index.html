@@ -1,0 +1,315 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Usta — Your AI engineering team. Not an assistant.</title>
+<meta name="description" content="Native macOS multi-agent IDE. A PM agent plans the work, specialists coordinate through a shared event bus, each running Claude / Gemini / Ollama." />
+<meta property="og:title" content="Usta — Your AI engineering team" />
+<meta property="og:description" content="A panel of AI specialists working in parallel, on your desktop." />
+<meta property="og:image" content="../og-card.png" />
+<meta name="twitter:card" content="summary_large_image" />
+<link rel="icon" type="image/png" href="../usta-icon.png" />
+<style>
+  :root{
+    --bg:#050810; --bg2:#0a0b18; --panel:#0e1124; --panel2:#141838;
+    --ink:#F0F1F7; --mute:#9aa0bf; --dim:#6b7095;
+    --teal:#3DECFF; --blue:#5A9DFF; --violet:#8B7CF6; --pink:#F45BA5;
+    --line:rgba(255,255,255,.07);
+    --grad: linear-gradient(90deg,var(--teal),var(--violet),var(--pink));
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"Inter","SF Pro Display","Segoe UI",Roboto,sans-serif;-webkit-font-smoothing:antialiased;line-height:1.5}
+  a{color:var(--teal);text-decoration:none}
+  a:hover{text-decoration:underline}
+  .wrap{max-width:1180px;margin:0 auto;padding:0 24px}
+  /* nav */
+  nav{position:sticky;top:0;z-index:50;backdrop-filter:blur(14px);background:rgba(5,8,16,.7);border-bottom:1px solid var(--line)}
+  nav .wrap{display:flex;align-items:center;justify-content:space-between;height:64px}
+  nav .brand{display:flex;align-items:center;gap:10px;font-weight:700;letter-spacing:-.5px;font-size:18px}
+  nav .brand img{width:28px;height:28px}
+  nav .links{display:flex;gap:24px;font-size:14px;color:var(--mute)}
+  nav .links a{color:var(--mute)}
+  nav .cta{background:var(--ink);color:#0a0b18;padding:9px 16px;border-radius:10px;font-weight:600;font-size:14px}
+  nav .cta:hover{text-decoration:none;background:#fff}
+  /* hero */
+  .hero{position:relative;padding:88px 0 56px;text-align:center;overflow:hidden}
+  .hero::before{content:"";position:absolute;inset:-40% -20% auto -20%;height:600px;background:radial-gradient(ellipse at center,rgba(139,124,246,.18),transparent 60%);pointer-events:none}
+  .hero::after{content:"";position:absolute;left:50%;top:0;width:1px;height:120px;background:linear-gradient(180deg,transparent,var(--teal));opacity:.4;pointer-events:none}
+  .pill{display:inline-flex;gap:8px;align-items:center;background:rgba(255,255,255,.04);border:1px solid var(--line);padding:6px 14px;border-radius:999px;font-size:13px;color:var(--mute);margin-bottom:24px}
+  .pill .dot{width:6px;height:6px;background:var(--teal);border-radius:50%;box-shadow:0 0 8px var(--teal)}
+  h1{font-size:clamp(40px,7vw,84px);line-height:1.02;letter-spacing:-2.5px;font-weight:800;margin:0 0 24px;position:relative}
+  h1 .grad{background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent}
+  .sub{font-size:clamp(17px,2vw,22px);color:var(--mute);max-width:680px;margin:0 auto 36px;line-height:1.5}
+  .ctas{display:flex;gap:14px;justify-content:center;flex-wrap:wrap;margin-bottom:48px}
+  .btn{display:inline-flex;align-items:center;gap:8px;padding:14px 26px;border-radius:12px;font-weight:600;font-size:15px;transition:transform .15s,box-shadow .15s}
+  .btn:hover{text-decoration:none;transform:translateY(-1px)}
+  .btn.primary{background:var(--ink);color:#0a0b18;box-shadow:0 0 0 1px rgba(255,255,255,.1),0 20px 40px -10px rgba(61,236,255,.25)}
+  .btn.primary:hover{background:#fff;box-shadow:0 0 0 1px rgba(255,255,255,.2),0 20px 60px -10px rgba(61,236,255,.4)}
+  .btn.ghost{background:rgba(255,255,255,.04);border:1px solid var(--line);color:var(--ink)}
+  .btn.ghost:hover{background:rgba(255,255,255,.07)}
+  /* hero screenshot */
+  .shotwrap{position:relative;margin:0 -24px;padding:0 24px}
+  .shot{position:relative;border-radius:16px;overflow:hidden;border:1px solid var(--line);box-shadow:0 80px 120px -40px rgba(0,0,0,.7),0 0 0 1px rgba(255,255,255,.04)}
+  .shot::before{content:"";position:absolute;inset:0;background:linear-gradient(180deg,transparent 60%,rgba(5,8,16,.6));pointer-events:none;z-index:1}
+  .shot img{display:block;width:100%;height:auto}
+  .shot .glow{position:absolute;inset:auto -10% -40px;height:200px;background:radial-gradient(ellipse at center,rgba(91,157,255,.35),transparent 60%);filter:blur(40px);z-index:-1}
+  /* section */
+  section{padding:96px 0;position:relative}
+  .eyebrow{display:inline-block;font-size:12px;letter-spacing:2px;text-transform:uppercase;color:var(--teal);margin-bottom:16px}
+  h2{font-size:clamp(32px,4.5vw,52px);letter-spacing:-1.5px;margin:0 0 16px;font-weight:800;line-height:1.05}
+  h2 .grad{background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent}
+  .lead{font-size:18px;color:var(--mute);max-width:680px;margin:0 0 56px}
+  .center{text-align:center}
+  .center .lead{margin-left:auto;margin-right:auto}
+  /* problem */
+  .compare{display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-top:48px}
+  .compare .card{padding:32px;border-radius:16px;border:1px solid var(--line);background:var(--panel)}
+  .compare .bad{border-color:rgba(244,91,165,.2);background:rgba(244,91,165,.04)}
+  .compare .good{border-color:rgba(61,236,255,.2);background:rgba(61,236,255,.04)}
+  .compare h3{margin:0 0 16px;font-size:20px;font-weight:700}
+  .compare .bad h3::before{content:"✗  ";color:var(--pink)}
+  .compare .good h3::before{content:"✓  ";color:var(--teal)}
+  .compare ul{margin:0;padding:0 0 0 18px;color:var(--mute);font-size:15px;line-height:1.7}
+  /* features */
+  .features{display:grid;grid-template-columns:repeat(3,1fr);gap:20px}
+  .feature{padding:28px;border-radius:14px;border:1px solid var(--line);background:linear-gradient(180deg,rgba(255,255,255,.02),transparent);transition:transform .2s,border-color .2s}
+  .feature:hover{transform:translateY(-2px);border-color:rgba(139,124,246,.3)}
+  .feature .icon{width:42px;height:42px;border-radius:10px;background:linear-gradient(135deg,var(--teal),var(--violet));display:flex;align-items:center;justify-content:center;font-size:22px;margin-bottom:18px;font-weight:700;color:#0a0b18}
+  .feature h3{margin:0 0 8px;font-size:17px;font-weight:700}
+  .feature p{margin:0;font-size:14px;color:var(--mute);line-height:1.6}
+  /* how */
+  .steps{display:grid;grid-template-columns:1fr;gap:64px;margin-top:48px}
+  .step{display:grid;grid-template-columns:1fr 1.4fr;gap:48px;align-items:center}
+  .step:nth-child(even){grid-template-columns:1.4fr 1fr}
+  .step:nth-child(even) .step-text{order:2}
+  .step-num{font-size:13px;color:var(--teal);letter-spacing:2px;text-transform:uppercase;font-weight:700;margin-bottom:12px}
+  .step h3{font-size:28px;margin:0 0 14px;letter-spacing:-.8px;font-weight:700;line-height:1.15}
+  .step p{font-size:16px;color:var(--mute);margin:0 0 12px}
+  .step .shot{border-radius:12px}
+  /* roles strip */
+  .roles{display:flex;flex-wrap:wrap;gap:10px;justify-content:center;margin-top:32px}
+  .role{padding:8px 16px;border:1px solid var(--line);border-radius:999px;font-size:14px;color:var(--mute);background:rgba(255,255,255,.02)}
+  .role .em{color:var(--ink);font-weight:600;margin-right:6px}
+  /* stack */
+  .stack{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-top:36px}
+  .chip{padding:18px;border:1px solid var(--line);border-radius:12px;background:var(--panel);text-align:center}
+  .chip .k{font-size:11px;letter-spacing:1.5px;text-transform:uppercase;color:var(--dim);margin-bottom:6px}
+  .chip .v{font-size:15px;font-weight:600;color:var(--ink)}
+  /* terminal demo */
+  .term{background:#0b0d1c;border:1px solid var(--line);border-radius:12px;padding:20px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px;color:#c9ccdf;line-height:1.7;margin-top:24px;overflow-x:auto}
+  .term .c{color:var(--teal)} .term .p{color:var(--pink)} .term .v{color:var(--violet)} .term .m{color:var(--dim)}
+  /* footer cta */
+  .finalcta{padding:120px 0;text-align:center;position:relative;overflow:hidden}
+  .finalcta::before{content:"";position:absolute;inset:0;background:radial-gradient(ellipse at center,rgba(139,124,246,.15),transparent 70%);pointer-events:none}
+  .finalcta h2{margin-bottom:24px}
+  footer{padding:48px 0;border-top:1px solid var(--line);font-size:14px;color:var(--dim)}
+  footer .wrap{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:16px}
+  footer a{color:var(--mute)}
+  /* mobile */
+  @media (max-width:780px){
+    .features{grid-template-columns:1fr}
+    .compare{grid-template-columns:1fr}
+    .stack{grid-template-columns:repeat(2,1fr)}
+    .step,.step:nth-child(even){grid-template-columns:1fr}
+    .step:nth-child(even) .step-text{order:0}
+    nav .links{display:none}
+    section{padding:64px 0}
+  }
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="wrap">
+    <a href="#" class="brand"><img src="../usta-logo.png" alt=""/>Usta</a>
+    <div class="links">
+      <a href="#how">How it works</a>
+      <a href="#features">Features</a>
+      <a href="#stack">Stack</a>
+      <a href="https://github.com/danialza/Usta">GitHub</a>
+    </div>
+    <a class="cta" href="https://github.com/danialza/Usta/releases">Download</a>
+  </div>
+</nav>
+
+<header class="hero">
+  <div class="wrap">
+    <div class="pill"><span class="dot"></span> v0.1.0 — first public release</div>
+    <h1>Your AI engineering<br/>team. <span class="grad">Not an assistant.</span></h1>
+    <p class="sub">Most AI dev tools give you one helper. Usta gives you a team — a PM agent plans the work, specialists run in parallel, and they hand off through a shared event bus.</p>
+    <div class="ctas">
+      <a class="btn primary" href="https://github.com/danialza/Usta/releases">↓ Download for macOS</a>
+      <a class="btn ghost" href="https://github.com/danialza/Usta">★ Star on GitHub</a>
+    </div>
+    <div class="shotwrap">
+      <div class="shot">
+        <div class="glow"></div>
+        <img src="../screenshots/03-workspace.png" alt="Usta — five specialist roles working in parallel"/>
+      </div>
+    </div>
+  </div>
+</header>
+
+<section id="problem">
+  <div class="wrap">
+    <div class="center">
+      <span class="eyebrow">The problem</span>
+      <h2>One helper isn't a <span class="grad">team.</span></h2>
+      <p class="lead">Real projects aren't built by one person. So why is every AI dev tool a single assistant?</p>
+    </div>
+    <div class="compare">
+      <div class="card bad">
+        <h3>Everyone else</h3>
+        <ul>
+          <li>One model. One context. One chat.</li>
+          <li>You stay the project manager forever.</li>
+          <li>Tool calls a function — never wakes up a colleague.</li>
+          <li>"Frontend" and "Backend" share a brain.</li>
+          <li>You're the bus. You're the dispatcher. You burn out.</li>
+        </ul>
+      </div>
+      <div class="card good">
+        <h3>Usta</h3>
+        <ul>
+          <li>A PM agent reads your project & picks specialists.</li>
+          <li>Each role runs in its own terminal, with its own brief.</li>
+          <li>They publish events. Other roles wake up. You watch.</li>
+          <li>Bottleneck detector points at the role to unblock.</li>
+          <li>You ship the feature. The team ships the diff.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="how">
+  <div class="wrap">
+    <div class="center">
+      <span class="eyebrow">How it works</span>
+      <h2>From idea to running team in <span class="grad">three steps.</span></h2>
+    </div>
+    <div class="steps">
+      <div class="step">
+        <div class="step-text">
+          <div class="step-num">Step 1</div>
+          <h3>Open a folder. Or describe an idea.</h3>
+          <p>Point Usta at any codebase and the PM scans the stack. Or describe what you want to build in one sentence and the PM picks the stack itself.</p>
+          <p>API keys live in Keychain. Nothing on disk.</p>
+        </div>
+        <div class="shot"><img src="../screenshots/01-welcome.png" alt="Welcome"/></div>
+      </div>
+      <div class="step">
+        <div class="shot"><img src="../screenshots/02-new-project.png" alt="New project wizard"/></div>
+        <div class="step-text">
+          <div class="step-num">Step 2</div>
+          <h3>PM designs the team.</h3>
+          <p>The PM agent reads your project, decides which specialists it needs, and writes each role's brief on the fly. A landing page might get a frontend + designer + animator. A trading backend might get an API engineer + DBA + security + QA.</p>
+          <p>The team is shaped to fit the project. Not a fixed menu.</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-text">
+          <div class="step-num">Step 3</div>
+          <h3>Specialists work. You watch.</h3>
+          <p>Each role gets its own real terminal — Claude Code, Gemini, or local Ollama. They coordinate through a shared event bus: frontend ships a component → QA wakes up → tests pass → done. If tests fail, the right role gets reopened automatically.</p>
+          <p>A bottleneck detector always tells you which role to unblock next.</p>
+        </div>
+        <div class="shot"><img src="../screenshots/03-workspace.png" alt="Workspace"/></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="features">
+  <div class="wrap">
+    <div class="center">
+      <span class="eyebrow">Features</span>
+      <h2>Built like real engineering.</h2>
+      <p class="lead">Every piece exists because solo Claude-pair-programming hit a wall there.</p>
+    </div>
+    <div class="features">
+      <div class="feature"><div class="icon">⚡</div><h3>Real PTYs per role</h3><p>SwiftTerm, real terminal, persistent scrollback — survives daemon restarts.</p></div>
+      <div class="feature"><div class="icon">🔀</div><h3>Shared event bus</h3><p>SQLite-backed pub/sub. Fuzzy topic match. Auto inter-agent reactions.</p></div>
+      <div class="feature"><div class="icon">🧠</div><h3>PM auto-orchestration</h3><p>Type a feature. PM picks which roles act, assigns scoped tasks, only those wake up.</p></div>
+      <div class="feature"><div class="icon">👁</div><h3>Idle watcher</h3><p>Daemon detects when a role finishes and publishes its announced events.</p></div>
+      <div class="feature"><div class="icon">🚧</div><h3>Bottleneck detector</h3><p>Global "Next Action" bar always tells you which role is blocking the team.</p></div>
+      <div class="feature"><div class="icon">🔌</div><h3>Pluggable LLMs</h3><p>Anthropic · Gemini · Ollama, per-role. Run local. Or hybrid. Your call.</p></div>
+      <div class="feature"><div class="icon">🛠</div><h3>MCP server included</h3><p>Stdio MCP — drive Usta's bus from any MCP-compatible client.</p></div>
+      <div class="feature"><div class="icon">🔐</div><h3>Keychain keys</h3><p>API keys never touch disk. macOS Keychain only.</p></div>
+      <div class="feature"><div class="icon">🎯</div><h3>Skills system</h3><p>Caveman · memory · mattpocock · custom — per role, click to invoke.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="roles">
+  <div class="wrap center">
+    <span class="eyebrow">The team is dynamic</span>
+    <h2>Whatever the project asks for.</h2>
+    <p class="lead">Roles aren't a fixed menu — PM picks them per workspace. Common ones it tends to draft:</p>
+    <div class="roles">
+      <span class="role"><span class="em">🎨</span>Frontend</span>
+      <span class="role"><span class="em">⚙️</span>Backend</span>
+      <span class="role"><span class="em">🎭</span>UI/UX</span>
+      <span class="role"><span class="em">✨</span>Animation</span>
+      <span class="role"><span class="em">🧪</span>QA</span>
+      <span class="role"><span class="em">🚀</span>DevOps</span>
+      <span class="role"><span class="em">🗄️</span>DBA</span>
+      <span class="role"><span class="em">🔒</span>Security</span>
+      <span class="role"><span class="em">📚</span>Docs</span>
+      <span class="role"><span class="em">📱</span>Mobile</span>
+      <span class="role"><span class="em">📊</span>Data</span>
+      <span class="role"><span class="em">🔬</span>Research</span>
+      <span class="role">… and anything else</span>
+    </div>
+  </div>
+</section>
+
+<section id="stack">
+  <div class="wrap">
+    <div class="center">
+      <span class="eyebrow">Stack</span>
+      <h2>Native. Local-first. Open.</h2>
+    </div>
+    <div class="stack">
+      <div class="chip"><div class="k">App</div><div class="v">SwiftUI · Swift 6</div></div>
+      <div class="chip"><div class="k">Daemon</div><div class="v">Rust · tokio</div></div>
+      <div class="chip"><div class="k">Transport</div><div class="v">gRPC · UDS</div></div>
+      <div class="chip"><div class="k">Storage</div><div class="v">SQLite</div></div>
+      <div class="chip"><div class="k">Terminal</div><div class="v">SwiftTerm PTY</div></div>
+      <div class="chip"><div class="k">LLM</div><div class="v">Anthropic · Gemini · Ollama</div></div>
+      <div class="chip"><div class="k">Bridge</div><div class="v">MCP stdio</div></div>
+      <div class="chip"><div class="k">License</div><div class="v">MIT</div></div>
+    </div>
+    <div class="term">
+<span class="m"># clone, build, launch</span>
+<span class="c">$</span> git clone https://github.com/danialza/Usta.git
+<span class="c">$</span> cd Usta
+<span class="c">$</span> bash scripts/build-mac.sh
+<span class="c">$</span> open dist/<span class="v">Atelier.app</span>
+
+<span class="m"># requires macOS 15+, Xcode CLT, Rust stable</span>
+    </div>
+  </div>
+</section>
+
+<section class="finalcta">
+  <div class="wrap center">
+    <h2>Stop being<br/>the <span class="grad">project manager.</span></h2>
+    <p class="sub" style="margin:24px auto 36px">Let the team handle it. You ship the feature.</p>
+    <div class="ctas">
+      <a class="btn primary" href="https://github.com/danialza/Usta/releases">↓ Download for macOS</a>
+      <a class="btn ghost" href="https://github.com/danialza/Usta">View on GitHub →</a>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <div>© 2026 Usta · <a href="https://github.com/danialza/Usta/blob/main/LICENSE">MIT</a> · <a href="https://github.com/danialza/Usta/blob/main/TRADEMARK.md">Trademark</a></div>
+    <div>Built by <a href="https://www.linkedin.com/in/danialza/">@danialza</a></div>
+  </div>
+</footer>
+
+</body>
+</html>
