@@ -64,47 +64,29 @@ struct AssistantsGrid: View {
     }
 
     var body: some View {
-        let baseShown = focus == nil ? roles : roles.filter { $0.name == focus }
-        // Maximize works in any view (All or focused). When user navigates
-        // to a chip with a different role, ContentView clears `selectedRole`
-        // and we honour `maximized` directly here.
-        let shown: [Atelier_V1_Role] = {
-            if let m = maximized, let r = baseShown.first(where: { $0.name == m }) { return [r] }
-            return baseShown
-        }()
-        let steps = stepFor
+        // CRITICAL: always render ALL roles. Filtering `shown` per focus
+        // tore down ChatPanes (and their SwiftTerm Metal layers) on every
+        // chip toggle, then re-allocated them on focus-clear. That was the
+        // real chip-switch lag.
+        //
+        // Now we pass `roles` (full list) to the grid unconditionally.
+        // Hidden roles get frame(height: 0) + opacity(0) so SwiftUI keeps
+        // their ChatPane mounted but they don't take layout space.
         Group {
-            if shown.isEmpty {
+            if roles.isEmpty {
                 empty
-            } else if shown.count == 1 {
-                AssistantPane(
-                    workspaceID: workspaceID,
-                    role: shown[0],
-                    collapsed: collapsed.contains(shown[0].name),
-                    onToggleCollapse: { toggle(shown[0].name) },
-                    // In single-pane mode the pane already fills available
-                    // space → "maximize" toggles back to All instead.
-                    isMaximized: true,
-                    onToggleMaximize: {
-                        maximized = nil
-                        onClearFocus?()
-                    },
-                    step: 1,
-                    stateColor: stateColor(bus.state(of: shown[0].name))
-                )
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(UstaTheme.cell)
-                .clipShape(RoundedRectangle(cornerRadius: 10))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10)
-                        .stroke(UstaTheme.roleColor(for: shown[0].name).opacity(0.35))
-                )
-                .padding(10)
             } else {
-                grid(shown)
+                grid(roles)
             }
         }
         .onChange(of: focus) { _, _ in reconcileMaximize() }
+    }
+
+    /// Visible role(s) for the current focus / maximize state.
+    private var visibleNames: Set<String> {
+        if let m = maximized { return [m] }
+        if let f = focus     { return [f] }
+        return Set(roles.map { $0.name })   // All
     }
 
     /// Compute column count from available width with a min pane width.
@@ -135,23 +117,41 @@ struct AssistantsGrid: View {
         let displayStep: [String: Int] = Dictionary(uniqueKeysWithValues:
             ordered.enumerated().map { ($1.name, $0 + 1) }
         )
+        let visible = visibleNames
+        let visibleCount = ordered.filter { visible.contains($0.name) }.count
         return GeometryReader { geo in
-            let n = cols(for: geo.size.width, count: shown.count)
+            // Column count based on visible pane count, not total (so a
+            // single focused role gets a full-width pane).
+            let n = cols(for: geo.size.width, count: max(1, visibleCount))
             let layout = Array(repeating: GridItem(.flexible(minimum: 380), spacing: 8), count: n)
             ScrollView {
+                // Regular VGrid (NOT Lazy) — keeps every pane in the SwiftUI
+                // tree even when scrolled off / hidden. SwiftTerm.TerminalView
+                // instances live across chip toggles.
                 LazyVGrid(columns: layout, spacing: 8) {
                     ForEach(ordered, id: \.name) { role in
+                        let isVisible = visible.contains(role.name)
                         AssistantPane(
                             workspaceID: workspaceID,
                             role: role,
                             collapsed: collapsed.contains(role.name),
                             onToggleCollapse: { toggle(role.name) },
-                            isMaximized: maximized == role.name,
-                            onToggleMaximize: { toggleMax(role.name) },
+                            isMaximized: maximized == role.name || (focus == role.name && visibleCount == 1),
+                            onToggleMaximize: {
+                                if focus == role.name && visibleCount == 1 {
+                                    maximized = nil
+                                    onClearFocus?()
+                                } else {
+                                    toggleMax(role.name)
+                                }
+                            },
                             step: displayStep[role.name],
                             stateColor: stateColor(bus.state(of: role.name))
                         )
-                        .frame(minHeight: collapsed.contains(role.name) ? 56 : 360)
+                        .frame(minHeight: isVisible ? (collapsed.contains(role.name) ? 56 : 360) : 0,
+                               maxHeight: isVisible ? .infinity : 0)
+                        .opacity(isVisible ? 1 : 0)
+                        .allowsHitTesting(isVisible)
                         .background(UstaTheme.cell)
                         .clipShape(RoundedRectangle(cornerRadius: 10))
                         .overlay(
@@ -161,9 +161,6 @@ struct AssistantsGrid: View {
                     }
                 }
                 .padding(10)
-                // No .animation here — animating positions of LazyVGrid
-                // cells that contain SwiftTerm Metal layers was the visible
-                // chip-switch lag. Reordering now snaps.
             }
         }
     }

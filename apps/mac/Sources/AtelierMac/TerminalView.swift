@@ -5,14 +5,8 @@ import AtelierProto
 import GRPCCore
 
 /// NSViewRepresentable wrapping SwiftTerm.TerminalView.
-///
-/// Critical perf detail: SwiftTerm's TerminalView is HEAVY — it owns a
-/// Metal layer, a font atlas, and a CharData grid. Allocating one per
-/// SwiftUI re-mount (role-chip switch) blocked the main thread.
-///
-/// Now the NSView is owned by TerminalSession (strong ref). makeNSView
-/// pops the cached view out of its previous superview and reuses it.
-/// The terminal grid, scrollback, and font atlas survive the mount.
+/// Bytes coming back from the daemon are fed via `feed(bytes:)`.
+/// Keystrokes typed by the user are forwarded via the `onInput` callback.
 struct PtyTerminalView: NSViewRepresentable {
     final class Coordinator: NSObject, TerminalViewDelegate {
         var onInput: (Data) -> Void = { _ in }
@@ -39,19 +33,8 @@ struct PtyTerminalView: NSViewRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator() }
 
     func makeNSView(context: Context) -> TerminalView {
-        // FAST PATH: reuse the cached NSView the session is already
-        // streaming bytes into.
-        let term: TerminalView
-        if let cached = session.cachedView {
-            term = cached
-            // Detach from previous SwiftUI hosting view so AppKit lets us
-            // re-host it under a new parent.
-            cached.removeFromSuperview()
-        } else {
-            term = TerminalView()
-            term.terminalDelegate = context.coordinator
-            session.attach(view: term)
-        }
+        let term = TerminalView()
+        term.terminalDelegate = context.coordinator
         context.coordinator.hosted = term
         context.coordinator.onInput = { [weak session] data in
             Task { await session?.sendInput(data) }
@@ -59,9 +42,8 @@ struct PtyTerminalView: NSViewRepresentable {
         context.coordinator.onResize = { [weak session] cols, rows in
             Task { await session?.sendResize(cols: cols, rows: rows) }
         }
-        // Re-bind so the session's flushPending targets the live view.
         session.attach(view: term)
-        // Grab keyboard focus ONCE per mount — not on every update.
+        // Grab keyboard focus ONCE per mount (not on every update).
         DispatchQueue.main.async { [weak term] in
             term?.window?.makeFirstResponder(term)
         }
@@ -69,9 +51,9 @@ struct PtyTerminalView: NSViewRepresentable {
     }
 
     func updateNSView(_ nsView: TerminalView, context: Context) {
-        // Drain anything that arrived while the view was offscreen.
+        // Drain anything buffered while the view was offscreen.
         session.flushPending(to: nsView)
-        // Intentionally NO makeFirstResponder here — repeated calls per
+        // Deliberately NO makeFirstResponder here — repeated calls per
         // SwiftUI body invalidation caused responder churn / lag.
     }
 }
