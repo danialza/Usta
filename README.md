@@ -31,20 +31,15 @@
 
 **Usta** ("master craftsman" in Turkish & Azerbaijani) is a native macOS IDE that runs a **panel of AI specialists in parallel** — each with its own role, system prompt, toolbelt, and live CLI session.
 
-- 🎨 **Frontend** — UI components, layouts, accessibility
-- ⚙️ **Backend** — APIs, business logic, integrations
-- 🧠 **Product Manager** — scope, roadmap, prioritization
-- 🎭 **UI/UX** — design tokens, specs, wireframes
-- 🔒 **Security** — OWASP audits, auth, threat models
-- 🧪 **QA** — e2e tests, regression, coverage
-- 🚀 **DevOps** — CI/CD, deploys, observability
-- 🗄️ **DBA** — schema, migrations, query perf
-- ✨ **Animation Specialist** — Framer Motion, GSAP
-- 📚 **Docs** — API references, onboarding guides
+You don't pick the team. **A PM agent reads your project, decides which specialists it needs, and generates each role's brief on the fly.** A landing page might spawn a frontend, a designer, and an animation specialist. A trading backend might spawn an API engineer, a DBA, a security auditor, and QA. A docs site might just be writer + reviewer. Whatever the project asks for, the team is shaped to fit.
 
-They coordinate over a **shared event bus**. Frontend ships a component → publishes `ui.component.added` → QA wakes up, writes tests → publishes `tests.passing`. If tests fail, backend gets reopened automatically.
+Roles aren't a fixed menu — they're proposed per workspace. Common ones the PM tends to draft:
 
-You describe the feature once. The **PM agent** splits it across the team. You watch ten panes work.
+> Frontend · Backend · UI/UX · Animation · QA · DevOps · DBA · Security · Docs · Mobile · Data · Research — and anything else the project actually needs.
+
+They coordinate over a **shared event bus**. Frontend ships a component → publishes `ui.component.added` → QA wakes up, writes tests → publishes `tests.passing`. If tests fail, the responsible role gets reopened automatically.
+
+You describe the project or feature once. The PM splits it across whichever specialists it picked. You watch the panes work.
 
 ---
 

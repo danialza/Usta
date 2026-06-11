@@ -15,3 +15,6 @@ DerivedData/
 Package.resolved
 # Built .app bundle (use scripts/build-mac.sh to regenerate)
 dist/
+
+# launch drafts — local only
+/docs/launch/
