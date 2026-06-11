@@ -23,9 +23,10 @@ struct SidebarAwareLeadingPadding: ViewModifier {
 
     func body(content: Content) -> some View {
         content
-            // Closed: 78px clears the floating toggle button (~70px wide
-            // from the window edge) with minimal extra gap. Open: 14.
-            .padding(.leading, collapsed ? 78 : 14)
-            .padding(.top, 6)
+            // Always small leading — content sits flush-left.
+            .padding(.leading, 14)
+            // When closed, push content DOWN past the floating
+            // traffic-light + toggle-button row instead of sideways.
+            .padding(.top, collapsed ? 40 : 6)
     }
 }
