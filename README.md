@@ -79,7 +79,7 @@ I wanted AI tooling that worked the same way. So I built it.
 git clone https://github.com/danialza/Usta.git
 cd Usta
 bash scripts/build-mac.sh
-open dist/Atelier.app
+open dist/Usta.app
 ```
 
 Requires macOS 15+, Xcode CLT, Rust stable.
@@ -153,7 +153,7 @@ Type a request in the **"Add new feature or change…"** field at the top. PM re
                │ gRPC over UDS
                ▼
 ┌─────────────────────────────────────────┐
-│  atelierd (Rust daemon)                 │
+│  ustad (Rust daemon)                 │
 │  • PTY manager                          │
 │  • Event bus (SQLite)                   │
 │  • PM orchestrator (Anthropic client)   │
@@ -173,21 +173,21 @@ usta/
 ├── proto/                   gRPC contract (single source of truth)
 ├── roles/                   builtin role YAMLs
 ├── crates/
-│   ├── atelier-proto/       tonic-generated stubs
-│   ├── atelier-core/        sqlite + pty manager + tool registry
-│   ├── atelier-providers/   Anthropic + Gemini + Ollama (streaming)
-│   ├── atelier-index/       fastembed + cosine search
-│   ├── atelier-pm/          PM agent (orchestration + grill)
-│   ├── atelier-roles/       role library
-│   ├── atelier-mcp/         stdio MCP server
-│   ├── atelier-daemon/      atelierd
-│   └── atelier-cli/         ateliercli
+│   ├── usta-proto/       tonic-generated stubs
+│   ├── usta-core/        sqlite + pty manager + tool registry
+│   ├── usta-providers/   Anthropic + Gemini + Ollama (streaming)
+│   ├── usta-index/       fastembed + cosine search
+│   ├── usta-pm/          PM agent (orchestration + grill)
+│   ├── usta-roles/       role library
+│   ├── usta-mcp/         stdio MCP server
+│   ├── usta-daemon/      ustad
+│   └── usta-cli/         ustacli
 ├── apps/
 │   └── mac/                 SwiftUI app
 └── scripts/build-mac.sh
 ```
 
-> **Note on naming.** Internal crates and the daemon binary are still `atelier-*` / `atelierd` from the prototype phase. The user-facing brand is **Usta**. The internal rename is deferred to avoid breaking existing Keychain entries + paths.
+> **Note on naming.** Internal crates and the daemon binary are still `atelier-*` / `ustad` from the prototype phase. The user-facing brand is **Usta**. The internal rename is deferred to avoid breaking existing Keychain entries + paths.
 
 ---
 
@@ -206,7 +206,7 @@ usta/
 PRs welcome. For non-trivial changes, open an issue first.
 
 ```bash
-cargo build --release -p atelier-daemon   # daemon
+cargo build --release -p usta-daemon   # daemon
 bash scripts/build-mac.sh                 # full Mac bundle
 ```
 

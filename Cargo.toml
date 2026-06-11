@@ -1,15 +1,15 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/atelier-proto",
-    "crates/atelier-core",
-    "crates/atelier-providers",
-    "crates/atelier-index",
-    "crates/atelier-pm",
-    "crates/atelier-roles",
-    "crates/atelier-daemon",
-    "crates/atelier-cli",
-    "crates/atelier-mcp",
+    "crates/usta-proto",
+    "crates/usta-core",
+    "crates/usta-providers",
+    "crates/usta-index",
+    "crates/usta-pm",
+    "crates/usta-roles",
+    "crates/usta-daemon",
+    "crates/usta-cli",
+    "crates/usta-mcp",
 ]
 
 [workspace.package]
@@ -18,7 +18,7 @@ edition = "2021"
 rust-version = "1.80"
 authors = ["danial <danial.zaferanchi@gmail.com>"]
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/danialza/atelier"
+repository = "https://github.com/danialza/Usta"
 
 [workspace.dependencies]
 tokio = { version = "1.40", features = ["full"] }

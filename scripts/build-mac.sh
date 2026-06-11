@@ -1,35 +1,35 @@
 #!/usr/bin/env bash
-# Builds Atelier.app at <repo>/dist/Atelier.app.
+# Builds Usta.app at <repo>/dist/Usta.app.
 # Steps:
-#   1. cargo build --release (atelierd, ateliercli)
-#   2. swift build -c release (AtelierMac)
+#   1. cargo build --release (ustad, ustacli)
+#   2. swift build -c release (UstaMac)
 #   3. assemble a minimal .app bundle with Info.plist + bundled daemon
 #
 # Notarisation / signing are out of scope for this script (TODO: codesign +
 # notarytool once we have a Developer ID). The unsigned bundle still runs
-# locally; users can `xattr -dr com.apple.quarantine Atelier.app` if needed.
+# locally; users can `xattr -dr com.apple.quarantine Usta.app` if needed.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DIST="$ROOT/dist"
-APP="$DIST/Atelier.app"
+APP="$DIST/Usta.app"
 
-echo "==> Cargo release build (atelierd + ateliercli + atelier-mcp)"
+echo "==> Cargo release build (ustad + ustacli + usta-mcp)"
 cd "$ROOT"
 # Build per-package separately. A combined "-p A -p B -p C" build sometimes
-# leaves target/release/atelierd as a stale variant due to cross-package
+# leaves target/release/ustad as a stale variant due to cross-package
 # artifact reuse — building each in its own invocation forces fresh outputs.
-cargo build --release -p atelier-cli
-cargo build --release -p atelier-mcp
-cargo build --release -p atelier-daemon
+cargo build --release -p usta-cli
+cargo build --release -p usta-mcp
+cargo build --release -p usta-daemon
 
-echo "==> Swift release build (AtelierMac)"
+echo "==> Swift release build (UstaMac)"
 cd "$ROOT/apps/mac"
 swift build -c release
 
-SWIFT_BIN="$ROOT/apps/mac/.build/release/AtelierMac"
-DAEMON_BIN="$ROOT/target/release/atelierd"
-CLI_BIN="$ROOT/target/release/ateliercli"
+SWIFT_BIN="$ROOT/apps/mac/.build/release/UstaMac"
+DAEMON_BIN="$ROOT/target/release/ustad"
+CLI_BIN="$ROOT/target/release/ustacli"
 
 [ -x "$SWIFT_BIN"  ] || { echo "missing $SWIFT_BIN"; exit 1; }
 [ -x "$DAEMON_BIN" ] || { echo "missing $DAEMON_BIN"; exit 1; }
@@ -38,11 +38,11 @@ echo "==> Assembling $APP"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
-cp "$SWIFT_BIN"  "$APP/Contents/MacOS/Atelier"
-cp "$DAEMON_BIN" "$APP/Contents/MacOS/atelierd"
-[ -x "$CLI_BIN" ] && cp "$CLI_BIN" "$APP/Contents/MacOS/ateliercli" || true
-MCP_BIN="$ROOT/target/release/atelier-mcp"
-[ -x "$MCP_BIN" ] && cp "$MCP_BIN" "$APP/Contents/MacOS/atelier-mcp" || true
+cp "$SWIFT_BIN"  "$APP/Contents/MacOS/Usta"
+cp "$DAEMON_BIN" "$APP/Contents/MacOS/ustad"
+[ -x "$CLI_BIN" ] && cp "$CLI_BIN" "$APP/Contents/MacOS/ustacli" || true
+MCP_BIN="$ROOT/target/release/usta-mcp"
+[ -x "$MCP_BIN" ] && cp "$MCP_BIN" "$APP/Contents/MacOS/usta-mcp" || true
 
 # Bundle the role library so first-launch has the 5 builtins.
 mkdir -p "$APP/Contents/Resources/roles"
@@ -59,10 +59,10 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 <dict>
     <key>CFBundleName</key>                    <string>Usta</string>
     <key>CFBundleDisplayName</key>             <string>Usta</string>
-    <key>CFBundleIdentifier</key>              <string>dev.atelier.Atelier</string>
+    <key>CFBundleIdentifier</key>              <string>dev.usta.Usta</string>
     <key>CFBundleVersion</key>                 <string>0.1.0</string>
     <key>CFBundleShortVersionString</key>      <string>0.1.0</string>
-    <key>CFBundleExecutable</key>              <string>Atelier</string>
+    <key>CFBundleExecutable</key>              <string>Usta</string>
     <key>CFBundleIconFile</key>                <string>Usta</string>
     <key>CFBundlePackageType</key>             <string>APPL</string>
     <key>LSMinimumSystemVersion</key>          <string>15.0</string>

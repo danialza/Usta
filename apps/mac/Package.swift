@@ -2,12 +2,12 @@
 import PackageDescription
 
 let package = Package(
-    name: "AtelierMac",
+    name: "UstaMac",
     platforms: [
         .macOS(.v15),
     ],
     products: [
-        .executable(name: "AtelierMac", targets: ["AtelierMac"]),
+        .executable(name: "UstaMac", targets: ["UstaMac"]),
     ],
     dependencies: [
         .package(url: "https://github.com/grpc/grpc-swift-2.git", from: "2.0.0"),
@@ -18,14 +18,14 @@ let package = Package(
     ],
     targets: [
         .target(
-            name: "AtelierProto",
+            name: "UstaProto",
             dependencies: [
                 .product(name: "GRPCCore", package: "grpc-swift-2"),
                 .product(name: "GRPCProtobuf", package: "grpc-swift-protobuf"),
                 .product(name: "SwiftProtobuf", package: "swift-protobuf"),
             ],
-            path: "Sources/AtelierProto",
-            // atelier.proto is symlinked into this directory from the repo
+            path: "Sources/UstaProto",
+            // usta.proto is symlinked into this directory from the repo
             // root. The grpc-swift-protobuf plugin discovers the .proto and
             // the adjacent grpc-swift-proto-generator-config.json file.
             plugins: [
@@ -33,14 +33,14 @@ let package = Package(
             ]
         ),
         .executableTarget(
-            name: "AtelierMac",
+            name: "UstaMac",
             dependencies: [
-                "AtelierProto",
+                "UstaProto",
                 .product(name: "GRPCCore", package: "grpc-swift-2"),
                 .product(name: "GRPCNIOTransportHTTP2", package: "grpc-swift-nio-transport"),
                 .product(name: "SwiftTerm", package: "SwiftTerm"),
             ],
-            path: "Sources/AtelierMac",
+            path: "Sources/UstaMac",
             resources: [.process("Resources")]
         ),
     ]

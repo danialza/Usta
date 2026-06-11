@@ -35,5 +35,5 @@ body:
     id: logs
     attributes:
       label: Daemon log
-      description: Last ~100 lines of `~/Library/Logs/Atelier/atelierd.log` if relevant.
+      description: Last ~100 lines of `~/Library/Logs/Usta/ustad.log` if relevant.
       render: shell

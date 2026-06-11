@@ -1,0 +1,545 @@
+syntax = "proto3";
+
+package usta.v1;
+
+// Usta core service.
+service Usta {
+  // Health check.
+  rpc Ping(PingRequest) returns (PingResponse);
+
+  // Workspace management.
+  rpc OpenWorkspace(OpenWorkspaceRequest) returns (Workspace);
+  rpc ListWorkspaces(Empty) returns (WorkspaceList);
+  rpc CloseWorkspace(CloseWorkspaceRequest) returns (Empty);
+
+  // Provider / model introspection.
+  rpc ListProviders(Empty) returns (ProviderList);
+
+  // Streaming chat. Server emits a sequence of ChatToken until done=true.
+  rpc Chat(ChatRequest) returns (stream ChatToken);
+
+  // Terminal lifecycle.
+  rpc CreateTerminal(CreateTerminalRequest) returns (Terminal);
+  rpc ListTerminals(ListTerminalsRequest) returns (TerminalList);
+  rpc CloseTerminal(CloseTerminalRequest) returns (Empty);
+
+  // Bidirectional pty stream. Client first sends PtyAttach, then PtyInput /
+  // PtyResize frames. Server streams PtyOutput chunks and a final PtyExit.
+  rpc StreamPty(stream PtyClientMsg) returns (stream PtyServerMsg);
+
+  // Index a workspace (walk + chunk + embed). Streams progress until done=true.
+  rpc IndexWorkspace(IndexRequest) returns (stream IndexProgress);
+
+  // Semantic search over indexed chunks.
+  rpc SearchWorkspace(SearchRequest) returns (SearchResults);
+
+  // PM orchestrator: identify stack + propose team for a workspace.
+  rpc AnalyzeWorkspace(AnalyzeRequest) returns (WorkspaceAnalysis);
+
+  // Roles.
+  rpc ListRoles(ListRolesRequest) returns (RoleList);
+  rpc RoleChat(RoleChatRequest) returns (stream ChatToken);
+
+  // Materialize a PM-proposed team as workspace-scoped roles
+  // (<ws>/.usta/roles/*.yaml). Reloads the daemon's library.
+  rpc ApplyTeam(ApplyTeamRequest) returns (ApplyTeamResponse);
+
+  // Add or remove a single role on a workspace (writes/removes the yaml).
+  rpc AddRole(AddRoleRequest) returns (AddRoleResponse);
+  rpc DeleteRole(DeleteRoleRequest) returns (Empty);
+
+  // Multi-agent chat. @mentions route the message to one or more roles
+  // (in parallel). Each role's tokens stream back tagged by role name.
+  rpc TeamChat(TeamChatRequest) returns (stream TeamChatEvent);
+
+  // Tool catalog. With a role_name, returns only tools that role is
+  // allowed to invoke.
+  rpc ListTools(ListToolsRequest) returns (ToolList);
+
+  // New-project flow.
+  // 1) PM turns a free-text idea into a full proposal (no fs changes yet).
+  rpc ProposeProject(ProposeProjectRequest) returns (ProjectProposal);
+  // 2) Caller picks a parent dir; daemon creates <parent>/<slug>/ + writes
+  //    .usta/roles and opens it as a workspace.
+  rpc ScaffoldProject(ScaffoldProjectRequest) returns (ScaffoldProjectResponse);
+
+  // Inter-agent event bus.
+  rpc PublishEvent(PublishEventRequest) returns (Event);
+  rpc ListEvents(ListEventsRequest) returns (EventList);
+
+  // Per-assistant chat history.
+  rpc GetHistory(GetHistoryRequest) returns (HistoryList);
+
+  // Approve/deny a pending tool call (for roles with 'ask' permission).
+  rpc ApproveTool(ApproveToolRequest) returns (Empty);
+
+  // Regenerate a role's `kickoff` text based on current event log + role
+  // history. Writes the new kickoff into the workspace yaml and returns it.
+  rpc RegenerateKickoff(RegenerateKickoffRequest) returns (RegenerateKickoffResponse);
+
+  // Orchestrate a new feature request: PM picks affected roles, generates
+  // a concrete task for each, writes them into role yamls, returns the plan.
+  rpc OrchestrateFeature(OrchestrateFeatureRequest) returns (OrchestrateFeatureResponse);
+
+  // Orchestrate an issue (test fail, security finding, deploy rollback): PM
+  // identifies which upstream roles must fix it, writes targeted fix-tasks
+  // into their yamls. Reuses AffectedRole shape.
+  rpc OrchestrateIssue(OrchestrateIssueRequest) returns (OrchestrateFeatureResponse);
+
+  // Anthropic rate-limit snapshot (parsed from last response headers).
+  // Empty/zeros if no API call has run yet.
+  rpc GetRateLimit(Empty) returns (RateLimitInfo);
+
+  // Grill (clarifying Q&A) for an in-progress project proposal.
+  // 1) Generate targeted questions to fill gaps in the current proposal.
+  rpc GenerateGrillQuestions(GrillQuestionsRequest) returns (GrillQuestionsResponse);
+  // 2) Re-propose the project incorporating the user's grill answers.
+  rpc RefineProposal(RefineProposalRequest) returns (ProjectProposal);
+}
+
+message GrillQuestionsRequest {
+  string idea               = 1;
+  ProjectProposal proposal  = 2;
+  string provider           = 3;
+  string model              = 4;
+}
+
+message GrillQuestion {
+  string id                  = 1;
+  string question            = 2;
+  string rationale           = 3;
+  repeated string options    = 4;  // suggested chips; empty = free-text only
+  bool   allow_free_text     = 5;
+}
+
+message GrillQuestionsResponse { repeated GrillQuestion items = 1; }
+
+message GrillAnswer {
+  string id     = 1;
+  string answer = 2;
+}
+
+message RefineProposalRequest {
+  string idea                       = 1;
+  ProjectProposal current_proposal  = 2;
+  repeated GrillQuestion questions  = 3;
+  repeated GrillAnswer   answers    = 4;
+  string provider                   = 5;
+  string model                      = 6;
+}
+
+message RateLimitInfo {
+  int64 limit                  = 1;  // requests per minute
+  int64 remaining              = 2;
+  int64 reset_unix_ms          = 3;
+  int64 tokens_in_remaining    = 4;
+  int64 tokens_out_remaining   = 5;
+  int64 last_updated_unix_ms   = 6;
+}
+
+message OrchestrateIssueRequest {
+  string workspace_id = 1;
+  // Event that flagged the issue (e.g. {from_role:"qa", topic:"tests.failing",
+  // summary:"ContactForm test missing reset"}). Daemon passes its own
+  // event_id alternatively via issue_event_id.
+  string from_role     = 2;
+  string topic         = 3;
+  string summary       = 4;
+  string provider      = 5;  // default anthropic
+  string model         = 6;  // default haiku
+}
+
+message OrchestrateFeatureRequest {
+  string workspace_id = 1;
+  string feature_text = 2;   // free-form user request
+  string provider     = 3;   // default anthropic
+  string model        = 4;   // default haiku
+}
+
+message AffectedRole {
+  string role_name = 1;
+  string task      = 2;      // imperative prompt PM wrote for this role
+}
+
+message OrchestrateFeatureResponse {
+  string plan_summary           = 1;
+  repeated AffectedRole roles   = 2;
+}
+
+message RegenerateKickoffRequest {
+  string workspace_id = 1;
+  string role_name    = 2;
+  // Optional override; empty = use PM defaults (anthropic / haiku).
+  string provider     = 3;
+  string model        = 4;
+}
+
+message RegenerateKickoffResponse {
+  string role_name    = 1;
+  string kickoff      = 2;
+}
+
+message Empty {}
+
+// --- Ping ---
+
+message PingRequest  { string client_name = 1; }
+message PingResponse {
+  string daemon_version = 1;
+  int64  server_unix_ms = 2;
+  string greeting       = 3;
+}
+
+// --- Workspace ---
+
+message OpenWorkspaceRequest { string path = 1; }
+message Workspace {
+  string id    = 1;
+  string path  = 2;
+  string name  = 3;
+  int64  opened_unix_ms = 4;
+}
+message WorkspaceList { repeated Workspace items = 1; }
+message CloseWorkspaceRequest { string id = 1; }
+
+// --- Providers ---
+
+message ProviderInfo {
+  string name         = 1; // "anthropic", "ollama", ...
+  bool   available    = 2; // configured + reachable
+  repeated string default_models = 3;
+}
+message ProviderList { repeated ProviderInfo items = 1; }
+
+// --- Chat ---
+
+message ChatMessage {
+  string role    = 1; // "user" | "assistant"
+  string content = 2;
+}
+
+message ChatRequest {
+  string provider = 1;             // "anthropic" | "ollama"
+  string model    = 2;             // model id
+  string system   = 3;             // optional system prompt
+  repeated ChatMessage messages = 4;
+  int32  max_tokens = 5;           // 0 = provider default
+}
+
+message ChatToken {
+  string text        = 1; // incremental text delta
+  bool   done        = 2; // final frame
+  string stop_reason = 3; // set when done
+  string error       = 4; // non-empty on failure
+  // Agentic tool activity (mutually exclusive with text):
+  string tool_name     = 5; // non-empty => this frame is a tool call/result
+  string tool_input    = 6; // JSON args (on call)
+  string tool_output   = 7; // result text (on result)
+  bool   tool_result   = 8; // false = call, true = result
+  bool   needs_approval = 9; // true => UI must call ApproveTool(call_id)
+  string tool_call_id  = 10; // correlates approval
+}
+
+// --- Terminal ---
+
+message CreateTerminalRequest {
+  string workspace_id = 1;
+  string shell        = 2;  // default "zsh"
+  string cwd          = 3;  // default = workspace path
+  int32  cols         = 4;
+  int32  rows         = 5;
+  string command      = 6;  // optional: run this CLI instead of a shell
+  string role         = 7;  // optional: role name (for MCP bus context)
+}
+
+message Terminal {
+  string id              = 1;
+  string workspace_id    = 2;
+  string shell           = 3;
+  string cwd             = 4;
+  int64  created_unix_ms = 5;
+  bool   alive           = 6;
+  // Role this terminal is tagged with (CLI agent role). Empty for
+  // free-form shells. Used by the Mac app to reattach panes across
+  // navigation without losing pty state.
+  string role            = 7;
+}
+
+message ListTerminalsRequest { string workspace_id = 1; /* empty = all */ }
+message TerminalList         { repeated Terminal items = 1; }
+message CloseTerminalRequest { string id = 1; }
+
+// --- Pty bidi ---
+
+message PtyClientMsg {
+  oneof kind {
+    PtyAttach attach = 1;
+    PtyInput  input  = 2;
+    PtyResize resize = 3;
+  }
+}
+
+message PtyAttach { string terminal_id = 1; }
+message PtyInput  { bytes  data = 1; }
+message PtyResize { int32  cols = 1; int32 rows = 2; }
+
+message PtyServerMsg {
+  oneof kind {
+    PtyOutput output = 1;
+    PtyExit   exit   = 2;
+    PtyError  error  = 3;
+  }
+}
+
+message PtyOutput { bytes  data = 1; }
+message PtyExit   { string reason = 1; }
+message PtyError  { string message = 1; }
+
+// --- Index / Search ---
+
+message IndexRequest { string workspace_id = 1; }
+
+message IndexProgress {
+  uint64 files_seen    = 1;
+  uint64 files_indexed = 2;
+  uint64 chunks        = 3;
+  string current_path  = 4;
+  bool   done          = 5;
+}
+
+message SearchRequest {
+  string workspace_id = 1;
+  string query        = 2;
+  int32  k            = 3; // top-k, default 5
+}
+
+message SearchHit {
+  string path       = 1;
+  uint32 start_line = 2;
+  uint32 end_line   = 3;
+  string snippet    = 4;
+  float  score      = 5;
+}
+
+message SearchResults { repeated SearchHit items = 1; }
+
+// --- PM analyze ---
+
+message AnalyzeRequest {
+  string workspace_id = 1;
+  string provider     = 2; // default "anthropic"
+  string model        = 3; // default "claude-sonnet-4-6"
+}
+
+message StackTag {
+  string name     = 1;
+  string category = 2;
+}
+
+message ProposedRole {
+  string name                 = 1;
+  string emoji                = 2;
+  string why                  = 3;
+  string recommended_model    = 4;
+  repeated string tools       = 5;
+  string system_prompt        = 6;
+  string recommended_provider = 7;
+  repeated string claude_skills = 8;
+  repeated string publishes     = 9;
+  repeated string subscribes    = 10;
+  string cli_command            = 11;
+  string kickoff                = 12;
+}
+
+message WorkspaceAnalysis {
+  string summary                = 1;
+  repeated StackTag stack       = 2;
+  repeated ProposedRole team    = 3;
+}
+
+// --- Roles ---
+
+message Role {
+  string name              = 1;
+  string emoji             = 2;
+  string description       = 3;
+  string default_provider  = 4;
+  string default_model     = 5;
+  repeated string allowed_tools = 6;
+  string source_path       = 7;
+  string scope             = 8; // "builtin" | "user" | "workspace"
+  repeated string claude_skills      = 9;
+  repeated string handoff_publishes  = 10;
+  repeated string handoff_subscribes = 11;
+  // Optional CLI to spawn for this role (e.g. "claude", "gemini",
+  // "aider --model ...", "codex"). When set, the assistant pane defaults
+  // to CLI backend.
+  string cli_command       = 12;
+  string kickoff           = 13;
+}
+
+message ListRolesRequest {
+  // optional: include workspace-scoped roles for this workspace
+  string workspace_id = 1;
+}
+
+message RoleList { repeated Role items = 1; }
+
+message ApplyTeamRequest {
+  string workspace_id = 1;
+  string provider     = 2; // default "anthropic"
+  string model        = 3; // default "claude-sonnet-4-6"
+}
+
+message ApplyTeamResponse {
+  WorkspaceAnalysis analysis = 1;
+  repeated string written_paths = 2;
+}
+
+message AddRoleRequest {
+  string workspace_id = 1;
+  ProposedRole role   = 2;
+}
+
+message AddRoleResponse {
+  Role role         = 1;
+  string written_path = 2;
+}
+
+message DeleteRoleRequest {
+  string workspace_id = 1;
+  string role_name    = 2;
+}
+
+// --- Team chat ---
+
+message TeamChatRequest {
+  string workspace_id = 1;
+  string user_msg     = 2;
+  // explicit role list; empty => auto-detect @mentions in user_msg
+  repeated string mentions = 3;
+  // optional model override applied to every mentioned role
+  string model = 4;
+}
+
+message TeamChatEvent {
+  string role        = 1; // which role is speaking
+  string text        = 2; // incremental text
+  bool   done        = 3; // this role finished
+  string stop_reason = 4;
+  string error       = 5;
+}
+
+// --- Tool registry ---
+
+message Tool {
+  string name           = 1;
+  string kind           = 2; // "shell" | "fs" | "binary"
+  string description    = 3;
+  bool   needs_approval = 4;
+}
+
+message ListToolsRequest {
+  // empty => list all tools; non-empty => intersect with role.allowed_tools
+  string role_name = 1;
+  string workspace_id = 2;
+}
+
+message ToolList { repeated Tool items = 1; }
+
+// --- New project ---
+
+message ProposeProjectRequest {
+  string idea     = 1;
+  string provider = 2; // default "anthropic"
+  string model    = 3; // default "claude-sonnet-4-6"
+}
+
+message ProjectProposal {
+  string project_name           = 1;
+  string project_slug           = 2;
+  string summary                = 3;
+  string first_steps            = 4;
+  repeated StackTag stack       = 5;
+  repeated ProposedRole team    = 6;
+}
+
+message ScaffoldProjectRequest {
+  ProjectProposal proposal = 1;
+  string parent_dir        = 2;
+  // Original free-text idea + any grill Q&A. Written as the first
+  // feature.requested event so PM auto-orchestrates initial kickoffs.
+  string idea              = 3;
+  // Optional provider/model for the auto-orchestration call. Defaults to
+  // anthropic + claude-haiku-4-5.
+  string provider          = 4;
+  string model             = 5;
+}
+
+message ScaffoldProjectResponse {
+  Workspace workspace      = 1;
+  repeated string written_paths = 2;
+}
+
+// --- Event bus ---
+
+message Event {
+  int64  id              = 1;
+  string workspace_id    = 2;
+  string from_role       = 3;
+  string topic           = 4;
+  string summary         = 5;
+  int64  created_unix_ms = 6;
+  // Files changed on disk since this role's previous event (relative paths).
+  // Computed via `git diff --name-only` when the workspace is a git repo,
+  // else best-effort mtime walk. Empty if nothing to report.
+  repeated string files_changed = 7;
+}
+
+message PublishEventRequest {
+  string workspace_id = 1;
+  string from_role    = 2;
+  string topic        = 3;
+  string summary      = 4;
+}
+
+message ListEventsRequest {
+  string workspace_id    = 1;
+  repeated string topics = 2;  // empty = all
+  int64  after_id        = 3;  // 0 = from start
+  int32  limit           = 4;  // 0 = default 50
+}
+
+message EventList { repeated Event items = 1; }
+
+// --- Chat history ---
+
+message GetHistoryRequest {
+  string workspace_id = 1;
+  string agent_role   = 2;
+  int32  limit        = 3; // 0 = default 200
+}
+
+message HistoryMessage {
+  string role            = 1; // "user" | "assistant"
+  string content         = 2;
+  int64  created_unix_ms = 3;
+}
+
+message HistoryList { repeated HistoryMessage items = 1; }
+
+message ApproveToolRequest {
+  string call_id = 1;
+  bool   allow   = 2;
+}
+
+message RoleChatRequest {
+  string role_name = 1;
+  string user_msg  = 2;
+  // Optional overrides; empty = use role defaults.
+  string provider  = 3;
+  string model     = 4;
+  int32  max_tokens = 5;
+  // Optional: include workspace-scoped roles for this workspace.
+  string workspace_id = 6;
+}

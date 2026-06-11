@@ -1,0 +1,31 @@
+[package]
+name = "usta-daemon"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "ustad"
+path = "src/main.rs"
+
+[dependencies]
+usta-proto = { path = "../usta-proto" }
+usta-core  = { path = "../usta-core" }
+usta-providers = { path = "../usta-providers" }
+usta-index = { path = "../usta-index" }
+usta-pm = { path = "../usta-pm" }
+usta-roles = { path = "../usta-roles" }
+futures = { workspace = true }
+async-stream = { workspace = true }
+uuid = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = "0.9"
+tokio = { workspace = true }
+tonic = { workspace = true }
+prost = { workspace = true }
+tokio-stream = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+clap = { workspace = true }
+async-trait = { workspace = true }
