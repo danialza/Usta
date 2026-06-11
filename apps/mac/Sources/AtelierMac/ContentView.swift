@@ -41,7 +41,7 @@ struct ContentView: View {
             Divider().overlay(UstaTheme.border)
             sidebarBody
         }
-        .background(UstaTheme.sidebar)
+        .background(UstaTheme.sidebar.opacity(0.85).ignoresSafeArea())
         .navigationSplitViewColumnWidth(min: 240, ideal: 260, max: 320)
     }
 
@@ -135,7 +135,6 @@ struct ContentView: View {
     private var detail: some View {
         if let ws = selection {
             WorkspaceDetailView(ws: ws)
-                .background(UstaTheme.bg)
         } else {
             VStack(spacing: 14) {
                 Image(systemName: "rectangle.3.group.bubble")
@@ -148,7 +147,6 @@ struct ContentView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(UstaTheme.bg)
         }
     }
 
@@ -347,7 +345,6 @@ struct WorkspaceDetailView: View {
                                    onClearFocus: { selectedRole = nil })
                         .environmentObject(bus)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .background(UstaTheme.bg)
                 case .terminals:
                     if grid.sessions.isEmpty { empty } else { terminals }
                 }
@@ -361,7 +358,6 @@ struct WorkspaceDetailView: View {
             }
         }
         .environmentObject(bus)
-        .background(UstaTheme.bg)
         .overlay(alignment: .topTrailing) {
             ToastStack().environmentObject(bus)
         }
