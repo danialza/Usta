@@ -582,7 +582,7 @@ struct WorkspaceDetailView: View {
             }
         }
         .padding(.horizontal, 14)
-        .padding(.top, 0)       // gradient bg fills the title-bar area
+        .padding(.top, 18)      // breathing room under the title-bar area
         .padding(.bottom, 10)
     }
 

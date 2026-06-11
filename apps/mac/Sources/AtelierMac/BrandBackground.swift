@@ -1,74 +1,49 @@
 import SwiftUI
 import AppKit
 
-/// Single pre-rendered backdrop: gradient + faint pattern composited into
-/// ONE NSImage at app launch. No SwiftUI gradient compositing, no
-/// blendMode, no per-paint resampling. Cheapest possible — just blit.
+/// Smooth navy gradient base + tiled Usta-mark pattern overlay at very
+/// low opacity. The mark PNG (brand/usta-pattern.png) is the user's
+/// official black silhouette art. Tile honors window size automatically.
 struct BrandBackground: View {
     var body: some View {
-        Image(nsImage: Self.composed)
-            .resizable(resizingMode: .stretch)
-            .interpolation(.none)
-            .allowsHitTesting(false)
+        ZStack {
+            // 1. Pre-baked smooth gradient (cheap)
+            UstaTheme.smoothBackground
+
+            // 2. Pattern tile — uploaded Usta mark as wallpaper
+            if let pattern = Self.patternImage {
+                GeometryReader { geo in
+                    let tile: CGFloat = 220
+                    Canvas { ctx, sz in
+                        var ctx = ctx
+                        ctx.opacity = 0.05      // ~5% — luxurious whisper
+                        var x: CGFloat = 0
+                        while x < sz.width {
+                            var y: CGFloat = 0
+                            // Offset every other column so it doesn't grid up
+                            let yOffset = (Int(x / tile) % 2 == 0) ? 0 : tile / 2
+                            y += yOffset
+                            while y < sz.height {
+                                ctx.draw(Image(nsImage: pattern),
+                                         in: CGRect(x: x, y: y, width: tile, height: tile))
+                                y += tile
+                            }
+                            x += tile
+                        }
+                    }
+                    .frame(width: geo.size.width, height: geo.size.height)
+                }
+                .drawingGroup()
+                .allowsHitTesting(false)
+            }
+        }
     }
 
-    /// 1024×1024 master. Gradient + diagonals + orbs flattened. Stretched
-    /// by SwiftUI to fill window — lines look diagonal at any aspect.
-    private static let composed: NSImage = {
-        let side: CGFloat = 1024
-        let img = NSImage(size: CGSize(width: side, height: side))
-        img.lockFocus()
-        defer { img.unlockFocus() }
-        guard let ctx = NSGraphicsContext.current?.cgContext else { return img }
-
-        // Gradient base (top warmer → middle deep navy → bottom purple tint)
-        let stops: [(CGFloat, NSColor)] = [
-            (0.00, NSColor(srgbRed: 0.039, green: 0.043, blue: 0.094, alpha: 1)), // #0a0b18
-            (0.55, NSColor(srgbRed: 0.020, green: 0.031, blue: 0.063, alpha: 1)), // #050810
-            (1.00, NSColor(srgbRed: 0.027, green: 0.020, blue: 0.063, alpha: 1)), // #070510
-        ]
-        let colors = stops.map { $0.1.cgColor } as CFArray
-        let locs   = stops.map { $0.0 }
-        let space  = CGColorSpaceCreateDeviceRGB()
-        if let grad = CGGradient(colorsSpace: space, colors: colors, locations: locs) {
-            ctx.drawLinearGradient(
-                grad,
-                start: CGPoint(x: side * 0.5, y: side),
-                end:   CGPoint(x: side * 0.5, y: 0),
-                options: []
-            )
+    /// Loaded once from the bundle (Resources/usta-pattern.png).
+    private static let patternImage: NSImage? = {
+        if let url = Bundle.module.url(forResource: "usta-pattern", withExtension: "png") {
+            return NSImage(contentsOf: url)
         }
-
-        // Faint diagonal grid (NW→SE) at ~4% white
-        ctx.setStrokeColor(NSColor.white.withAlphaComponent(0.04).cgColor)
-        ctx.setLineWidth(0.7)
-        let step: CGFloat = 56
-        var x: CGFloat = -side
-        while x < side * 2 {
-            ctx.move(to: CGPoint(x: x,         y: 0))
-            ctx.addLine(to: CGPoint(x: x + side, y: side))
-            x += step
-        }
-        ctx.strokePath()
-
-        // Counter-diagonal at half intensity
-        ctx.setStrokeColor(NSColor.white.withAlphaComponent(0.022).cgColor)
-        var y: CGFloat = -side
-        while y < side * 2 {
-            ctx.move(to: CGPoint(x: side, y: y))
-            ctx.addLine(to: CGPoint(x: 0,    y: y + side))
-            y += step
-        }
-        ctx.strokePath()
-
-        // Two corner orbs
-        ctx.setStrokeColor(NSColor.white.withAlphaComponent(0.055).cgColor)
-        ctx.setLineWidth(1.2)
-        ctx.strokeEllipse(in: CGRect(x: side * 0.7,  y: -side * 0.1,
-                                    width: side * 0.8, height: side * 0.8))
-        ctx.strokeEllipse(in: CGRect(x: -side * 0.1, y: side * 0.55,
-                                    width: side * 0.8, height: side * 0.8))
-
-        return img
+        return nil
     }()
 }
