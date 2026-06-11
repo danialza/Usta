@@ -367,7 +367,9 @@ struct WorkspaceDetailView: View {
         }
         .environmentObject(bus)
         .environmentObject(termCache)
-        .ignoresSafeArea(edges: .top)   // workspace pane reaches the very top edge
+        // Intentionally NOT ignoring top safe area — SwiftUI's safe
+        // area already accounts for the title bar (windowed) and menu
+        // bar (full-screen) so content is never hidden under chrome.
         .overlay(alignment: .topTrailing) {
             ToastStack().environmentObject(bus)
         }

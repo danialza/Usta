@@ -23,11 +23,9 @@ struct SidebarAwareLeadingPadding: ViewModifier {
 
     func body(content: Content) -> some View {
         content
-            .padding(.leading, collapsed ? 96 : 14)
-            // Both states: title sits in the same row as the traffic
-            // lights / sidebar-toggle button (~y=14 from window top).
-            // Closed → leading 96 already pushes title past the toggle.
-            // Open  → leading 14 is fine because sidebar takes leading.
+            // Closed: 150px = traffic lights (12+68) + toggle button
+            // (~60) + spacing. Open: 14 since sidebar takes the leading.
+            .padding(.leading, collapsed ? 150 : 14)
             .padding(.top, 14)
     }
 }
