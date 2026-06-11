@@ -26,7 +26,7 @@
       <stop offset="68%" stop-color="#000000" stop-opacity="0"/>
       <stop offset="100%" stop-color="#050810" stop-opacity="0.65"/>
     </linearGradient>
-    <clipPath id="shotClip"><rect x="56" y="612" width="688" height="312" rx="16"/></clipPath>
+    <clipPath id="shotClip"><rect x="56" y="636" width="688" height="288" rx="16"/></clipPath>
   </defs>
 
   <rect width="800" height="1000" fill="url(#bg)"/>
@@ -36,42 +36,42 @@
   <circle cx="400" cy="330" r="400" fill="none" stroke="#ffffff" stroke-width="1" opacity="0.035"/>
 
   <!-- Logo (hero) -->
-  <image href="usta-logo.png" x="320" y="30" width="160" height="160" preserveAspectRatio="xMidYMid meet"/>
+  <image href="usta-logo.png" x="290" y="22" width="220" height="220" preserveAspectRatio="xMidYMid meet"/>
 
   <!-- Wordmark -->
-  <text x="400" y="286" text-anchor="middle"
+  <text x="400" y="318" text-anchor="middle"
         font-family="ui-sans-serif, -apple-system, 'Inter', system-ui, sans-serif"
         font-size="88" font-weight="800" letter-spacing="-3.5" fill="#F0F1F7">Usta</text>
 
   <!-- Tagline -->
-  <text x="400" y="344" text-anchor="middle"
+  <text x="400" y="376" text-anchor="middle"
         font-family="ui-sans-serif, -apple-system, 'Inter', system-ui, sans-serif"
         font-size="32" font-weight="700" letter-spacing="-0.5" fill="url(#tagG)">Your AI engineering team.</text>
 
   <!-- Plain explanation -->
-  <text x="400" y="420" text-anchor="middle"
+  <text x="400" y="446" text-anchor="middle"
         font-family="ui-sans-serif, -apple-system, 'Inter', system-ui, sans-serif"
         font-size="26" font-weight="500" fill="#cdd0e0">You describe what you want to build.</text>
-  <text x="400" y="458" text-anchor="middle"
+  <text x="400" y="484" text-anchor="middle"
         font-family="ui-sans-serif, -apple-system, 'Inter', system-ui, sans-serif"
         font-size="26" font-weight="500" fill="#cdd0e0">A PM agent builds the team.</text>
-  <text x="400" y="496" text-anchor="middle"
+  <text x="400" y="522" text-anchor="middle"
         font-family="ui-sans-serif, -apple-system, 'Inter', system-ui, sans-serif"
         font-size="26" font-weight="500" fill="#cdd0e0">They work in parallel and ship it.</text>
 
   <!-- 3-step chips with crisp path arrows -->
   <g font-family="ui-sans-serif, -apple-system, 'Inter', system-ui, sans-serif" font-size="19" font-weight="600" text-anchor="middle">
-    <g transform="translate(130 534)">
+    <g transform="translate(130 556)">
       <rect width="150" height="48" rx="24" fill="none" stroke="#3DECFF" stroke-width="1.4"/>
       <text x="75" y="31" fill="#3DECFF">Describe</text>
     </g>
-    <path d="M288 558 L316 558 M309 552 L317 558 L309 564" fill="none" stroke="#6b7095" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
-    <g transform="translate(325 534)">
+    <path d="M288 580 L316 580 M309 574 L317 580 L309 586" fill="none" stroke="#6b7095" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+    <g transform="translate(325 556)">
       <rect width="150" height="48" rx="24" fill="none" stroke="#8B7CF6" stroke-width="1.4"/>
       <text x="75" y="31" fill="#8B7CF6">PM plans</text>
     </g>
-    <path d="M483 558 L511 558 M504 552 L512 558 L504 564" fill="none" stroke="#6b7095" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
-    <g transform="translate(520 534)">
+    <path d="M483 580 L511 580 M504 574 L512 580 L504 586" fill="none" stroke="#6b7095" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+    <g transform="translate(520 556)">
       <rect width="150" height="48" rx="24" fill="none" stroke="#F45BA5" stroke-width="1.4"/>
       <text x="75" y="31" fill="#F45BA5">Team ships</text>
     </g>
@@ -79,10 +79,10 @@
 
   <!-- App screenshot (bigger, lower) -->
   <g clip-path="url(#shotClip)">
-    <image href="screenshots/guide/08-workspace-hero.png" x="56" y="612" width="688" height="439" preserveAspectRatio="xMidYMid slice"/>
-    <rect x="56" y="612" width="688" height="312" fill="url(#shotFade)"/>
+    <image href="screenshots/guide/08-workspace-hero.png" x="56" y="636" width="688" height="439" preserveAspectRatio="xMidYMid slice"/>
+    <rect x="56" y="636" width="688" height="288" fill="url(#shotFade)"/>
   </g>
-  <rect x="56" y="612" width="688" height="312" rx="16" fill="none" stroke="#ffffff" stroke-opacity="0.10" stroke-width="1.5"/>
+  <rect x="56" y="636" width="688" height="288" rx="16" fill="none" stroke="#ffffff" stroke-opacity="0.10" stroke-width="1.5"/>
 
   <!-- URL -->
   <text x="400" y="966" text-anchor="middle"
