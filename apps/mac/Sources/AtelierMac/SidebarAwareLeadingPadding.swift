@@ -1,44 +1,29 @@
 import SwiftUI
 
-/// Reads the host view's global x-origin and conditionally pads BOTH
-/// leading and top edges to clear macOS traffic lights + sidebar-toggle
-/// button when the sidebar is collapsed.
-///
-/// Open sidebar  → minimal margins (14px / 4px), workspace title hugs
-///                 the left edge of its pane.
-/// Closed sidebar → 96px leading + 28px top so the title row clears
-///                 the traffic light cluster AND the toggle button.
-struct SidebarAwareLeadingPadding: ViewModifier {
-    private let openLeading:   CGFloat = 14
-    private let openTop:       CGFloat = 22      // align with sidebar's "Usta" header
-    private let closedLeading: CGFloat = 96
-    private let closedTop:     CGFloat = 22
-    /// Below this threshold we assume the sidebar is collapsed/hidden.
-    private let collapsedThreshold: CGFloat = 40
-
-    @State private var globalX: CGFloat = 9999
-
-    func body(content: Content) -> some View {
-        let collapsed = globalX < collapsedThreshold
-        content
-            .padding(.leading, collapsed ? closedLeading : openLeading)
-            .padding(.top,     collapsed ? closedTop     : openTop)
-            .background(
-                GeometryReader { geo in
-                    Color.clear
-                        .preference(key: GlobalXKey.self,
-                                    value: geo.frame(in: .global).minX)
-                }
-            )
-            .onPreferenceChange(GlobalXKey.self) { newX in
-                if abs(newX - globalX) > 1 { globalX = newX }
-            }
+/// Environment key set by ContentView when the NavigationSplitView's
+/// columnVisibility is .detailOnly. Children read this to decide whether
+/// to reserve space for the macOS traffic-lights cluster.
+private struct SidebarCollapsedKey: EnvironmentKey {
+    static let defaultValue: Bool = false
+}
+extension EnvironmentValues {
+    var sidebarCollapsed: Bool {
+        get { self[SidebarCollapsedKey.self] }
+        set { self[SidebarCollapsedKey.self] = newValue }
     }
 }
 
-private struct GlobalXKey: PreferenceKey {
-    static let defaultValue: CGFloat = 0
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = nextValue()
+/// Responsive header inset.
+///
+/// Open sidebar  → 14px leading + 22px top (title hugs pane edge).
+/// Closed sidebar → 96px leading + 22px top (clear traffic-lights cluster
+///                  AND the sidebar-toggle button on the left).
+struct SidebarAwareLeadingPadding: ViewModifier {
+    @Environment(\.sidebarCollapsed) private var collapsed
+
+    func body(content: Content) -> some View {
+        content
+            .padding(.leading, collapsed ? 96 : 14)
+            .padding(.top, 22)
     }
 }

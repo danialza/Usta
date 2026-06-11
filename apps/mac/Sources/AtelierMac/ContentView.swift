@@ -8,6 +8,7 @@ struct ContentView: View {
     @State private var selection: Atelier_V1_Workspace?
     @State private var showNewProject = false
     @State private var showSettings = false
+    @State private var sidebarVisibility: NavigationSplitViewVisibility = .all
 
     var body: some View {
         Group {
@@ -18,7 +19,13 @@ struct ContentView: View {
                     onSettings: { showSettings = true }
                 )
             } else {
-                NavigationSplitView { sidebar } detail: { detail }
+                NavigationSplitView(columnVisibility: $sidebarVisibility) {
+                    sidebar
+                } detail: {
+                    detail
+                }
+                .environment(\.sidebarCollapsed,
+                             sidebarVisibility == .detailOnly)
             }
         }
         .preferredColorScheme(.dark)
