@@ -25,8 +25,8 @@ struct SidebarAwareLeadingPadding: ViewModifier {
         content
             // Always small leading — content sits flush-left.
             .padding(.leading, 14)
-            // When closed, push content DOWN past the floating
-            // traffic-light + toggle-button row instead of sideways.
-            .padding(.top, collapsed ? 40 : 6)
+            // Closed: just enough top to clear the floating traffic-light
+            // row (~22 from window top edge in windowed mode).
+            .padding(.top, collapsed ? 18 : 6)
     }
 }
