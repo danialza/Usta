@@ -1,20 +1,28 @@
 import SwiftUI
 
-/// Reads the host view's global x-origin and conditionally pads the
-/// leading edge to clear macOS traffic lights + sidebar-toggle button
-/// when the sidebar is collapsed. Cheap — GeometryReader only fires on
-/// layout pass, not on every body call.
+/// Reads the host view's global x-origin and conditionally pads BOTH
+/// leading and top edges to clear macOS traffic lights + sidebar-toggle
+/// button when the sidebar is collapsed.
+///
+/// Open sidebar  → minimal margins (14px / 4px), workspace title hugs
+///                 the left edge of its pane.
+/// Closed sidebar → 96px leading + 28px top so the title row clears
+///                 the traffic light cluster AND the toggle button.
 struct SidebarAwareLeadingPadding: ViewModifier {
-    /// Traffic-light cluster reaches ~80px from window edge.
-    private let clearance: CGFloat = 80
+    private let openLeading:   CGFloat = 14
+    private let openTop:       CGFloat = 4
+    private let closedLeading: CGFloat = 96
+    private let closedTop:     CGFloat = 28
     /// Below this threshold we assume the sidebar is collapsed/hidden.
     private let collapsedThreshold: CGFloat = 40
 
     @State private var globalX: CGFloat = 9999
 
     func body(content: Content) -> some View {
+        let collapsed = globalX < collapsedThreshold
         content
-            .padding(.leading, globalX < collapsedThreshold ? clearance : 14)
+            .padding(.leading, collapsed ? closedLeading : openLeading)
+            .padding(.top,     collapsed ? closedTop     : openTop)
             .background(
                 GeometryReader { geo in
                     Color.clear

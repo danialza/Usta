@@ -581,13 +581,12 @@ struct WorkspaceDetailView: View {
                 newFeatureBar
             }
         }
-        // Responsive leading inset: when our left edge is near the
-        // window's left edge (sidebar collapsed), pad 80px to clear the
-        // traffic lights + sidebar-toggle button. When sidebar is open,
-        // the sidebar absorbs that space already → only minimal padding.
+        // Responsive: when sidebar is collapsed, modifier adds large
+        // leading + top padding to clear traffic-lights + toggle button.
+        // When sidebar is open, modifier uses minimal padding so the
+        // title hugs the workspace pane's left edge.
         .modifier(SidebarAwareLeadingPadding())
         .padding(.trailing, 14)
-        .padding(.top, 18)
         .padding(.bottom, 10)
     }
 
