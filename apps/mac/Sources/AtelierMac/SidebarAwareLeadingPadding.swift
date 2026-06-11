@@ -23,9 +23,10 @@ struct SidebarAwareLeadingPadding: ViewModifier {
 
     func body(content: Content) -> some View {
         content
-            // Closed: 150px = traffic lights (12+68) + toggle button
-            // (~60) + spacing. Open: 14 since sidebar takes the leading.
-            .padding(.leading, collapsed ? 150 : 14)
+            // Just enough to clear the floating sidebar-toggle button
+            // (~95px from window edge). Anything more leaves an awkward
+            // gap. Open: 14 since sidebar takes the leading.
+            .padding(.leading, collapsed ? 100 : 14)
             .padding(.top, 14)
     }
 }
