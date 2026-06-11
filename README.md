@@ -73,17 +73,19 @@ I wanted AI tooling that worked the same way. So I built it.
 
 ## Quickstart
 
-1. Download the latest `Usta-macOS-vX.Y.Z.dmg` from [Releases](https://github.com/danialza/Usta/releases).
-2. Open the DMG → drag **Usta.app** into Applications.
-3. Run this once to remove the macOS Gatekeeper warning:
+**Step 1 — Download & install**
 
-   ```bash
-   xattr -dr com.apple.quarantine /Applications/Usta.app
-   ```
+Grab the latest `Usta-macOS.dmg` from [Releases](https://github.com/danialza/Usta/releases). Open it and drag **Usta.app** into your **Applications** folder.
 
-4. `open /Applications/Usta.app` — daemon auto-spawns.
+**Step 2 — Run this command in Terminal**
 
-> v0.1.0 is unsigned. v0.2 will be Apple-notarized — step 3 will disappear.
+```
+xattr -dr com.apple.quarantine /Applications/Usta.app
+```
+
+**Step 3 — Launch the app**
+
+Open **Usta** from Applications (or Spotlight). The daemon spawns automatically.
 
 ### First run — a guided walkthrough
 
