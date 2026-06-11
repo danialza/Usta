@@ -19,6 +19,10 @@ final class TerminalSession: ObservableObject, Identifiable {
     @Published var lastError: String? = nil
 
     private weak var bound: TerminalView?
+    /// Strong reference so the NSView itself survives ChatPane re-mounts.
+    /// Without this, every focus toggle realloc'd SwiftTerm's terminal
+    /// grid + font atlas + Metal layer — the real lag source.
+    private(set) var cachedView: TerminalView?
     private var pendingBytes: [UInt8] = []
 
     private var outboundContinuation: AsyncStream<Atelier_V1_PtyClientMsg>.Continuation?
@@ -31,6 +35,7 @@ final class TerminalSession: ObservableObject, Identifiable {
 
     func attach(view: TerminalView) {
         self.bound = view
+        self.cachedView = view              // strong-hold so it survives re-mount
         flushPending(to: view)
     }
 

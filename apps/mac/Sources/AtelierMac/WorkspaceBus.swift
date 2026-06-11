@@ -104,32 +104,50 @@ final class WorkspaceBus: ObservableObject {
     /// - .done if role published every topic in its `handoffPublishes` set
     /// - .ready if every subscribed topic has been published by SOMEONE
     /// - .pending otherwise
+    // O(1) state cache. Without this, AssistantsGrid + role-chip strip +
+    // ActivityFeed each call state(of:) per role per render — 50+ calls
+    // per UI frame, each O(events). That was the chip-switch lag source.
+    private struct StateCache {
+        var stamp: Int = -1                 // hash of (events, roles, working)
+        var states: [String: RoleState] = [:]
+    }
+    private var stateCache = StateCache()
+
     func state(of name: String) -> RoleState {
-        guard let r = roles.first(where: { $0.name == name }) else { return .pending }
-        // "Done" must be relative to the most recent BLOCKER event —
-        // feature.requested, or any *.failing / *.finding / *.failed /
-        // *.rejected / *.rolled_back. If a downstream role flagged a
-        // problem after this role last published, role needs to act again.
+        ensureStateCache()
+        return stateCache.states[name] ?? .pending
+    }
+
+    private func ensureStateCache() {
+        // Cheap stamp: combine sizes + first/last ids. Skip work if same.
+        let stamp = events.count &+ (events.last?.id.hashValue ?? 0) &+ roles.count &+ working.count
+        if stamp == stateCache.stamp { return }
+        stateCache.stamp = stamp
+
         let latestFeatureMs = events
             .filter { Self.isBlockerTopic($0.topic) }
             .map { $0.createdUnixMs }
             .max() ?? 0
         let allTopics = Set(events.map { $0.topic })
-        let mineRecent = Set(events
-            .filter { $0.fromRole == name && $0.createdUnixMs > latestFeatureMs }
-            .map { $0.topic })
-        let pubs = r.handoffPublishes
-        let subs = r.handoffSubscribes
-        // LENIENT done: role is done if it published ANY of its declared
-        // topics after the latest feature.requested. Yaml topic lists are
-        // often hallucinated (PM puts ui-ux's topic on PM, etc) — strict
-        // "all pubs" left roles stuck forever. One real publish = enough.
-        let pubsDone = !pubs.isEmpty && pubs.contains { Self.topicMatches($0, in: mineRecent) }
-        if pubsDone { return .done }
-        if working.contains(name) { return .working }
-        let subsMet = subs.isEmpty || subs.allSatisfy { Self.topicMatches($0, in: allTopics) }
-        if subsMet { return .ready }
-        return .pending
+
+        // mineRecent per role in one pass over events
+        var mineByRole: [String: Set<String>] = [:]
+        for ev in events where ev.createdUnixMs > latestFeatureMs {
+            mineByRole[ev.fromRole, default: []].insert(ev.topic)
+        }
+
+        var out: [String: RoleState] = [:]
+        for r in roles {
+            let mine = mineByRole[r.name] ?? []
+            let pubsDone = !r.handoffPublishes.isEmpty
+                && r.handoffPublishes.contains { Self.topicMatches($0, in: mine) }
+            if pubsDone { out[r.name] = .done; continue }
+            if working.contains(r.name) { out[r.name] = .working; continue }
+            let subsMet = r.handoffSubscribes.isEmpty
+                || r.handoffSubscribes.allSatisfy { Self.topicMatches($0, in: allTopics) }
+            out[r.name] = subsMet ? .ready : .pending
+        }
+        stateCache.states = out
     }
 
     /// Group key for a role: prefix of first published topic
