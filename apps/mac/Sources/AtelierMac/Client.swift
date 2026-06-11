@@ -62,7 +62,7 @@ final class UstaClientModel: ObservableObject {
             }
             self.stub = stub
 
-            let ping = Atelier_V1_PingRequest.with { $0.clientName = "AtelierMac" }
+            let ping = Atelier_V1_PingRequest.with { $0.clientName = "UstaMac" }
             let resp = try await stub.ping(ping)
             self.daemonVersion = resp.daemonVersion
             self.connected = true
@@ -136,10 +136,16 @@ final class UstaClientModel: ObservableObject {
 
     // --- Providers / Roles ---
 
+    /// Provider list rarely changes — cache it process-wide so every
+    /// ChatPane re-mount on role-chip switch doesn't re-fetch it.
+    private static var cachedProviders: [Atelier_V1_ProviderInfo] = []
+
     func listProviders() async -> [Atelier_V1_ProviderInfo] {
+        if !Self.cachedProviders.isEmpty { return Self.cachedProviders }
         guard let stub else { return [] }
         do {
             let r = try await stub.listProviders(Atelier_V1_Empty())
+            Self.cachedProviders = r.items
             return r.items
         } catch {
             self.lastError = "providers: \(error)"

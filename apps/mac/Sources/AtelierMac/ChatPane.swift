@@ -58,9 +58,21 @@ final class ChatPaneModel: ObservableObject {
         }
     }
 
+    /// Static per-(workspace,role) cache so a chip toggle (which destroys
+    /// and re-mounts the ChatPane @StateObject) doesn't re-fetch history
+    /// over gRPC. Keyed by "\(workspaceID)|\(roleName)".
+    private static var historyCache: [String: [ChatMessage]] = [:]
+    private var cacheKey: String { "\(workspaceID)|\(role.name)" }
+
     func loadHistory(client: UstaClientModel) async {
         if historyLoaded { return }
         historyLoaded = true
+        // Fast-path: already fetched once for this (workspace, role) →
+        // restore from in-memory cache, skip the RPC.
+        if let cached = Self.historyCache[cacheKey] {
+            messages = cached
+            return
+        }
         let items = await client.getHistory(workspaceID: workspaceID, agentRole: role.name)
         guard !items.isEmpty else { return }
         var restored: [ChatMessage] = []
@@ -73,6 +85,8 @@ final class ChatPaneModel: ObservableObject {
         }
         // Prepend history before any in-session messages.
         messages = restored + messages
+        // Cache so future re-mounts skip the gRPC roundtrip.
+        Self.historyCache[cacheKey] = messages
     }
 
     func send(_ text: String, provider: String, model: String, client: UstaClientModel) {

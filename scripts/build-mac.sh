@@ -86,4 +86,4 @@ codesign --force --deep --sign - "$APP" 2>&1 | tail -3 || true
 echo
 echo "==> Done."
 echo "Run:  open $APP"
-echo "Atelier will find the bundled atelierd next to its own binary."
+echo "Usta will find the bundled daemon next to its own binary."
