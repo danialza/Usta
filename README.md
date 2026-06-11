@@ -73,17 +73,9 @@ I wanted AI tooling that worked the same way. So I built it.
 
 ## Quickstart
 
-### Download the release (fastest)
-
-1. Grab the latest `Usta-macOS-vX.Y.Z.dmg` from [Releases](https://github.com/danialza/Usta/releases).
+1. Download the latest `Usta-macOS-vX.Y.Z.dmg` from [Releases](https://github.com/danialza/Usta/releases).
 2. Open the DMG → drag **Usta.app** into Applications.
-3. Strip the macOS quarantine flag so the app opens without the "Apple could not verify" dialog:
-
-   ```bash
-   curl -sSL https://raw.githubusercontent.com/danialza/Usta/main/scripts/install.sh | bash
-   ```
-
-   Or manually:
+3. Run this once to remove the macOS Gatekeeper warning:
 
    ```bash
    xattr -dr com.apple.quarantine /Applications/Usta.app
@@ -91,18 +83,7 @@ I wanted AI tooling that worked the same way. So I built it.
 
 4. `open /Applications/Usta.app` — daemon auto-spawns.
 
-> v0.1.0 is an unsigned build. v0.2 will be Apple-notarized and you won't need step 3.
-
-### Build from source
-
-```bash
-git clone https://github.com/danialza/Usta.git
-cd Usta
-bash scripts/build-mac.sh
-open dist/Usta.app
-```
-
-Requires macOS 15+, Xcode CLT, Rust stable. Locally-built apps don't trigger Gatekeeper.
+> v0.1.0 is unsigned. v0.2 will be Apple-notarized — step 3 will disappear.
 
 ### First run — a guided walkthrough
 
