@@ -11,72 +11,74 @@
       <stop offset="100%" stop-color="#F45BA5"/>
     </linearGradient>
     <radialGradient id="glowTop" cx="50%" cy="50%" r="50%">
-      <stop offset="0%" stop-color="#8B7CF6" stop-opacity="0.28"/>
+      <stop offset="0%" stop-color="#8B7CF6" stop-opacity="0.30"/>
       <stop offset="100%" stop-color="#8B7CF6" stop-opacity="0"/>
     </radialGradient>
     <radialGradient id="glowL" cx="50%" cy="50%" r="50%">
-      <stop offset="0%" stop-color="#3DECFF" stop-opacity="0.16"/>
+      <stop offset="0%" stop-color="#3DECFF" stop-opacity="0.14"/>
       <stop offset="100%" stop-color="#3DECFF" stop-opacity="0"/>
     </radialGradient>
     <radialGradient id="glowR" cx="50%" cy="50%" r="50%">
-      <stop offset="0%" stop-color="#F45BA5" stop-opacity="0.16"/>
+      <stop offset="0%" stop-color="#F45BA5" stop-opacity="0.14"/>
       <stop offset="100%" stop-color="#F45BA5" stop-opacity="0"/>
     </radialGradient>
-    <linearGradient id="shotFade" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="60%" stop-color="#000000" stop-opacity="0"/>
-      <stop offset="100%" stop-color="#050810" stop-opacity="0.6"/>
-    </linearGradient>
-    <clipPath id="shotClip"><rect x="56" y="612" width="688" height="332" rx="16"/></clipPath>
   </defs>
 
   <rect width="800" height="1000" fill="url(#bg)"/>
-  <ellipse cx="400" cy="60" rx="520" ry="340" fill="url(#glowTop)"/>
-  <ellipse cx="20" cy="520" rx="320" ry="320" fill="url(#glowL)"/>
-  <ellipse cx="800" cy="600" rx="320" ry="320" fill="url(#glowR)"/>
+  <ellipse cx="400" cy="180" rx="520" ry="360" fill="url(#glowTop)"/>
+  <ellipse cx="40" cy="640" rx="320" ry="320" fill="url(#glowL)"/>
+  <ellipse cx="780" cy="720" rx="320" ry="320" fill="url(#glowR)"/>
+  <circle cx="400" cy="500" r="470" fill="none" stroke="#ffffff" stroke-width="1" opacity="0.035"/>
 
-  <!-- Logo + wordmark, centered -->
-  <image href="usta-logo.png" x="332" y="64" width="136" height="136" preserveAspectRatio="xMidYMid meet"/>
-  <text x="400" y="268" text-anchor="middle"
+  <!-- Logo (hero) -->
+  <image href="usta-logo.png" x="295" y="120" width="210" height="210" preserveAspectRatio="xMidYMid meet"/>
+
+  <!-- Wordmark -->
+  <text x="400" y="440" text-anchor="middle"
         font-family="ui-sans-serif, -apple-system, 'Inter', system-ui, sans-serif"
-        font-size="86" font-weight="800" letter-spacing="-3" fill="#F0F1F7">Usta</text>
+        font-size="104" font-weight="800" letter-spacing="-4" fill="#F0F1F7">Usta</text>
 
   <!-- Tagline -->
-  <text x="400" y="330" text-anchor="middle"
+  <text x="400" y="510" text-anchor="middle"
         font-family="ui-sans-serif, -apple-system, 'Inter', system-ui, sans-serif"
-        font-size="34" font-weight="700" letter-spacing="-0.5" fill="#F0F1F7">Your AI engineering team.</text>
-  <text x="400" y="376" text-anchor="middle"
-        font-family="ui-sans-serif, -apple-system, 'Inter', system-ui, sans-serif"
-        font-size="34" font-weight="700" letter-spacing="-0.5" fill="url(#tagG)">Not an assistant.</text>
+        font-size="36" font-weight="700" letter-spacing="-0.5" fill="url(#tagG)">Your AI engineering team.</text>
 
-  <!-- Feature rows -->
-  <g font-family="ui-sans-serif, -apple-system, 'Inter', system-ui, sans-serif">
-    <g transform="translate(96 436)">
-      <circle cx="11" cy="11" r="11" fill="#3DECFF" opacity="0.16"/><circle cx="11" cy="11" r="4" fill="#3DECFF"/>
-      <text x="36" y="17" font-size="22" font-weight="600" fill="#E8E9F3">A PM agent designs the team for your project</text>
+  <!-- Plain explanation -->
+  <text x="400" y="612" text-anchor="middle"
+        font-family="ui-sans-serif, -apple-system, 'Inter', system-ui, sans-serif"
+        font-size="29" font-weight="500" fill="#cdd0e0">You describe what you want to build.</text>
+  <text x="400" y="656" text-anchor="middle"
+        font-family="ui-sans-serif, -apple-system, 'Inter', system-ui, sans-serif"
+        font-size="29" font-weight="500" fill="#cdd0e0">A PM agent builds the team.</text>
+  <text x="400" y="700" text-anchor="middle"
+        font-family="ui-sans-serif, -apple-system, 'Inter', system-ui, sans-serif"
+        font-size="29" font-weight="500" fill="#cdd0e0">They work in parallel and ship it.</text>
+
+  <!-- 3-step chips -->
+  <g font-family="ui-sans-serif, -apple-system, 'Inter', system-ui, sans-serif" font-size="19" font-weight="600" text-anchor="middle">
+    <g transform="translate(148 770)">
+      <rect width="148" height="50" rx="25" fill="none" stroke="#3DECFF" stroke-width="1.3"/>
+      <text x="74" y="32" fill="#3DECFF">Describe</text>
     </g>
-    <g transform="translate(96 488)">
-      <circle cx="11" cy="11" r="11" fill="#8B7CF6" opacity="0.16"/><circle cx="11" cy="11" r="4" fill="#8B7CF6"/>
-      <text x="36" y="17" font-size="22" font-weight="600" fill="#E8E9F3">Specialists run in parallel — each its own terminal</text>
+    <text x="326" y="803" fill="#5a5f80" font-size="26">→</text>
+    <g transform="translate(326 770)">
+      <rect width="148" height="50" rx="25" fill="none" stroke="#8B7CF6" stroke-width="1.3"/>
+      <text x="74" y="32" fill="#8B7CF6">PM plans</text>
     </g>
-    <g transform="translate(96 540)">
-      <circle cx="11" cy="11" r="11" fill="#F45BA5" opacity="0.16"/><circle cx="11" cy="11" r="4" fill="#F45BA5"/>
-      <text x="36" y="17" font-size="22" font-weight="600" fill="#E8E9F3">They coordinate through a shared event bus</text>
-    </g>
-    <g transform="translate(96 592)">
-      <circle cx="11" cy="11" r="11" fill="#5A9DFF" opacity="0.16"/><circle cx="11" cy="11" r="4" fill="#5A9DFF"/>
-      <text x="36" y="17" font-size="22" font-weight="600" fill="#E8E9F3">Claude · Gemini · Ollama — pluggable, local-first</text>
+    <text x="504" y="803" fill="#5a5f80" font-size="26">→</text>
+    <g transform="translate(504 770)">
+      <rect width="148" height="50" rx="25" fill="none" stroke="#F45BA5" stroke-width="1.3"/>
+      <text x="74" y="32" fill="#F45BA5">Team ships</text>
     </g>
   </g>
 
-  <!-- Screenshot -->
-  <g clip-path="url(#shotClip)">
-    <image href="screenshots/guide/08-workspace-hero.png" x="56" y="612" width="688" height="439" preserveAspectRatio="xMidYMid slice"/>
-    <rect x="56" y="612" width="688" height="332" fill="url(#shotFade)"/>
-  </g>
-  <rect x="56" y="612" width="688" height="332" rx="16" fill="none" stroke="#ffffff" stroke-opacity="0.10" stroke-width="1.5"/>
+  <!-- Native macOS line -->
+  <text x="400" y="892" text-anchor="middle"
+        font-family="ui-sans-serif, -apple-system, 'Inter', system-ui, sans-serif"
+        font-size="20" font-weight="500" letter-spacing="0.5" fill="#9aa0bf">Native macOS · Claude · Gemini · Ollama · Open source</text>
 
-  <!-- Footer band -->
-  <text x="400" y="972" text-anchor="middle"
+  <!-- URL -->
+  <text x="400" y="946" text-anchor="middle"
         font-family="ui-monospace, Menlo, monospace"
-        font-size="20" font-weight="500" fill="#8b8d9e">github.com/danialza/Usta&#160;&#160;·&#160;&#160;usta-ai.vercel.app</text>
+        font-size="20" font-weight="500" fill="#6b7095">github.com/danialza/Usta</text>
 </svg>
