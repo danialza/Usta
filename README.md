@@ -25,9 +25,9 @@
 
 <br/>
 
-<img src="brand/screenshots/03-workspace.png" alt="Usta workspace — 5 specialist roles working in parallel" width="100%" />
+<img src="brand/screenshots/guide/08-workspace-hero.png" alt="Usta workspace — multiple specialist roles working in parallel" width="100%" />
 
-<sub>One workspace. Five specialists. One shared event bus.</sub>
+<sub>One workspace. A full team of specialists. One shared event bus.</sub>
 
 </div>
 
@@ -89,47 +89,110 @@ Open **Usta** from Applications (or Spotlight). The daemon spawns automatically.
 
 ### First run — a guided walkthrough
 
-#### 1. Launch — pick how you start
+#### 1. Welcome — pick how you start
 
-<img src="brand/screenshots/01-welcome.png" alt="Welcome screen" width="100%" />
+<img src="brand/screenshots/guide/01-welcome.png" alt="Welcome screen" width="100%" />
 
-Two paths:
-- **Open Existing Project** — point at any folder. Usta scans the codebase and the PM proposes a team that fits the stack.
+Two entry paths:
+- **Open Existing Project** — point Usta at any folder. The PM agent scans the codebase and proposes a team that fits the stack.
 - **Start From Scratch** — describe what you want to build. The PM picks a stack, drafts a folder layout, and assembles a team.
 
-Before any of this, open the gear icon (top-right) → paste your Anthropic API key. It's stored in macOS Keychain, never on disk. If you already use Claude Code with a Pro/Max login, no key needed.
+#### 2. Settings — paste your API keys (one time)
 
-#### 2. Describe the project — let PM design the team
+<img src="brand/screenshots/guide/02-settings.png" alt="Settings — Daemon + Anthropic + Gemini + Ollama" width="100%" />
 
-<img src="brand/screenshots/02-new-project.png" alt="New Project wizard" width="100%" />
+Click the gear icon (top-right). Three providers, mix as you like:
 
-One field. 1–3 sentences. The PM agent reads it, picks a stack, decides which roles to spawn, and writes each role's brief. Optionally hit **Refine with Grill** to answer targeted clarifying questions before scaffolding.
+- **Anthropic** — your `sk-ant-…` key for Claude. Stored in macOS Keychain, never on disk.
+- **Google Gemini (free tier)** — get a key at [aistudio.google.com](https://aistudio.google.com). Generous free tier.
+- **Ollama (local, free)** — Refresh to detect locally installed models. Pull from the box if missing.
 
-#### 3. Watch the team work
+The daemon log lives at `~/Library/Logs/Usta/ustad.log`. **Show Log** / **Tail Log** open it instantly. When you hit **Done**, the daemon restarts with the new keys.
 
-<img src="brand/screenshots/03-workspace.png" alt="Workspace — multi-role grid" width="100%" />
+#### 3. Describe what you want to build
 
-This is the workspace view. Each card is one specialist running its own real terminal (Claude Code, Gemini, or Ollama — pick per role). Top of each card: the role chip + skills + provider/model picker.
+<img src="brand/screenshots/guide/03-wizard-prompt.png" alt="New Project — describe the idea" width="100%" />
 
-Top toolbar:
-- **Role chips** — All / @backend / @devops / @frontend / @security / @ui-ux. Click to filter.
+One field, 1–3 sentences. The clearer your description, the better the team. Pick the provider + model used to plan (defaults to `anthropic / claude-sonnet-4-6`). Hit **Propose Team**.
+
+#### 4. PM proposes a team
+
+<img src="brand/screenshots/guide/04-proposal.png" alt="PM proposal — ShopHub team" width="100%" />
+
+The PM picks a name (`ShopHub`), drafts a one-paragraph project summary, picks a stack (Next.js 14, Prisma, Postgres, NextAuth, Jest + Playwright…), and lays out **first steps** in plain English — who does what, in what order.
+
+#### 5. Review and edit the team
+
+<img src="brand/screenshots/guide/05-team-roles.png" alt="Team roles — product-manager, dba, backend, frontend, ui-ux, design-system, qa, security, devops, docs" width="100%" />
+
+The proposal is editable. Each row is one specialist with:
+
+- **Provider / model picker** — change to Gemini, Ollama, claude-opus, whatever fits the role.
+- **Tools / skills** — what the role can use (`shell`, `fs_read`, `fs_write`, `npm`, `playwright`, …).
+- **Trash icon** — drop a role.
+- **+ Add Role** — append a new one (form below).
+
+<img src="brand/screenshots/guide/06-add-role.png" alt="Add Role sheet — name, emoji, provider, tools, skills, publishes/subscribes" width="100%" />
+
+Manual role editor: name + emoji + why this role + provider/model + tools + skills + which events it **publishes** + which events it **subscribes** to + optional custom CLI command + system prompt.
+
+#### 6. (Optional) Grill — refine before scaffolding
+
+<img src="brand/screenshots/guide/07-grill.png" alt="Grill questions — clarify the plan before code" width="100%" />
+
+If you want the PM to ask sharper clarifying questions before writing any code, hit **Refine with Grill**. You get a focused Q&A:
+
+> Where will this app be hosted? Will it have latency/compliance constraints?
+> Should "checkout review" include shipping address, or summary before payment?
+> Should the WIP include role-based features?
+
+Your answers go straight into each role's brief.
+
+When you're happy, hit **Create Project…**. Usta scaffolds the repo, writes the role YAMLs, and lands you in the workspace.
+
+#### 7. The workspace — your team, working
+
+<img src="brand/screenshots/guide/08-workspace-hero.png" alt="Usta workspace — full team running in parallel" width="100%" />
+
+Each card is one specialist running its own real PTY. The **blue banner** at top is the **Next Action** — PM tells you which role should act next and gives you a one-click generated prompt.
+
+**Top toolbar** (zoom):
+
+<img src="brand/screenshots/guide/10-toolbar.png" alt="Top toolbar — All chip, API counter, Run App, Refresh, Start Team, Hide Activity, Add Role, Apply Team, Grill More" width="100%" />
+
+- **All / per-role chips** — filter the grid by role.
+- **API 999 / 1,000** — live Anthropic rate-limit counter. Never burst-fails.
 - **Run App** — boots whatever dev server the project scaffolded.
+- **Refresh** — re-scan event bus for changes.
 - **Start Team** — kicks off all roles in dependency order.
+- **Hide Activity** — collapse the right-side activity feed.
 - **Add Role** — spawn a new specialist mid-project.
-- **Grill More** — get the PM to ask more targeted questions.
-- **Activity** (right) — every event published on the bus, in order.
+- **Apply Team** — re-apply role YAMLs after edits.
+- **Grill More** — get the PM to ask more targeted questions about the current state.
 
-Pane bar (blue): the **Next Action** banner. PM tells you which role to run next and gives you a generated prompt. One click ships it to that pane.
+#### 8. Focus a single role
 
-#### 4. Focus a single role
+<img src="brand/screenshots/guide/09-role-focus.png" alt="Single role maximized" width="100%" />
 
-<img src="brand/screenshots/04-role-focus.png" alt="Single role maximized" width="100%" />
+Click the maximize button on any pane to focus one specialist. The terminal is a real PTY — keyboard shortcuts, scrollback, everything. The blue banner above shows the **scoped task** the PM gave this role.
 
-Maximize any pane (top-right corner) to focus one specialist. The terminal is a real PTY — same keyboard shortcuts, same scrollback. Skills (mattpocock, caveman, memory) are pre-loaded; click a skill chip to invoke it.
+**Skills row** (zoom):
 
-#### 5. Ship a new feature
+<img src="brand/screenshots/guide/12-skills.png" alt="Skills — caveman, memory, grill, tdd, diagnose" width="100%" />
 
-Type a request in the **"Add new feature or change…"** field at the top. PM re-plans which roles are needed for *just that change*, publishes scoped tasks, and only those roles wake up. Done roles stay done.
+Pre-loaded skills you can invoke with one click: `caveman` (terse mode), `memory` (persistent notes), `grill` (clarification), `tdd`, `diagnose`. The role's YAML lists which skills are active by default.
+
+#### 9. Watch the event bus
+
+<img src="brand/screenshots/guide/13-activity.png" alt="Team Activity — events flowing across roles" width="100%" />
+
+Every event published on the bus appears here in order. When a role announces `api.added`, every subscriber to that topic wakes up. The activity feed is the source of truth for who did what, when.
+
+#### 10. Ship a new feature
+
+<img src="brand/screenshots/guide/11-feature-input.png" alt="Describe the new feature or change input bar" width="100%" />
+
+Type any request in the **"Describe the new feature or change…"** bar. PM re-plans which roles need to act for *just that change*, publishes scoped tasks, and only those roles wake up. Roles that were already done stay done. Pick a target role from the dropdown (default: `→ @product-manager`) or let the PM decide.
 
 ---
 

@@ -1,0 +1,271 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Guide — Usta</title>
+<meta name="description" content="A visual, step-by-step walkthrough of building a project with Usta — the multi-agent macOS IDE." />
+<meta property="og:title" content="Usta — How to use it" />
+<meta property="og:description" content="From welcome screen to a working team in 10 steps. Real screenshots." />
+<meta property="og:image" content="../og-card.png" />
+<meta name="twitter:card" content="summary_large_image" />
+<link rel="icon" type="image/png" href="../usta-icon.png" />
+<style>
+  :root{
+    --bg:#050810; --bg2:#0a0b18; --panel:#0e1124; --panel2:#141838;
+    --ink:#F0F1F7; --mute:#9aa0bf; --dim:#6b7095;
+    --teal:#3DECFF; --blue:#5A9DFF; --violet:#8B7CF6; --pink:#F45BA5;
+    --line:rgba(255,255,255,.07);
+    --grad: linear-gradient(90deg,var(--teal),var(--violet),var(--pink));
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"Inter","SF Pro Display","Segoe UI",Roboto,sans-serif;-webkit-font-smoothing:antialiased;line-height:1.6}
+  a{color:var(--teal);text-decoration:none}
+  a:hover{text-decoration:underline}
+  .wrap{max-width:920px;margin:0 auto;padding:0 24px}
+  /* nav */
+  nav{position:sticky;top:0;z-index:50;backdrop-filter:blur(14px);background:rgba(5,8,16,.7);border-bottom:1px solid var(--line)}
+  nav .row{max-width:1180px;margin:0 auto;padding:0 24px;display:flex;align-items:center;justify-content:space-between;height:64px}
+  nav .brand{display:flex;align-items:center;gap:10px;font-weight:700;letter-spacing:-.5px;font-size:18px}
+  nav .brand img{width:28px;height:28px}
+  nav .links{display:flex;gap:24px;font-size:14px;color:var(--mute)}
+  nav .links a{color:var(--mute)}
+  nav .links a:hover{color:var(--ink);text-decoration:none}
+  nav .cta{background:var(--ink);color:#0a0b18;padding:9px 16px;border-radius:10px;font-weight:600;font-size:14px}
+  nav .cta:hover{text-decoration:none;background:#fff}
+  /* header */
+  header{padding:80px 0 40px;text-align:center}
+  .eyebrow{display:inline-block;font-size:12px;letter-spacing:2px;text-transform:uppercase;color:var(--teal);margin-bottom:14px}
+  h1{font-size:clamp(36px,6vw,64px);line-height:1.05;letter-spacing:-2px;font-weight:800;margin:0 0 18px}
+  h1 .grad{background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent}
+  .lede{font-size:18px;color:var(--mute);max-width:640px;margin:0 auto}
+  /* toc */
+  .toc{margin:40px auto 0;padding:24px 28px;border-radius:14px;background:var(--panel);border:1px solid var(--line);text-align:left}
+  .toc h3{margin:0 0 16px;font-size:13px;letter-spacing:2px;text-transform:uppercase;color:var(--teal);font-weight:700}
+  .toc ol{margin:0;padding-left:22px;color:var(--mute);font-size:15px;line-height:2}
+  .toc ol a{color:var(--ink)}
+  .toc ol a:hover{color:var(--teal);text-decoration:none}
+  /* steps */
+  .step{padding:64px 0;border-bottom:1px solid var(--line)}
+  .step:last-of-type{border-bottom:none}
+  .step .num{font-size:13px;color:var(--teal);letter-spacing:2px;text-transform:uppercase;font-weight:700;margin-bottom:10px}
+  .step h2{font-size:clamp(28px,4vw,40px);letter-spacing:-1px;margin:0 0 14px;font-weight:800;line-height:1.15}
+  .step h2 .grad{background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent}
+  .step p{font-size:16px;color:#cdd0e0;margin:0 0 14px}
+  .step p strong{color:var(--ink)}
+  .step code{background:rgba(255,255,255,.06);border:1px solid var(--line);border-radius:6px;padding:2px 7px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px;color:var(--teal)}
+  .step ul{margin:14px 0;padding-left:22px;color:#cdd0e0;font-size:15px}
+  .step ul li{margin:6px 0}
+  .shot{margin:28px 0 12px;border-radius:14px;overflow:hidden;border:1px solid var(--line);box-shadow:0 40px 70px -30px rgba(0,0,0,.6)}
+  .shot img{display:block;width:100%;height:auto}
+  .shot.tight{max-width:740px;margin-left:auto;margin-right:auto}
+  .shot.small{max-width:540px;margin-left:auto;margin-right:auto}
+  .caption{font-size:13px;color:var(--dim);text-align:center;margin-top:-2px;margin-bottom:0}
+  /* call-out */
+  .tip{margin:20px 0;padding:16px 20px;border-radius:10px;border:1px solid rgba(61,236,255,.2);background:rgba(61,236,255,.04);color:#cdd0e0;font-size:15px}
+  .tip strong{color:var(--teal)}
+  /* final */
+  .finalcta{padding:100px 0;text-align:center;position:relative;overflow:hidden}
+  .finalcta::before{content:"";position:absolute;inset:0;background:radial-gradient(ellipse at center,rgba(139,124,246,.15),transparent 70%);pointer-events:none}
+  .finalcta h2{font-size:clamp(28px,4vw,44px);letter-spacing:-1px;margin:0 0 18px;font-weight:800}
+  .finalcta .ctas{display:flex;gap:14px;justify-content:center;flex-wrap:wrap}
+  .btn{display:inline-flex;align-items:center;gap:8px;padding:14px 26px;border-radius:12px;font-weight:600;font-size:15px;transition:transform .15s}
+  .btn:hover{text-decoration:none;transform:translateY(-1px)}
+  .btn.primary{background:var(--ink);color:#0a0b18}
+  .btn.primary:hover{background:#fff}
+  .btn.ghost{background:rgba(255,255,255,.04);border:1px solid var(--line);color:var(--ink)}
+  /* footer */
+  footer{padding:48px 0;border-top:1px solid var(--line);font-size:14px;color:var(--dim)}
+  footer .row{max-width:1180px;margin:0 auto;padding:0 24px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:16px}
+  footer a{color:var(--mute)}
+  @media (max-width:780px){
+    nav .links{display:none}
+    .step{padding:48px 0}
+  }
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="row">
+    <a href="index.html" class="brand"><img src="assets/usta-logo.png" alt=""/>Usta</a>
+    <div class="links">
+      <a href="index.html#how">Overview</a>
+      <a href="index.html#features">Features</a>
+      <a href="guide.html">Guide</a>
+      <a href="https://github.com/danialza/Usta">GitHub</a>
+    </div>
+    <a class="cta" href="https://github.com/danialza/Usta/releases">Download</a>
+  </div>
+</nav>
+
+<header>
+  <div class="wrap">
+    <span class="eyebrow">Guide</span>
+    <h1>From idea to a <span class="grad">running team.</span></h1>
+    <p class="lede">A visual walkthrough of building a real project with Usta. Ten steps, real screenshots, no marketing fluff.</p>
+
+    <div class="toc">
+      <h3>What's in this guide</h3>
+      <ol>
+        <li><a href="#s1">Welcome — pick how you start</a></li>
+        <li><a href="#s2">Settings — paste your API keys</a></li>
+        <li><a href="#s3">Describe what you want to build</a></li>
+        <li><a href="#s4">PM proposes a team</a></li>
+        <li><a href="#s5">Review and edit the team</a></li>
+        <li><a href="#s6">(Optional) Grill — refine before scaffolding</a></li>
+        <li><a href="#s7">The workspace — your team, working</a></li>
+        <li><a href="#s8">Focus a single role</a></li>
+        <li><a href="#s9">Watch the event bus</a></li>
+        <li><a href="#s10">Ship a new feature</a></li>
+      </ol>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <section class="step" id="s1">
+    <div class="num">Step 1</div>
+    <h2>Welcome — pick how you start.</h2>
+    <p>When you launch Usta you get two entry paths. Both lead to the same workspace experience — they differ only in how the PM agent learns what you're building.</p>
+    <ul>
+      <li><strong>Open Existing Project</strong> — point Usta at any folder. The PM scans the codebase and proposes a team that fits the stack it finds.</li>
+      <li><strong>Start From Scratch</strong> — describe what you want to build. The PM picks a stack, drafts a folder layout, and assembles a team.</li>
+    </ul>
+    <div class="shot small"><img src="assets/guide/01-welcome.png" alt="Usta welcome screen"/></div>
+  </section>
+
+  <section class="step" id="s2">
+    <div class="num">Step 2</div>
+    <h2>Settings — paste your API keys.</h2>
+    <p>Click the gear icon (top-right). You can mix and match providers — different roles can use different LLMs.</p>
+    <ul>
+      <li><strong>Anthropic</strong> — paste your <code>sk-ant-…</code> key. Stored in macOS <strong>Keychain</strong>, never on disk.</li>
+      <li><strong>Google Gemini (free tier)</strong> — get a key from <a href="https://aistudio.google.com" target="_blank" rel="noopener">aistudio.google.com</a>. Generous free quota.</li>
+      <li><strong>Ollama (local, free)</strong> — Refresh detects locally installed models. Pull from the box if missing.</li>
+    </ul>
+    <p>The daemon log lives at <code>~/Library/Logs/Usta/ustad.log</code>. The <strong>Show Log</strong> / <strong>Tail Log</strong> buttons open it instantly. When you hit <strong>Done</strong>, the daemon restarts with the new keys.</p>
+    <div class="shot tight"><img src="assets/guide/02-settings.png" alt="Settings sheet — Daemon and Anthropic and Gemini and Ollama"/></div>
+  </section>
+
+  <section class="step" id="s3">
+    <div class="num">Step 3</div>
+    <h2>Describe what you want to build.</h2>
+    <p>One field, 1–3 sentences. The clearer your description, the better the team. Pick the provider + model used to <em>plan</em> (defaults to <code>anthropic / claude-sonnet-4-6</code>). Hit <strong>Propose Team</strong>.</p>
+    <div class="tip"><strong>Tip:</strong> Describe the <em>product</em>, not the stack. The PM is good at picking tech — leave it free to. Mention constraints (e.g. "no payment gateway", "must run offline") because those drive what gets scoped out.</div>
+    <div class="shot tight"><img src="assets/guide/03-wizard-prompt.png" alt="New Project — describe the idea"/></div>
+  </section>
+
+  <section class="step" id="s4">
+    <div class="num">Step 4</div>
+    <h2>PM proposes a team.</h2>
+    <p>The PM picks a name (<code>ShopHub</code> in this case), drafts a one-paragraph project summary, picks a stack — Next.js 14 + React 18 + TypeScript + Tailwind, Node.js + Express backend, PostgreSQL + Prisma, NextAuth v5, Zod, Jest + Playwright — and lays out <strong>first steps</strong> in plain English: who does what, in what order, what they hand off.</p>
+    <div class="shot tight"><img src="assets/guide/04-proposal.png" alt="PM proposal — ShopHub team and stack and first steps"/></div>
+  </section>
+
+  <section class="step" id="s5">
+    <div class="num">Step 5</div>
+    <h2>Review and edit the team.</h2>
+    <p>The proposal is editable. Scroll down to see every role with its provider/model picker, tools, and skills:</p>
+    <div class="shot tight"><img src="assets/guide/05-team-roles.png" alt="Team roles — product-manager, dba, backend, frontend, ui-ux, design-system, qa, security, devops, docs"/></div>
+    <ul>
+      <li><strong>Provider / model picker</strong> on each row — swap to Gemini, Ollama, claude-opus, whatever fits.</li>
+      <li><strong>Tools / skills</strong> — what the role can do: <code>shell</code>, <code>fs_read</code>, <code>fs_write</code>, <code>npm</code>, <code>playwright</code>, …</li>
+      <li><strong>Trash icon</strong> — drop a role.</li>
+      <li><strong>+ Add Role</strong> — opens a full editor for a new specialist:</li>
+    </ul>
+    <div class="shot small"><img src="assets/guide/06-add-role.png" alt="Add Role sheet — name and emoji and provider and tools and skills and publishes and subscribes"/></div>
+    <p>Name + emoji + why this role + provider/model + tools + skills + which events it <strong>publishes</strong> + which events it <strong>subscribes</strong> to + optional custom CLI command + system prompt.</p>
+  </section>
+
+  <section class="step" id="s6">
+    <div class="num">Step 6 (optional)</div>
+    <h2>Grill — sharpen the plan before code.</h2>
+    <p>If you'd rather the PM ask sharper clarifying questions <em>before</em> writing any code, hit <strong>Refine with Grill</strong>. You get a focused Q&amp;A like:</p>
+    <ul>
+      <li><em>"Where will this app be hosted? Will it have latency/compliance constraints?"</em></li>
+      <li><em>"Should 'checkout review' include shipping address, or a summary before payment?"</em></li>
+      <li><em>"Should the WIP include role-based features (admin/editor/viewer)?"</em></li>
+    </ul>
+    <p>Your answers go straight into each role's brief. When you're happy with the plan, hit <strong>Create Project…</strong>. Usta scaffolds the repo, writes the role YAMLs, and drops you into the workspace.</p>
+    <div class="shot tight"><img src="assets/guide/07-grill.png" alt="Grill — clarification questions before scaffolding"/></div>
+  </section>
+
+  <section class="step" id="s7">
+    <div class="num">Step 7</div>
+    <h2>The workspace — your <span class="grad">team, working.</span></h2>
+    <p>Each card is one specialist running its own real PTY (Claude Code, Gemini, or Ollama). The <strong>blue banner</strong> at the top is the <strong>Next Action</strong> — the PM tells you which role should act next and gives you a one-click generated prompt.</p>
+    <div class="shot"><img src="assets/guide/08-workspace-hero.png" alt="Usta workspace — full team running in parallel"/></div>
+
+    <p style="margin-top:32px"><strong>Top toolbar</strong> (zoom):</p>
+    <div class="shot"><img src="assets/guide/10-toolbar.png" alt="Top toolbar — All chip, API counter, Run App, Refresh, Start Team, Hide Activity, Add Role, Apply Team, Grill More"/></div>
+    <ul>
+      <li><strong>All / per-role chips</strong> — filter the grid by role.</li>
+      <li><strong>API 999 / 1,000</strong> — live Anthropic rate-limit counter. Never burst-fails.</li>
+      <li><strong>Run App</strong> — boots whatever dev server the project scaffolded.</li>
+      <li><strong>Refresh</strong> — re-scan the event bus.</li>
+      <li><strong>Start Team</strong> — kicks off all roles in dependency order.</li>
+      <li><strong>Hide Activity</strong> — collapse the right-side feed.</li>
+      <li><strong>Add Role</strong> — spawn a specialist mid-project.</li>
+      <li><strong>Apply Team</strong> — re-apply role YAMLs after edits.</li>
+      <li><strong>Grill More</strong> — get the PM to ask sharper questions about the current state.</li>
+    </ul>
+  </section>
+
+  <section class="step" id="s8">
+    <div class="num">Step 8</div>
+    <h2>Focus a single role.</h2>
+    <p>Click the maximize button on any pane to focus one specialist full-screen. The terminal is a real PTY — keyboard shortcuts, scrollback, everything. The blue banner above shows the <strong>scoped task</strong> the PM gave this role.</p>
+    <div class="shot"><img src="assets/guide/09-role-focus.png" alt="Single role maximized"/></div>
+
+    <p style="margin-top:32px"><strong>Skills row</strong> (zoom) — pre-loaded skills you can invoke with one click:</p>
+    <div class="shot small"><img src="assets/guide/12-skills.png" alt="Skills — caveman memory grill tdd diagnose"/></div>
+    <ul>
+      <li><code>caveman</code> — terse mode (cuts tokens ~75%)</li>
+      <li><code>memory</code> — persistent notes across sessions</li>
+      <li><code>grill</code> — request more clarification</li>
+      <li><code>tdd</code> — test-driven workflow</li>
+      <li><code>diagnose</code> — root-cause analysis mode</li>
+    </ul>
+    <p>The role's YAML decides which skills are active by default; click any chip to invoke it manually.</p>
+  </section>
+
+  <section class="step" id="s9">
+    <div class="num">Step 9</div>
+    <h2>Watch the event bus.</h2>
+    <p>The right-side <strong>Team Activity</strong> panel is the source of truth. Every event published on the bus appears here in order. When a role announces <code>api.added</code>, every subscriber to that topic wakes up automatically — no manual hand-off.</p>
+    <p>If a role goes idle without publishing anything, the <strong>idle watcher</strong> tails the PTY output, infers what was announced, and publishes it on your behalf.</p>
+    <div class="shot small"><img src="assets/guide/13-activity.png" alt="Team Activity — events flowing"/></div>
+  </section>
+
+  <section class="step" id="s10">
+    <div class="num">Step 10</div>
+    <h2>Ship a new feature.</h2>
+    <p>Type any request in the <strong>"Describe the new feature or change…"</strong> bar at the top. PM re-plans which roles need to act for <em>just that change</em>, publishes scoped tasks, and only those roles wake up. Roles that were already done stay done.</p>
+    <p>Pick a target role from the dropdown (default: <code>→ @product-manager</code>) or let the PM decide who handles it.</p>
+    <div class="shot"><img src="assets/guide/11-feature-input.png" alt="Feature input bar"/></div>
+    <div class="tip"><strong>That's the whole loop.</strong> You stop being the project manager. You ship the feature. The team ships the diff.</div>
+  </section>
+
+</div>
+
+<section class="finalcta">
+  <div class="wrap">
+    <h2>Ready to try it?</h2>
+    <div class="ctas">
+      <a class="btn primary" href="https://github.com/danialza/Usta/releases">↓ Download for macOS</a>
+      <a class="btn ghost" href="index.html">← Back to overview</a>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="row">
+    <div>© 2026 Usta · <a href="https://github.com/danialza/Usta/blob/main/LICENSE">MIT</a> · <a href="https://github.com/danialza/Usta/blob/main/TRADEMARK.md">Trademark</a></div>
+    <div>Built by <a href="https://www.linkedin.com/in/danialza/">@danialza</a></div>
+  </div>
+</footer>
+
+</body>
+</html>
