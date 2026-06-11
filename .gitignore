@@ -18,3 +18,7 @@ dist/
 
 # launch drafts — local only
 /docs/launch/
+.usta-sock
+.atelier/
+.usta/
+.mcp.json
