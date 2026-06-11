@@ -20,6 +20,13 @@ final class RateLimitModel: ObservableObject {
                 if let snap = await client.getRateLimit() {
                     await MainActor.run { [weak self] in
                         guard let self else { return }
+                        // Skip publishing if nothing changed — prevents
+                        // a SwiftUI rebuild every 3s for an idle bar.
+                        let changed = self.limit != snap.limit
+                                   || self.remaining != snap.remaining
+                                   || self.resetMs != snap.resetMs
+                                   || self.lastUpdatedMs != snap.lastUpdatedMs
+                        guard changed else { return }
                         self.limit = snap.limit
                         self.remaining = snap.remaining
                         self.resetMs = snap.resetMs

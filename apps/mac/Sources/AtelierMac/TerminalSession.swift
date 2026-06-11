@@ -89,6 +89,12 @@ final class TerminalSession: ObservableObject, Identifiable {
         alive = false
     }
 
+    /// Cap on bytes buffered while no SwiftTerm view is bound. Without
+    /// this, an offscreen pane (role chip focus) leaks unbounded — claude
+    /// keeps streaming and we keep appending forever. 256KB ≈ ~3K lines
+    /// of output, plenty for catch-up when user comes back.
+    private static let pendingBytesCap = 256 * 1024
+
     private func handleServer(_ msg: Atelier_V1_PtyServerMsg) {
         switch msg.kind {
         case .output(let o):
@@ -97,6 +103,11 @@ final class TerminalSession: ObservableObject, Identifiable {
                 v.feed(byteArray: ArraySlice(bytes))
             } else {
                 pendingBytes.append(contentsOf: bytes)
+                if pendingBytes.count > Self.pendingBytesCap {
+                    // Drop oldest half — keep most recent.
+                    let drop = pendingBytes.count - Self.pendingBytesCap
+                    pendingBytes.removeFirst(drop)
+                }
             }
         case .exit(let e):
             self.lastError = "exit: \(e.reason)"

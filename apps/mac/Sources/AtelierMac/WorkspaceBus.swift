@@ -382,7 +382,10 @@ final class WorkspaceBus: ObservableObject {
         pollTask = Task { [weak self] in
             await self?.refresh(workspaceID: workspaceID)
             while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 1_200_000_000)
+                // 4s instead of 1.2s — UI doesn't need event log updates
+                // every second; the cost was a full SwiftUI tree
+                // invalidation 50 times/minute.
+                try? await Task.sleep(nanoseconds: 4_000_000_000)
                 if Task.isCancelled { break }
                 await self?.refresh(workspaceID: workspaceID)
             }
@@ -427,7 +430,14 @@ final class WorkspaceBus: ObservableObject {
         guard let client else { return }
         let fresh = await client.listEvents(workspaceID: workspaceID, limit: 200)
         let oldIds = Set(events.map { $0.id })
-        let newIds = Set(fresh.map { $0.id }).subtracting(oldIds)
+        let allFreshIds = Set(fresh.map { $0.id })
+        let newIds = allFreshIds.subtracting(oldIds)
+        // Short-circuit: if NO ids changed (no new events, no removals),
+        // skip the @Published assignment. Otherwise every poll invalidates
+        // the entire SwiftUI tree even when nothing happened on the bus.
+        if oldIds == allFreshIds {
+            return
+        }
         events = fresh.sorted(by: { $0.id < $1.id })
         // Recover orchestration order from the most recent kickoff.plan.ready
         // event so the bottleneck picker has a truth-source even when nobody
