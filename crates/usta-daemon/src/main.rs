@@ -1177,10 +1177,10 @@ impl Usta for UstaSvc {
         let mut effective_command = r.command.clone();
         if has_command {
             // Give the CLI agent + its MCP child the bus context.
-            extra_env.push(("ATELIER_SOCKET".into(), self.socket_path.clone()));
-            extra_env.push(("ATELIER_WORKSPACE_ID".into(), workspace.id.clone()));
+            extra_env.push(("USTA_SOCKET".into(), self.socket_path.clone()));
+            extra_env.push(("USTA_WORKSPACE_ID".into(), workspace.id.clone()));
             if !r.role.is_empty() {
-                extra_env.push(("ATELIER_ROLE".into(), r.role.clone()));
+                extra_env.push(("USTA_ROLE".into(), r.role.clone()));
             }
             // Write a project .mcp.json so MCP-capable CLIs (Claude Code) load
             // the Usta bus server. Points at the usta-mcp sibling binary.

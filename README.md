@@ -187,7 +187,6 @@ usta/
 └── scripts/build-mac.sh
 ```
 
-> **Note on naming.** Internal crates and the daemon binary are still `atelier-*` / `ustad` from the prototype phase. The user-facing brand is **Usta**. The internal rename is deferred to avoid breaking existing Keychain entries + paths.
 
 ---
 

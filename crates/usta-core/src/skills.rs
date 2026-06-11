@@ -31,7 +31,7 @@ const MAX_SKILL_BYTES: usize = 6 * 1024;
 fn skill_paths(name: &str) -> Vec<std::path::PathBuf> {
     use std::path::PathBuf;
     let mut out = Vec::new();
-    if let Ok(dir) = std::env::var("ATELIER_SKILLS_DIR") {
+    if let Ok(dir) = std::env::var("USTA_SKILLS_DIR") {
         out.push(PathBuf::from(dir).join(name).join("SKILL.md"));
     }
     if let Ok(home) = std::env::var("HOME") {

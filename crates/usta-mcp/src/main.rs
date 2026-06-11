@@ -6,9 +6,9 @@
 //! gRPC Unix socket.
 //!
 //! Context from env (set by Usta when it launches a CLI pane):
-//!   ATELIER_SOCKET        UDS path of ustad
-//!   ATELIER_WORKSPACE_ID  workspace this agent belongs to
-//!   ATELIER_ROLE          this agent's role name (used as event from_role)
+//!   USTA_SOCKET        UDS path of ustad
+//!   USTA_WORKSPACE_ID  workspace this agent belongs to
+//!   USTA_ROLE          this agent's role name (used as event from_role)
 //!
 //! Tools:
 //!   publish_event(topic, summary)              announce a handoff
@@ -29,7 +29,7 @@ use tower::service_fn;
 const PROTOCOL_VERSION: &str = "2024-11-05";
 
 fn socket_path() -> PathBuf {
-    if let Ok(s) = std::env::var("ATELIER_SOCKET") {
+    if let Ok(s) = std::env::var("USTA_SOCKET") {
         if !s.is_empty() { return PathBuf::from(s); }
     }
     let tmp = std::env::var("TMPDIR").unwrap_or_else(|_| "/tmp".into());
@@ -91,10 +91,10 @@ fn tool_defs() -> Value {
 }
 
 async fn call_tool(name: &str, args: &Value) -> anyhow::Result<String> {
-    let ws = std::env::var("ATELIER_WORKSPACE_ID").unwrap_or_default();
-    let role = std::env::var("ATELIER_ROLE").unwrap_or_else(|_| "cli".into());
+    let ws = std::env::var("USTA_WORKSPACE_ID").unwrap_or_default();
+    let role = std::env::var("USTA_ROLE").unwrap_or_else(|_| "cli".into());
     if ws.is_empty() {
-        return Ok("error: ATELIER_WORKSPACE_ID not set (no workspace context)".into());
+        return Ok("error: USTA_WORKSPACE_ID not set (no workspace context)".into());
     }
     let mut client = connect().await?;
 

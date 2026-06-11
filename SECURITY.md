@@ -9,7 +9,7 @@ I'll respond within a few days and credit you in the fix unless you ask otherwis
 ## Scope
 
 - Daemon (`usta-daemon`) — gRPC over Unix domain socket, local-only by default
-- CLI (`atelier`)
+- CLI (`usta`)
 - MCP server (`usta-mcp`) — stdio
 - Mac app
 

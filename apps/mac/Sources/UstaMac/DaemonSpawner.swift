@@ -3,7 +3,7 @@ import Foundation
 /// Locates the `ustad` binary and (optionally) launches it.
 ///
 /// Search order:
-///   1. ATELIERD_BIN env var
+///   1. USTAD_BIN env var
 ///   2. ~/.local/bin/ustad
 ///   3. Sibling of the running app bundle's executable
 ///   4. <repo>/target/debug/ustad  (dev mode — climbs up from CWD/exe)
@@ -11,7 +11,7 @@ enum DaemonSpawner {
     static func locateBinary() -> URL? {
         let fm = FileManager.default
 
-        if let p = ProcessInfo.processInfo.environment["ATELIERD_BIN"], !p.isEmpty {
+        if let p = ProcessInfo.processInfo.environment["USTAD_BIN"], !p.isEmpty {
             let u = URL(fileURLWithPath: p)
             if fm.isExecutableFile(atPath: u.path) { return u }
         }

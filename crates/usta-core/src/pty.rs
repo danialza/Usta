@@ -17,7 +17,7 @@ pub struct TerminalSpec {
     /// When set, the pty runs `$shell -lc "<command>"` instead of an
     /// interactive shell (used to launch a CLI agent like `claude`/`aider`).
     pub command: Option<String>,
-    /// Extra environment variables (e.g. ATELIER_* for the MCP bridge).
+    /// Extra environment variables (e.g. USTA_* for the MCP bridge).
     pub extra_env: Vec<(String, String)>,
 }
 

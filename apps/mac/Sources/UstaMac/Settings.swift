@@ -61,7 +61,7 @@ final class AppSettings: ObservableObject {
     }
 
     static func defaultSocketPath() -> String {
-        if let s = ProcessInfo.processInfo.environment["ATELIER_SOCKET"], !s.isEmpty { return s }
+        if let s = ProcessInfo.processInfo.environment["USTA_SOCKET"], !s.isEmpty { return s }
         let tmp = ProcessInfo.processInfo.environment["TMPDIR"] ?? "/tmp"
         return (tmp as NSString).appendingPathComponent("usta.sock")
     }
