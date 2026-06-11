@@ -282,13 +282,16 @@
       <div class="chip"><div class="k">License</div><div class="v">MIT</div></div>
     </div>
     <div class="term">
-<span class="m"># clone, build, launch</span>
+<span class="m"># Option A — download DMG, then bypass Gatekeeper warning:</span>
+<span class="c">$</span> curl -sSL <span class="v">https://raw.githubusercontent.com/danialza/Usta/main/scripts/install.sh</span> | bash
+
+<span class="m"># Option B — build from source (no Gatekeeper warning):</span>
 <span class="c">$</span> git clone https://github.com/danialza/Usta.git
 <span class="c">$</span> cd Usta
 <span class="c">$</span> bash scripts/build-mac.sh
 <span class="c">$</span> open dist/<span class="v">Usta.app</span>
 
-<span class="m"># requires macOS 15+, Xcode CLT, Rust stable</span>
+<span class="m"># requires macOS 15+ (Xcode CLT + Rust for source build)</span>
     </div>
   </div>
 </section>
