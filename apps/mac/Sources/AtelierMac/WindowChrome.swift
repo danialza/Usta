@@ -1,25 +1,28 @@
 import SwiftUI
 import AppKit
 
-/// Make the host NSWindow's titlebar transparent and full-size — so the
-/// app's content (gradient + sidebar) extends all the way to the top edge
-/// instead of leaving a blank strip above the workspace header.
+/// Make host NSWindow titlebar transparent + full-size. Configures the
+/// window ONCE per attach; updateNSView is a no-op so app-focus changes
+/// don't pile up DispatchQueue work.
 struct ChromelessWindow: NSViewRepresentable {
+    final class Coordinator {
+        var didConfigure = false
+    }
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
     func makeNSView(context: Context) -> NSView {
         let v = NSView()
-        DispatchQueue.main.async { configure(v.window) }
+        DispatchQueue.main.async { [weak v] in
+            guard let w = v?.window, !context.coordinator.didConfigure else { return }
+            context.coordinator.didConfigure = true
+            w.titlebarAppearsTransparent = true
+            w.titleVisibility = .hidden
+            w.styleMask.insert(.fullSizeContentView)
+            w.isMovableByWindowBackground = true
+        }
         return v
     }
     func updateNSView(_ nsView: NSView, context: Context) {
-        DispatchQueue.main.async { configure(nsView.window) }
-    }
-    private func configure(_ window: NSWindow?) {
-        guard let w = window else { return }
-        w.titlebarAppearsTransparent = true
-        w.titleVisibility = .hidden
-        w.styleMask.insert(.fullSizeContentView)
-        w.isMovableByWindowBackground = true
-        // Keep traffic lights visible (default), but the toolbar area is now
-        // overlaid on top of content rather than reserving its own band.
+        // intentionally empty — config is one-shot
     }
 }

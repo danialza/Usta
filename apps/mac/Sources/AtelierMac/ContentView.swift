@@ -234,31 +234,31 @@ struct WelcomeView: View {
     var onSettings: () -> Void = {}
 
     var body: some View {
-        ZStack(alignment: .topTrailing) {
-            LinearGradient(
-                colors: [Color(red: 0.12, green: 0.10, blue: 0.18), UstaTheme.bg],
-                startPoint: .top, endPoint: .bottom
-            )
-            Button(action: onSettings) {
-                Image(systemName: "gearshape").font(.title3)
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(UstaTheme.dim)
-            .padding(20)
-            VStack(spacing: 20) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 18)
-                        .fill(LinearGradient(
-                            colors: [Color(red: 0.39, green: 0.40, blue: 0.95),
-                                     Color(red: 0.93, green: 0.28, blue: 0.60)],
-                            startPoint: .topLeading, endPoint: .bottomTrailing))
-                        .frame(width: 76, height: 76)
-                    Image(systemName: "rectangle.3.group.bubble")
-                        .font(.system(size: 36, weight: .light))
-                        .foregroundStyle(.white)
+        ZStack {
+            // Layer 1 — brand bg + luxury pattern, same as main scene
+            BrandBackground()
+
+            // Layer 2 — top-right settings cog
+            VStack {
+                HStack {
+                    Spacer()
+                    Button(action: onSettings) {
+                        Image(systemName: "gearshape").font(.title3)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(UstaTheme.dim)
+                    .padding(.trailing, 20)
+                    .padding(.top, 30)            // clear traffic lights
                 }
-                Text("Welcome to Usta").font(.system(size: 30, weight: .semibold))
+                Spacer()
+            }
+
+            // Layer 3 — true-centered hero
+            VStack(spacing: 22) {
+                UstaLogo(size: 96)
+                Text("Welcome to Usta").font(.system(size: 32, weight: .semibold))
                 Text("Your AI engineering team, on your desktop")
+                    .font(.system(size: 14))
                     .foregroundStyle(UstaTheme.dim)
                 HStack(spacing: 18) {
                     welcomeCard(
@@ -275,9 +275,10 @@ struct WelcomeView: View {
                     )
                 }
                 .frame(maxWidth: 720)
-                .padding(.top, 24)
+                .padding(.top, 8)
             }
             .padding(.horizontal, 40)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
         }
     }
 
