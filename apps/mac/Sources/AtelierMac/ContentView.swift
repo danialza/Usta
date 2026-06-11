@@ -777,7 +777,7 @@ struct WorkspaceDetailView: View {
                 chip(for: r)
             }
         }
-        .animation(.easeInOut(duration: 0.3), value: ordered.map(\.name))
+        // No animation on the chip strip reorder — it lagged chip taps.
     }
 
     @ViewBuilder
@@ -1073,7 +1073,6 @@ struct RoleChip: View {
     let selected: Bool
     var onTap: () -> Void
     @EnvironmentObject var bus: WorkspaceBus
-    @State private var pulse: Bool = false
     var body: some View {
         let working = bus.state(of: role.name) == .working
         Button(action: onTap) {
@@ -1081,10 +1080,7 @@ struct RoleChip: View {
                 Circle()
                     .fill(UstaTheme.roleColor(for: role.name))
                     .frame(width: 8, height: 8)
-                    .opacity(working ? (pulse ? 0.3 : 1.0) : 1.0)
-                    .scaleEffect(working ? (pulse ? 1.4 : 1.0) : 1.0)
-                    .animation(working ? .easeInOut(duration: 0.65).repeatForever(autoreverses: true) : .default,
-                               value: pulse)
+                    .opacity(working ? 0.7 : 1.0)         // static dim, no pulse
                 let emoji = role.emoji.isEmpty
                     ? UstaTheme.roleEmoji(for: role.name, fallback: "•")
                     : role.emoji
@@ -1094,8 +1090,6 @@ struct RoleChip: View {
                     .truncationMode(.tail)
                     .fixedSize(horizontal: true, vertical: false)
             }
-            .onAppear { if working { pulse = true } }
-            .onChange(of: working) { _, new in pulse = new }
             .padding(.horizontal, 10)
             .padding(.vertical, 5)
             .background(selected ? UstaTheme.roleColor(for: role.name).opacity(0.30)
@@ -1105,12 +1099,9 @@ struct RoleChip: View {
                     : (selected ? UstaTheme.roleColor(for: role.name) : UstaTheme.border),
                 lineWidth: working ? 1.6 : (selected ? 1.2 : 1)
             ))
-            .overlay(
-                Capsule()
-                    .stroke(Color.red.opacity(working ? (pulse ? 0.85 : 0.15) : 0.0), lineWidth: 2.4)
-                    .animation(working ? .easeInOut(duration: 0.65).repeatForever(autoreverses: true) : .default,
-                               value: pulse)
-            )
+            // The repeatForever pulse rings were rendering every frame
+            // forever — they were the real CPU + perceived-lag source.
+            // Replaced with a static red outline when working.
             .clipShape(Capsule())
         }
         .buttonStyle(.plain)

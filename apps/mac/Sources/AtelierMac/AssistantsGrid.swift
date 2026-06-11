@@ -161,7 +161,9 @@ struct AssistantsGrid: View {
                     }
                 }
                 .padding(10)
-                .animation(.easeInOut(duration: 0.35), value: ordered.map(\.name))
+                // No .animation here — animating positions of LazyVGrid
+                // cells that contain SwiftTerm Metal layers was the visible
+                // chip-switch lag. Reordering now snaps.
             }
         }
     }
