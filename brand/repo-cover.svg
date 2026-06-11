@@ -1,0 +1,84 @@
+<svg viewBox="0 0 1280 640" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" role="img" aria-label="Usta — your AI engineering team">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%"   stop-color="#0a0b18"/>
+      <stop offset="55%"  stop-color="#050810"/>
+      <stop offset="100%" stop-color="#07051a"/>
+    </linearGradient>
+    <linearGradient id="tagG" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#3DECFF"/>
+      <stop offset="50%" stop-color="#8B7CF6"/>
+      <stop offset="100%" stop-color="#F45BA5"/>
+    </linearGradient>
+    <linearGradient id="shotFade" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="70%" stop-color="#000000" stop-opacity="0"/>
+      <stop offset="100%" stop-color="#050810" stop-opacity="0.55"/>
+    </linearGradient>
+    <radialGradient id="glowTeal" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#3DECFF" stop-opacity="0.22"/>
+      <stop offset="100%" stop-color="#3DECFF" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="glowPink" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#F45BA5" stop-opacity="0.18"/>
+      <stop offset="100%" stop-color="#F45BA5" stop-opacity="0"/>
+    </radialGradient>
+    <clipPath id="shotClip"><rect x="612" y="118" width="760" height="470" rx="14"/></clipPath>
+  </defs>
+
+  <rect width="1280" height="640" fill="url(#bg)"/>
+  <ellipse cx="180" cy="120" rx="420" ry="320" fill="url(#glowTeal)"/>
+  <ellipse cx="640" cy="640" rx="520" ry="300" fill="url(#glowPink)"/>
+  <circle cx="60" cy="560" r="240" fill="none" stroke="#ffffff" stroke-width="1" opacity="0.04"/>
+
+  <!-- Screenshot, bleeding off the right edge -->
+  <g clip-path="url(#shotClip)">
+    <image href="screenshots/guide/08-workspace-hero.png" x="612" y="118" width="760" height="485" preserveAspectRatio="xMidYMid slice"/>
+    <rect x="612" y="118" width="760" height="470" fill="url(#shotFade)"/>
+  </g>
+  <rect x="612" y="118" width="760" height="470" rx="14" fill="none" stroke="#ffffff" stroke-opacity="0.10" stroke-width="1.5"/>
+
+  <!-- Left content -->
+  <image href="usta-logo.png" x="76" y="70" width="92" height="92" preserveAspectRatio="xMidYMid meet"/>
+  <text x="184" y="135"
+        font-family="ui-sans-serif, -apple-system, 'Inter', system-ui, sans-serif"
+        font-size="76" font-weight="800" letter-spacing="-3" fill="#F0F1F7">Usta</text>
+
+  <text x="80" y="262"
+        font-family="ui-sans-serif, -apple-system, 'Inter', system-ui, sans-serif"
+        font-size="46" font-weight="800" letter-spacing="-1.5" fill="#F0F1F7">Your AI engineering</text>
+  <text x="80" y="316"
+        font-family="ui-sans-serif, -apple-system, 'Inter', system-ui, sans-serif"
+        font-size="46" font-weight="800" letter-spacing="-1.5" fill="#F0F1F7">team. <tspan fill="url(#tagG)">Not an assistant.</tspan></text>
+
+  <text x="82" y="372"
+        font-family="ui-sans-serif, -apple-system, 'Inter', system-ui, sans-serif"
+        font-size="20" font-weight="400" fill="#9aa0bf">A PM agent plans the work. Specialists run in</text>
+  <text x="82" y="400"
+        font-family="ui-sans-serif, -apple-system, 'Inter', system-ui, sans-serif"
+        font-size="20" font-weight="400" fill="#9aa0bf">parallel. They hand off through a shared event bus.</text>
+
+  <!-- Feature pills -->
+  <g font-family="ui-sans-serif, -apple-system, 'Inter', system-ui, sans-serif" font-size="17" font-weight="500">
+    <g transform="translate(80 446)">
+      <rect width="232" height="40" rx="20" fill="none" stroke="#3DECFF" stroke-width="1.3"/>
+      <text x="22" y="26" fill="#3DECFF">PM auto-orchestration</text>
+    </g>
+    <g transform="translate(326 446)">
+      <rect width="196" height="40" rx="20" fill="none" stroke="#8B7CF6" stroke-width="1.3"/>
+      <text x="22" y="26" fill="#8B7CF6">Shared event bus</text>
+    </g>
+    <g transform="translate(80 500)">
+      <rect width="222" height="40" rx="20" fill="none" stroke="#F45BA5" stroke-width="1.3"/>
+      <text x="22" y="26" fill="#F45BA5">Claude · Gemini · Ollama</text>
+    </g>
+    <g transform="translate(316 500)">
+      <rect width="156" height="40" rx="20" fill="none" stroke="#5A9DFF" stroke-width="1.3"/>
+      <text x="22" y="26" fill="#5A9DFF">Native macOS</text>
+    </g>
+  </g>
+
+  <!-- URL -->
+  <text x="82" y="592"
+        font-family="ui-monospace, Menlo, monospace"
+        font-size="18" font-weight="500" fill="#6b7095">github.com/danialza/Usta</text>
+</svg>
