@@ -146,6 +146,9 @@ struct SettingsView: View {
     @State private var pullModel: String = "qwen2.5-coder:7b"
     @Environment(\.dismiss) private var dismiss
 
+    // Snapshot keys/host at sheet open so we can detect changes on Done
+    @State private var openSnapshot: String = ""
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
@@ -166,10 +169,36 @@ struct SettingsView: View {
         .background(UstaTheme.bg)
         .toolbar {
             ToolbarItem(placement: .confirmationAction) {
-                Button("Done") { dismiss() }
+                Button("Done") {
+                    let current = settings.anthropicKey + "|" + settings.geminiKey + "|" + settings.ollamaHost + "|" + settings.socketPath
+                    let changed = current != openSnapshot
+                    dismiss()
+                    if changed {
+                        let sock = settings.socketPath
+                        let aKey = settings.anthropicKey
+                        let gKey = settings.geminiKey
+                        let oHost = settings.ollamaHost
+                        Task {
+                            await Task.detached(priority: .userInitiated) {
+                                DaemonSpawner.stopByProbe(socket: sock)
+                                _ = DaemonSpawner.spawn(
+                                    socket: sock,
+                                    anthropicKey: aKey,
+                                    geminiKey: gKey,
+                                    ollamaHost: oHost
+                                )
+                            }.value
+                            try? await Task.sleep(nanoseconds: 800_000_000)
+                            await client.connect()
+                        }
+                    }
+                }
             }
         }
-        .task { await ollama.refresh(base: settings.ollamaHost) }
+        .task {
+            openSnapshot = settings.anthropicKey + "|" + settings.geminiKey + "|" + settings.ollamaHost + "|" + settings.socketPath
+            await ollama.refresh(base: settings.ollamaHost)
+        }
     }
 
     private var daemonBox: some View {
