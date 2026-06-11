@@ -581,7 +581,8 @@ struct WorkspaceDetailView: View {
                 newFeatureBar
             }
         }
-        .padding(.horizontal, 14)
+        .padding(.leading, 80)  // clear traffic lights + sidebar-toggle button
+        .padding(.trailing, 14)
         .padding(.top, 18)      // breathing room under the title-bar area
         .padding(.bottom, 10)
     }
