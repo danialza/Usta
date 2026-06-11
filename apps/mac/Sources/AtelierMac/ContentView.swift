@@ -360,6 +360,7 @@ struct WorkspaceDetailView: View {
         }
         .environmentObject(bus)
         .environmentObject(termCache)
+        .ignoresSafeArea(edges: .top)   // workspace pane reaches the very top edge
         .overlay(alignment: .topTrailing) {
             ToastStack().environmentObject(bus)
         }
@@ -581,7 +582,7 @@ struct WorkspaceDetailView: View {
             }
         }
         .padding(.horizontal, 14)
-        .padding(.top, 6)       // hidden title bar already reserves space
+        .padding(.top, 0)       // gradient bg fills the title-bar area
         .padding(.bottom, 10)
     }
 

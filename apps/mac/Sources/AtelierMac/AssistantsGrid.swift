@@ -119,11 +119,18 @@ struct AssistantsGrid: View {
         )
         let visible = visibleNames
         let visibleCount = ordered.filter { visible.contains($0.name) }.count
+        let singleFocus = visibleCount == 1
         return GeometryReader { geo in
             // Column count based on visible pane count, not total (so a
             // single focused role gets a full-width pane).
             let n = cols(for: geo.size.width, count: max(1, visibleCount))
             let layout = Array(repeating: GridItem(.flexible(minimum: 380), spacing: 8), count: n)
+            // In single-focus mode let the focused pane fill the whole grid
+            // height (no scrolling). In All mode the scrollview lets a tall
+            // list overflow.
+            let visibleMinHeight: CGFloat = singleFocus
+                ? max(360, geo.size.height - 20)
+                : 360
             ScrollView {
                 // Regular VGrid (NOT Lazy) — keeps every pane in the SwiftUI
                 // tree even when scrolled off / hidden. SwiftTerm.TerminalView
@@ -148,7 +155,9 @@ struct AssistantsGrid: View {
                             step: displayStep[role.name],
                             stateColor: stateColor(bus.state(of: role.name))
                         )
-                        .frame(minHeight: isVisible ? (collapsed.contains(role.name) ? 56 : 360) : 0,
+                        .frame(minHeight: isVisible
+                                ? (collapsed.contains(role.name) ? 56 : visibleMinHeight)
+                                : 0,
                                maxHeight: isVisible ? .infinity : 0)
                         .opacity(isVisible ? 1 : 0)
                         .allowsHitTesting(isVisible)
