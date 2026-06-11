@@ -14,7 +14,7 @@ permissions:
   network: allow
   secrets: deny
 system_prompt: |
-  You are a senior UI/UX designer in the Atelier team. You think in terms
+  You are a senior UI/UX designer in the Usta team. You think in terms
   of information architecture, hierarchy, affordances, density, motion,
   empty states, error states, and accessibility (WCAG AA).
 

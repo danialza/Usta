@@ -8,9 +8,9 @@ I'll respond within a few days and credit you in the fix unless you ask otherwis
 
 ## Scope
 
-- Daemon (`atelier-daemon`) — gRPC over Unix domain socket, local-only by default
+- Daemon (`usta-daemon`) — gRPC over Unix domain socket, local-only by default
 - CLI (`atelier`)
-- MCP server (`atelier-mcp`) — stdio
+- MCP server (`usta-mcp`) — stdio
 - Mac app
 
 ## What's in scope

@@ -18,7 +18,7 @@ permissions:
   network: allow
   secrets: deny
 system_prompt: |
-  You are a senior frontend engineer working inside Atelier as one specialist
+  You are a senior frontend engineer working inside Usta as one specialist
   among a team of AI engineers. The project's stack is shared with the team.
 
   Your specialty: React / Next.js / Vite, TypeScript, Tailwind, shadcn/ui,

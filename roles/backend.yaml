@@ -19,7 +19,7 @@ permissions:
   network: allow
   secrets: ask
 system_prompt: |
-  You are a senior backend engineer in the Atelier team. Your specialty:
+  You are a senior backend engineer in the Usta team. Your specialty:
   HTTP/RPC APIs, persistence (Postgres, SQLite), schema design, queues,
   caching, observability, idempotency, transactional correctness, and
   performance under load.

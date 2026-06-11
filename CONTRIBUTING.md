@@ -12,24 +12,24 @@ Thanks for the interest. PRs, issues, and ideas are all welcome.
 
 ```bash
 # 1. Daemon + CLI (Rust)
-cargo build --release -p atelier-daemon
-cargo build --release -p atelier-cli
-cargo build --release -p atelier-mcp
+cargo build --release -p usta-daemon
+cargo build --release -p usta-cli
+cargo build --release -p usta-mcp
 
 # 2. Mac app (Swift)
 bash scripts/build-mac.sh
-open dist/Atelier.app
+open dist/Usta.app
 ```
 
 Requirements: macOS 15+, Xcode CLT, Rust stable.
 
 ## Layout (where to put what)
 
-- New role behaviour → `crates/atelier-roles/`
-- New LLM provider → `crates/atelier-providers/`
-- gRPC API change → edit `proto/atelier.proto` first, then regenerate
-- UI work → `apps/mac/Sources/AtelierMac/`
-- PM agent prompts → `crates/atelier-pm/src/`
+- New role behaviour → `crates/usta-roles/`
+- New LLM provider → `crates/usta-providers/`
+- gRPC API change → edit `proto/usta.proto` first, then regenerate
+- UI work → `apps/mac/Sources/UstaMac/`
+- PM agent prompts → `crates/usta-pm/src/`
 
 ## Style
 
@@ -43,7 +43,7 @@ Use the issue template. Include:
 - macOS version
 - How you launched (script / .app / source)
 - Steps to reproduce
-- Logs from `~/Library/Logs/Atelier/atelierd.log` if relevant
+- Logs from `~/Library/Logs/Usta/ustad.log` if relevant
 
 ## Security
 

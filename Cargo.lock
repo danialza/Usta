@@ -180,160 +180,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "atelier-cli"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-stream",
- "atelier-core",
- "atelier-proto",
- "chrono",
- "clap",
- "crossterm",
- "directories",
- "futures",
- "hyper-util",
- "nix 0.29.0",
- "owo-colors",
- "prost",
- "serde",
- "tokio",
- "tokio-stream",
- "toml",
- "tonic",
- "tower 0.5.3",
-]
-
-[[package]]
-name = "atelier-core"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "bytes",
- "directories",
- "portable-pty",
- "rusqlite",
- "serde",
- "thiserror 1.0.69",
- "tokio",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "atelier-daemon"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-stream",
- "async-trait",
- "atelier-core",
- "atelier-index",
- "atelier-pm",
- "atelier-proto",
- "atelier-providers",
- "atelier-roles",
- "clap",
- "futures",
- "prost",
- "serde_json",
- "serde_yaml",
- "tokio",
- "tokio-stream",
- "tonic",
- "tracing",
- "tracing-subscriber",
- "uuid",
-]
-
-[[package]]
-name = "atelier-index"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "atelier-core",
- "fastembed",
- "ignore",
- "serde",
- "thiserror 1.0.69",
- "tokio",
- "tracing",
- "walkdir",
-]
-
-[[package]]
-name = "atelier-mcp"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "atelier-proto",
- "hyper-util",
- "prost",
- "serde_json",
- "tokio",
- "tonic",
- "tower 0.5.3",
-]
-
-[[package]]
-name = "atelier-pm"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "atelier-providers",
- "futures",
- "ignore",
- "serde",
- "serde_json",
- "thiserror 1.0.69",
- "tokio",
- "tracing",
- "walkdir",
-]
-
-[[package]]
-name = "atelier-proto"
-version = "0.1.0"
-dependencies = [
- "prost",
- "prost-types",
- "tonic",
- "tonic-build",
-]
-
-[[package]]
-name = "atelier-providers"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-stream",
- "async-trait",
- "bytes",
- "futures",
- "reqwest",
- "serde",
- "serde_json",
- "thiserror 1.0.69",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "atelier-roles"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "directories",
- "serde",
- "serde_yaml",
- "thiserror 1.0.69",
- "tracing",
-]
-
-[[package]]
 name = "atomic-waker"
 version = "1.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3963,6 +3809,160 @@ dependencies = [
  "idna",
  "percent-encoding",
  "serde",
+]
+
+[[package]]
+name = "usta-cli"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-stream",
+ "chrono",
+ "clap",
+ "crossterm",
+ "directories",
+ "futures",
+ "hyper-util",
+ "nix 0.29.0",
+ "owo-colors",
+ "prost",
+ "serde",
+ "tokio",
+ "tokio-stream",
+ "toml",
+ "tonic",
+ "tower 0.5.3",
+ "usta-core",
+ "usta-proto",
+]
+
+[[package]]
+name = "usta-core"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "bytes",
+ "directories",
+ "portable-pty",
+ "rusqlite",
+ "serde",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "usta-daemon"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-stream",
+ "async-trait",
+ "clap",
+ "futures",
+ "prost",
+ "serde_json",
+ "serde_yaml",
+ "tokio",
+ "tokio-stream",
+ "tonic",
+ "tracing",
+ "tracing-subscriber",
+ "usta-core",
+ "usta-index",
+ "usta-pm",
+ "usta-proto",
+ "usta-providers",
+ "usta-roles",
+ "uuid",
+]
+
+[[package]]
+name = "usta-index"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "fastembed",
+ "ignore",
+ "serde",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "usta-core",
+ "walkdir",
+]
+
+[[package]]
+name = "usta-mcp"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "hyper-util",
+ "prost",
+ "serde_json",
+ "tokio",
+ "tonic",
+ "tower 0.5.3",
+ "usta-proto",
+]
+
+[[package]]
+name = "usta-pm"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "futures",
+ "ignore",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "usta-providers",
+ "walkdir",
+]
+
+[[package]]
+name = "usta-proto"
+version = "0.1.0"
+dependencies = [
+ "prost",
+ "prost-types",
+ "tonic",
+ "tonic-build",
+]
+
+[[package]]
+name = "usta-providers"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-stream",
+ "async-trait",
+ "bytes",
+ "futures",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "usta-roles"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "directories",
+ "serde",
+ "serde_yaml",
+ "thiserror 1.0.69",
+ "tracing",
 ]
 
 [[package]]
