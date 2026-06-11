@@ -1,7 +1,9 @@
 <div align="center">
 
 <img src="brand/usta-logo.png" alt="Usta" width="160" />
+
 # Usta
+
 ### Your AI engineering team. Not an assistant.
 
 *Most AI dev tools give you one helper.*<br/>
