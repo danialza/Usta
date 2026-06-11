@@ -10,9 +10,9 @@ import SwiftUI
 ///                 the traffic light cluster AND the toggle button.
 struct SidebarAwareLeadingPadding: ViewModifier {
     private let openLeading:   CGFloat = 14
-    private let openTop:       CGFloat = 4
+    private let openTop:       CGFloat = 22      // align with sidebar's "Usta" header
     private let closedLeading: CGFloat = 96
-    private let closedTop:     CGFloat = 28
+    private let closedTop:     CGFloat = 22
     /// Below this threshold we assume the sidebar is collapsed/hidden.
     private let collapsedThreshold: CGFloat = 40
 
