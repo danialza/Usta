@@ -23,6 +23,7 @@ struct ContentView: View {
         }
         .preferredColorScheme(.dark)
         .background(BrandBackground().ignoresSafeArea())
+        .background(ChromelessWindow())
         .sheet(isPresented: $showNewProject) {
             NewProjectWizard(onOpened: { ws in selection = ws })
                 .environmentObject(client)
@@ -60,7 +61,9 @@ struct ContentView: View {
             .buttonStyle(.plain)
             .foregroundStyle(UstaTheme.dim)
         }
-        .padding(14)
+        .padding(.horizontal, 14)
+        .padding(.top, 30)        // clear macOS traffic lights
+        .padding(.bottom, 14)
     }
 
     private var sidebarBody: some View {
@@ -578,7 +581,9 @@ struct WorkspaceDetailView: View {
                 newFeatureBar
             }
         }
-        .padding(14)
+        .padding(.horizontal, 14)
+        .padding(.top, 6)       // hidden title bar already reserves space
+        .padding(.bottom, 10)
     }
 
     /// Collapsed "💡 New feature" entry: text input → publishes a

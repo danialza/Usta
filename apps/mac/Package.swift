@@ -40,7 +40,8 @@ let package = Package(
                 .product(name: "GRPCNIOTransportHTTP2", package: "grpc-swift-nio-transport"),
                 .product(name: "SwiftTerm", package: "SwiftTerm"),
             ],
-            path: "Sources/AtelierMac"
+            path: "Sources/AtelierMac",
+            resources: [.process("Resources")]
         ),
     ]
 )
