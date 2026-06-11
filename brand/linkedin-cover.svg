@@ -1,18 +1,9 @@
-<svg viewBox="0 0 1584 396" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Usta — Your AI engineering team">
+<svg viewBox="0 0 1584 396" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" role="img" aria-label="Usta — Your AI engineering team">
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0%"   stop-color="#0a0b18"/>
       <stop offset="50%"  stop-color="#050810"/>
       <stop offset="100%" stop-color="#07051a"/>
-    </linearGradient>
-    <linearGradient id="tealG" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="#3DECFF"/><stop offset="100%" stop-color="#0BB1CC"/>
-    </linearGradient>
-    <linearGradient id="blueG" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="#5A9DFF"/><stop offset="100%" stop-color="#4B5FD8"/>
-    </linearGradient>
-    <linearGradient id="pinkG" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="#FF6BC4"/><stop offset="100%" stop-color="#E14C8E"/>
     </linearGradient>
     <linearGradient id="taglineG" x1="0" y1="0" x2="1" y2="0">
       <stop offset="0%" stop-color="#3DECFF"/>
@@ -21,45 +12,29 @@
     </linearGradient>
   </defs>
 
-  <!-- Background -->
   <rect width="1584" height="396" fill="url(#bg)"/>
-
-  <!-- Subtle decorative orbs -->
   <circle cx="1450" cy="-100" r="280" fill="none" stroke="#ffffff" stroke-width="1" opacity="0.04"/>
   <circle cx="1300" cy="-50" r="180" fill="none" stroke="#ffffff" stroke-width="1" opacity="0.04"/>
   <circle cx="-100" cy="450" r="300" fill="none" stroke="#ffffff" stroke-width="1" opacity="0.04"/>
 
-  <!-- Mark on left (scaled Usta logo) -->
-  <g transform="translate(100 80) scale(0.95)">
-    <path d="M 38 30 L 70 30 L 70 160 L 38 168 Z" fill="url(#tealG)"/>
-    <path d="M 78 32 L 102 32 L 102 158 L 78 168 Z" fill="url(#tealG)" opacity="0.92"/>
-    <path d="M 110 30 L 134 30 L 134 160 L 110 160 Z" fill="url(#blueG)"/>
-    <path d="M 142 30 L 166 30 L 166 160 L 142 160 Z" fill="url(#blueG)"/>
-    <path d="M 174 32 L 198 32 L 198 158 L 174 168 Z" fill="url(#pinkG)" opacity="0.92"/>
-    <path d="M 206 30 L 238 30 L 238 168 L 206 160 Z" fill="url(#pinkG)"/>
-    <path d="M 38 168 L 128 215 L 128 235 L 38 195 Z" fill="#5C4DD2"/>
-    <path d="M 128 215 L 238 168 L 238 195 L 128 235 Z" fill="#8056E0"/>
-  </g>
+  <image href="usta-logo.png" x="90" y="48" width="300" height="300" preserveAspectRatio="xMidYMid meet"/>
 
-  <!-- Wordmark -->
-  <text x="400" y="180"
+  <text x="440" y="180"
         font-family="ui-sans-serif, -apple-system, 'Inter', system-ui, sans-serif"
         font-size="120" font-weight="700" letter-spacing="-4" fill="#F0F1F7">Usta</text>
 
-  <!-- Tagline -->
-  <text x="402" y="230"
+  <text x="442" y="230"
         font-family="ui-sans-serif, -apple-system, 'Inter', system-ui, sans-serif"
         font-size="34" font-weight="500" letter-spacing="1" fill="#E8E9F3">
     Your AI engineering team.
   </text>
-  <text x="402" y="272"
+  <text x="442" y="272"
         font-family="ui-sans-serif, -apple-system, 'Inter', system-ui, sans-serif"
         font-size="34" font-weight="500" letter-spacing="1" fill="url(#taglineG)">
     Not an assistant.
   </text>
 
-  <!-- Pill row -->
-  <g transform="translate(402 310)" font-family="ui-sans-serif, -apple-system, 'Inter', system-ui, sans-serif" font-size="16">
+  <g transform="translate(442 310)" font-family="ui-sans-serif, -apple-system, 'Inter', system-ui, sans-serif" font-size="16">
     <g>
       <rect x="0" y="0" width="220" height="36" rx="18" fill="none" stroke="#3DECFF" stroke-width="1.2"/>
       <text x="20" y="24" fill="#3DECFF" font-weight="500">10+ specialist roles</text>
@@ -74,7 +49,6 @@
     </g>
   </g>
 
-  <!-- GitHub corner -->
   <text x="1480" y="370" text-anchor="end"
         font-family="ui-sans-serif, -apple-system, 'Inter', system-ui, sans-serif"
         font-size="18" font-weight="500" fill="#8b8d9e">
