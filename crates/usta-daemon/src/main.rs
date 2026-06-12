@@ -244,14 +244,23 @@ fn spawn_idle_watcher(
                     }
                     out
                 };
+                // DETERMINISTIC SIGNAL (primary): the agent emits a structured
+                // marker we defined — `[[handoff: <topic> | <summary>]]` — when
+                // it finishes. This is a token WE control, not model prose, so
+                // it's reliable regardless of phrasing/locale. Parse it first.
+                let marker_topics: Vec<String> = parse_handoffs(&tail_str)
+                    .into_iter().map(|(t, _)| t).collect();
                 // Fast path: claude explicitly logged "Event <topic> published"
                 // — accept after just 8s quiet (claude already announced done).
                 let has_explicit_pub = tail_str.contains("event ")
                     && tail_str.contains("published");
-                let idle_required = if has_explicit_pub { 8 } else { 60 };
+                // A structured marker is as trustworthy as an explicit pub line
+                // → short idle threshold either way.
+                let has_strong_signal = has_explicit_pub || !marker_topics.is_empty();
+                let idle_required = if has_strong_signal { 8 } else { 60 };
                 if now - last_ms < idle_required * 1000 { continue; }
                 let lower = tail_str;
-                let hit = has_explicit_pub
+                let hit = has_strong_signal
                     || strong_markers.iter().any(|n| lower.contains(n));
                 if !hit { continue; }
                 // Resolve workspace + role first so we can compute blocker ts
@@ -336,13 +345,23 @@ fn spawn_idle_watcher(
                     }
                     out
                 };
-                // Prefer explicit list; fall back to declared publishes only
-                // when nothing explicit was found AND a strong marker exists.
-                let candidate_pool: Vec<String> = if !explicit_topics.is_empty() {
-                    explicit_topics.into_iter()
-                        .filter(|t| role_def.handoff_topics.publishes.iter()
-                                .any(|p| p == t || p.ends_with(t) || t.ends_with(p)))
-                        .collect()
+                // Topic source priority:
+                //   1. structured [[handoff: …]] markers — deterministic
+                //   2. "Event <topic> published" prose — explicit but loose
+                //   3. declared publishes — only if a strong keyword marker hit
+                // Each is intersected with the role's declared publishes so a
+                // hallucinated topic never escapes onto the bus.
+                let declared_ok = |t: &String| {
+                    let t = t.to_lowercase();
+                    role_def.handoff_topics.publishes.iter().any(|p| {
+                        let p = p.to_lowercase();
+                        p == t || p.ends_with(&t) || t.ends_with(&p)
+                    })
+                };
+                let candidate_pool: Vec<String> = if !marker_topics.is_empty() {
+                    marker_topics.into_iter().filter(|t| declared_ok(t)).collect()
+                } else if !explicit_topics.is_empty() {
+                    explicit_topics.into_iter().filter(|t| declared_ok(t)).collect()
                 } else if strong_markers.iter().any(|n| lower.contains(n)) {
                     role_def.handoff_topics.publishes.clone()
                 } else {
@@ -603,7 +622,11 @@ fn dispatch_event(
         if role.name == from_role {
             continue;
         }
-        if !role.handoff_topics.subscribes.iter().any(|t| t == &topic) {
+        // Case-insensitive exact match. With graph-repaired teams (topics
+        // normalized at build), producer and consumer strings are identical,
+        // so this lines the headless fan-out up with what the UI shows ready.
+        let topic_lc = topic.to_lowercase();
+        if !role.handoff_topics.subscribes.iter().any(|t| t.to_lowercase() == topic_lc) {
             continue;
         }
         let Some(provider) = providers.get(&role.default_provider) else { continue };
@@ -807,8 +830,12 @@ fn render_role_brief(role: &RoleDef, workspace_path: &str) -> String {
          orchestrator literally cannot detect 'done' any other way.\n\n\
          WRONG: write a report and stop. Usta never marks you done.\n\
          RIGHT: write report → call publish_event → THEN you may end the turn.\n\n\
-         Also speak the line `Event <topic> published.` in your final\n\
-         message so the idle-watcher has a fallback signal if MCP fails.\n\n",
+         DETERMINISTIC FALLBACK: on the FINAL line of your turn, print one\n\
+         marker per finished topic, EXACTLY in this format (the orchestrator\n\
+         parses it literally, so do not paraphrase):\n\
+             [[handoff: <topic> | <one-line summary>]]\n\
+         Example: [[handoff: api.ready | REST endpoints for auth + products done]]\n\
+         This guarantees the bus learns you finished even if the MCP call drops.\n\n",
         pubs = pubs_csv
     ));
 
