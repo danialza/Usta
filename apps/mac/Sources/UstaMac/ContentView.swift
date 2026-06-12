@@ -373,6 +373,12 @@ struct WorkspaceDetailView: View {
         .overlay(alignment: .topTrailing) {
             ToastStack().environmentObject(bus)
         }
+        // Run/Open buttons focus a single pane full-screen — no auto-send.
+        .onReceive(NotificationCenter.default.publisher(for: .ustaFocusRole)) { note in
+            guard let name = note.object as? String,
+                  let r = roles.first(where: { $0.name == name }) else { return }
+            selectedRole = r
+        }
         .task(id: ws.id) {
             roles = await client.listRoles(workspaceID: ws.id)
             bus.start(workspaceID: ws.id, client: client, roles: roles)
@@ -726,17 +732,18 @@ struct WorkspaceDetailView: View {
             Spacer()
             if let r = ready.first {
                 Button {
-                    NotificationCenter.default.post(name: .ustaKickoffRole, object: r)
+                    if let role = roles.first(where: { $0.name == r }) { selectedRole = role }
                 } label: {
                     HStack(spacing: 4) {
-                        Image(systemName: "play.fill").font(.system(size: 10))
-                        Text("Run @\(r)").font(.system(size: 11, weight: .medium))
+                        Image(systemName: "arrow.up.left.and.arrow.down.right").font(.system(size: 10))
+                        Text("Open @\(r)").font(.system(size: 11, weight: .medium))
                     }
                     .padding(.horizontal, 10).padding(.vertical, 5)
                     .background(Color.accentColor).foregroundStyle(.white)
                     .clipShape(Capsule())
                 }
                 .buttonStyle(.plain)
+                .help("Open @\(r) full-screen. Review its prompt, then Send.")
             } else if let f = focusName {
                 let unpub = bus.unpublishedFor(f)
                 if !unpub.isEmpty {

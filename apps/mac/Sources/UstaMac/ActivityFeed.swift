@@ -137,11 +137,11 @@ struct ActivityFeed: View {
                 Text("@\(name)").font(.system(size: 12, weight: .medium))
                 Spacer()
                 Button {
-                    NotificationCenter.default.post(name: .ustaKickoffRole, object: name)
+                    NotificationCenter.default.post(name: .ustaFocusRole, object: name)
                 } label: {
                     HStack(spacing: 3) {
-                        Image(systemName: "play.fill").font(.system(size: 9))
-                        Text("Run").font(.system(size: 10, weight: .medium))
+                        Image(systemName: "arrow.up.left.and.arrow.down.right").font(.system(size: 9))
+                        Text("Open").font(.system(size: 10, weight: .medium))
                     }
                     .padding(.horizontal, 8).padding(.vertical, 3)
                     .background(conflicts.isEmpty ? Color.accentColor : Color.orange)
@@ -149,7 +149,7 @@ struct ActivityFeed: View {
                     .clipShape(Capsule())
                 }
                 .buttonStyle(.plain)
-                .help(conflicts.isEmpty ? "Send kickoff to @\(name)" : "May conflict with \(conflicts.map { "@\($0)" }.joined(separator: ", "))")
+                .help(conflicts.isEmpty ? "Open @\(name) full-screen — review its prompt, then Send" : "May conflict with \(conflicts.map { "@\($0)" }.joined(separator: ", "))")
             }
             if !conflicts.isEmpty {
                 HStack(spacing: 3) {

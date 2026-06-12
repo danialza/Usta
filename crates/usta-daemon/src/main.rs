@@ -308,12 +308,13 @@ fn spawn_idle_watcher(
                     .map(|r| collect_changed_files_since(r, since_ms))
                     .unwrap_or_default();
                 if recent_files.is_empty() {
-                    tracing::info!(role = %t.role, term = %t.id, since_ms,
-                                   "idle-watcher: keyword hit but no file changes since blocker — skipping");
+                    tracing::debug!(role = %t.role, term = %t.id, since_ms,
+                                   "idle-watcher: marker hit but no file changes since blocker — skipping");
                     continue;
                 }
-                tracing::info!(role = %t.role, files = recent_files.len(),
-                               "idle-watcher: candidate completion detected");
+                // (Detailed "candidate" log moved below — only emit when we
+                // actually have an unpublished topic to fire, so a role that
+                // already published doesn't spam the log every 10s tick.)
                 let mine_topics: std::collections::HashSet<String> = mine_events.iter()
                     .filter(|e| e.from_role == role_def.name && e.created_unix_ms > latest_blocker_ms)
                     .map(|e| e.topic.clone()).collect();
@@ -397,6 +398,8 @@ fn spawn_idle_watcher(
                     true
                 });
                 if unpub.is_empty() { continue; }
+                tracing::info!(role = %t.role, files = recent_files.len(), topics = ?unpub,
+                               "idle-watcher: completion detected → publishing");
                 let files = ws_root.as_ref().map(|r| collect_changed_files(r)).unwrap_or_default();
                 for topic in unpub {
                     let summary = format!("auto-detected completion (idle {}s + keyword in pty tail)", (now - last_ms) / 1000);

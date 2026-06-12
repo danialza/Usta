@@ -14,6 +14,9 @@ extension Notification.Name {
     /// Posted with `object: roleName` after OrchestrateFeature wrote a new
     /// kickoff into the role's yaml. Pane should re-show banner.
     static let ustaResetKickoff = Notification.Name("UstaResetKickoff")
+    /// Posted with `object: roleName` to focus a single pane full-screen.
+    /// Does NOT send anything — the user reviews + sends the prompt manually.
+    static let ustaFocusRole = Notification.Name("UstaFocusRole")
 }
 
 enum ChatItemKind { case user, assistant, tool, approval }
