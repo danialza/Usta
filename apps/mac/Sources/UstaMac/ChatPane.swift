@@ -193,6 +193,10 @@ struct AssistantPane: View {
     @State private var kickoffSent: Bool = false
     @State private var regenInFlight: Bool = false
     @State private var regeneratedKickoff: String? = nil
+    /// The exact prompt text most recently sent to this pane. Survives Send so
+    /// the user can re-show / re-send / copy it (e.g. after clearing the input).
+    @State private var lastSentPrompt: String = ""
+    @State private var showLastPrompt: Bool = false
     /// Slash-command skills user has invoked in this pane's pty since launch.
     /// Set when we type the command in, cleared on relaunch.
     @State private var activatedSkills: Set<String> = []
@@ -685,7 +689,56 @@ struct AssistantPane: View {
             blockedBanner
         } else if !effectiveKickoff.isEmpty && !kickoffSent {
             kickoffBannerCore
+        } else if !lastSentPrompt.isEmpty {
+            // After Send the active banner is gone — keep a compact handle on
+            // the last prompt so the user can re-read, re-send, or copy it.
+            lastPromptBar
         }
+    }
+
+    @ViewBuilder
+    private var lastPromptBar: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Image(systemName: "arrow.uturn.backward").font(.system(size: 10))
+                    .foregroundStyle(UstaTheme.dim)
+                Text("Last prompt sent").font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button { withAnimation { showLastPrompt.toggle() } } label: {
+                    Text(showLastPrompt ? "Hide" : "Show").font(.system(size: 10, weight: .medium))
+                }.buttonStyle(.borderless)
+                Button {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(lastSentPrompt, forType: .string)
+                } label: {
+                    Label("Copy", systemImage: "doc.on.doc").labelStyle(.iconOnly).font(.system(size: 10))
+                }.buttonStyle(.borderless).help("Copy the last prompt")
+                Button { Task { await resendLastPrompt() } } label: {
+                    HStack(spacing: 3) {
+                        Image(systemName: "paperplane").font(.system(size: 9))
+                        Text("Re-send").font(.system(size: 10, weight: .medium))
+                    }
+                    .padding(.horizontal, 7).padding(.vertical, 2)
+                    .background(Color.accentColor).foregroundStyle(.white)
+                    .clipShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .help("Paste the last prompt back into the terminal (you press Enter to run)")
+            }
+            if showLastPrompt {
+                Text(lastSentPrompt)
+                    .font(.system(size: 11)).foregroundStyle(.primary)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .padding(8)
+        .background(UstaTheme.dim.opacity(0.06))
+        .overlay(RoundedRectangle(cornerRadius: 6).stroke(UstaTheme.border))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .padding(.horizontal, 10)
     }
 
     @ViewBuilder
@@ -858,6 +911,7 @@ struct AssistantPane: View {
         let text = effectiveKickoff
         if text.isEmpty { return }
         kickoffSent = true
+        lastSentPrompt = text          // keep for re-show / re-send / copy
         bus.markWorking(role.name)
         if backend == .cli {
             // Wait briefly so a freshly-launched CLI has its prompt up.
@@ -869,6 +923,20 @@ struct AssistantPane: View {
             }
         } else {
             input = text
+        }
+    }
+
+    /// Re-paste the last sent prompt into the CLI (e.g. user cleared the
+    /// input). Does NOT auto-submit — they press Enter when ready.
+    private func resendLastPrompt() async {
+        guard backend == .cli, !lastSentPrompt.isEmpty else {
+            input = lastSentPrompt
+            return
+        }
+        if cliSession == nil { try? await Task.sleep(nanoseconds: 600_000_000) }
+        guard let s = cliSession else { return }
+        if let data = lastSentPrompt.data(using: .utf8) {
+            await s.sendInput(data)
         }
     }
 
