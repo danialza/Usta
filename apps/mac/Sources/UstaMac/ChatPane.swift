@@ -201,6 +201,9 @@ struct AssistantPane: View {
     /// the user can re-show / re-send / copy it (e.g. after clearing the input).
     @State private var lastSentPrompt: String = ""
     @State private var showLastPrompt: Bool = false
+    /// Guards against the provider-picker onChange re-entering switchCLI when
+    /// switchCLI itself sets selectedProvider.
+    @State private var switchingCLI: Bool = false
     /// Slash-command skills user has invoked in this pane's pty since launch.
     /// Set when we type the command in, cleared on relaunch.
     @State private var activatedSkills: Set<String> = []
@@ -416,6 +419,8 @@ struct AssistantPane: View {
     private func switchCLI(to provider: String) async {
         // A role with an explicit custom command opts out of bulk switching.
         if !role.cliCommand.isEmpty { return }
+        switchingCLI = true
+        defer { switchingCLI = false }
         backend = .cli
         selectedProvider = provider
         let newCmd = Self.defaultCommand(provider: provider, model: "")
@@ -557,7 +562,14 @@ struct AssistantPane: View {
                     .pickerStyle(.segmented)
                     .fixedSize()
                     .onChange(of: selectedProvider) { _, p in
-                        if cliSession == nil { cliCommand = !role.cliCommand.isEmpty ? role.cliCommand : Self.defaultCommand(provider: p, model: selectedModel) }
+                        if switchingCLI { return }
+                        // Live CLI session + user picked a new provider → relaunch
+                        // that terminal on the new CLI (claude → codex, etc.).
+                        if backend == .cli && cliSession != nil && role.cliCommand.isEmpty {
+                            Task { await switchCLI(to: p) }
+                        } else if cliSession == nil {
+                            cliCommand = !role.cliCommand.isEmpty ? role.cliCommand : Self.defaultCommand(provider: p, model: selectedModel)
+                        }
                     }
                     .onChange(of: selectedModel) { _, m in
                         if cliSession == nil { cliCommand = !role.cliCommand.isEmpty ? role.cliCommand : Self.defaultCommand(provider: selectedProvider, model: m) }
