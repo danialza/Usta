@@ -1,5 +1,6 @@
 use crate::{
-    anthropic::AnthropicProvider, gemini::GeminiProvider, ollama::OllamaProvider, DynProvider,
+    anthropic::AnthropicProvider, gemini::GeminiProvider, ollama::OllamaProvider,
+    openai::OpenAiProvider, DynProvider,
 };
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -14,9 +15,11 @@ impl ProviderRegistry {
         let anth: DynProvider = Arc::new(AnthropicProvider::from_env());
         let gem: DynProvider = Arc::new(GeminiProvider::from_env());
         let oll: DynProvider = Arc::new(OllamaProvider::from_env());
+        let oai: DynProvider = Arc::new(OpenAiProvider::from_env());
         map.insert(anth.name().into(), anth);
         map.insert(gem.name().into(), gem);
         map.insert(oll.name().into(), oll);
+        map.insert(oai.name().into(), oai);
         Self { providers: map }
     }
 

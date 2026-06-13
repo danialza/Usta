@@ -18,6 +18,7 @@ struct UstaApp: App {
                             socket: settings.socketPath,
                             anthropicKey: settings.anthropicKey.isEmpty ? nil : settings.anthropicKey,
                             geminiKey: settings.geminiKey.isEmpty ? nil : settings.geminiKey,
+                            openaiKey: settings.openaiKey.isEmpty ? nil : settings.openaiKey,
                             ollamaHost: settings.ollamaHost.isEmpty ? nil : settings.ollamaHost
                         )
                         try? await Task.sleep(nanoseconds: 600_000_000)

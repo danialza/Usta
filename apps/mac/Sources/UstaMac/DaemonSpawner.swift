@@ -111,6 +111,7 @@ enum DaemonSpawner {
         socket: String,
         anthropicKey: String? = nil,
         geminiKey: String? = nil,
+        openaiKey: String? = nil,
         ollamaHost: String? = nil
     ) -> URL? {
         // Refuse stomping a live daemon.
@@ -123,6 +124,7 @@ enum DaemonSpawner {
         var env = ProcessInfo.processInfo.environment
         if let key = anthropicKey, !key.isEmpty { env["ANTHROPIC_API_KEY"] = key }
         if let key = geminiKey, !key.isEmpty { env["GEMINI_API_KEY"] = key }
+        if let key = openaiKey, !key.isEmpty { env["OPENAI_API_KEY"] = key }
         if let h = ollamaHost, !h.isEmpty { env["OLLAMA_HOST"] = h }
         // Bump daemon log level so the file is useful for debugging.
         if env["RUST_LOG"] == nil {

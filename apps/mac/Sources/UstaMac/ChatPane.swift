@@ -17,6 +17,10 @@ extension Notification.Name {
     /// Posted with `object: roleName` to focus a single pane full-screen.
     /// Does NOT send anything — the user reviews + sends the prompt manually.
     static let ustaFocusRole = Notification.Name("UstaFocusRole")
+    /// Posted with `object: providerId` ("anthropic"/"openai"/"gemini"/"ollama")
+    /// to switch EVERY role's CLI at once (claude → codex, etc.). Each pane
+    /// relaunches its terminal with the new command.
+    static let ustaSetAllCLI = Notification.Name("UstaSetAllCLI")
 }
 
 enum ChatItemKind { case user, assistant, tool, approval }
@@ -268,6 +272,10 @@ struct AssistantPane: View {
             regeneratedKickoff = nil
             kickoffSent = false
         }
+        .onReceive(NotificationCenter.default.publisher(for: .ustaSetAllCLI)) { note in
+            guard let provider = note.object as? String else { return }
+            Task { await switchCLI(to: provider) }
+        }
         .onReceive(NotificationCenter.default.publisher(for: .ustaAutoRegenerate)) { note in
             guard let name = note.object as? String, name == role.name else { return }
             // Dedup: only auto-fire when we don't already have a regenerated
@@ -316,6 +324,9 @@ struct AssistantPane: View {
             return model.isEmpty ? "claude" : "claude --model \(model)"
         case "gemini":
             return model.isEmpty ? "gemini" : "gemini --model \(model)"
+        case "openai":
+            // OpenAI's Codex CLI. -m picks the model.
+            return model.isEmpty ? "codex" : "codex -m \(model)"
         case "ollama":    return "aider --model ollama_chat/\(model) --yes-always"
         default:          return ""
         }
@@ -397,6 +408,35 @@ struct AssistantPane: View {
                 cliLaunching = false
             }
         }
+    }
+
+    /// Switch this pane's CLI to a new provider (claude → codex etc.). Kills
+    /// the live terminal, recomputes the command, and relaunches. Ignores
+    /// roles pinned to a custom cli_command in their yaml (respect explicit).
+    private func switchCLI(to provider: String) async {
+        // A role with an explicit custom command opts out of bulk switching.
+        if !role.cliCommand.isEmpty { return }
+        backend = .cli
+        selectedProvider = provider
+        let newCmd = Self.defaultCommand(provider: provider, model: "")
+        if newCmd.isEmpty { return }
+        cliCommand = newCmd
+        // Tear down the current terminal so launchCLI doesn't reattach to it.
+        if let s = cliSession {
+            await client.closeTerminal(id: s.id)
+            s.stop()
+            cliSession = nil
+            termCache.drop(role: role.name)
+        }
+        // Also close any other alive terminal for this role on the daemon.
+        for t in await client.listTerminals(workspaceID: workspaceID)
+            where t.role == role.name && t.alive {
+            await client.closeTerminal(id: t.id)
+        }
+        cliError = nil
+        cliLaunching = true
+        await launchCLI()
+        cliLaunching = false
     }
 
     private func launchCLI() async {
