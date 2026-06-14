@@ -210,6 +210,11 @@ struct AssistantPane: View {
     /// Provider id the user picked in the Terminal-CLI menu, awaiting the
     /// "this wipes the session" confirmation. nil = no dialog.
     @State private var pendingCliProvider: String? = nil
+    /// Installed-status of each CLI binary, filled on appear. Drives the
+    /// picker labels + the "not installed" alert.
+    @State private var cliAvailability: [String: Bool] = [:]
+    /// Binary name to surface in the "CLI not installed" alert. nil = hidden.
+    @State private var cliMissing: String? = nil
     /// Slash-command skills user has invoked in this pane's pty since launch.
     /// Set when we type the command in, cleared on relaunch.
     @State private var activatedSkills: Set<String> = []
@@ -307,6 +312,15 @@ struct AssistantPane: View {
                     ? role.cliCommand
                     : Self.defaultCommand(provider: selectedProvider, model: selectedModel)
             }
+            // One-shot: which CLIs are actually installed (drives the picker
+            // labels). Done off the main thread; each `which` spawns a shell.
+            let bins = ["claude", "codex", "gemini", "aider"]
+            let avail = await Task.detached { () -> [String: Bool] in
+                var m: [String: Bool] = [:]
+                for b in bins { m[b] = Self.cliInstalled(b) }
+                return m
+            }.value
+            cliAvailability = avail
         }
     }
 
@@ -326,7 +340,7 @@ struct AssistantPane: View {
 
     /// Is a CLI binary resolvable on the user's login-shell PATH?
     /// (The daemon launches via a login shell, so check the same way.)
-    static func cliInstalled(_ bin: String) -> Bool {
+    nonisolated static func cliInstalled(_ bin: String) -> Bool {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/bin/zsh")
         p.arguments = ["-lic", "command -v \(bin)"]
@@ -373,12 +387,23 @@ struct AssistantPane: View {
 
     /// Single picker for which CLI runs in this role's terminal. Each pick
     /// asks for confirmation first (switching wipes the live session).
+    private func cliMenuLabel(_ name: String, _ bin: String) -> String {
+        // unknown (nil) = treat as available until the probe finishes
+        let ok = cliAvailability[bin] ?? true
+        return ok ? "\(name) (\(bin))" : "\(name) (\(bin)) — not installed"
+    }
+
+    private func pickCli(_ provider: String, _ bin: String) {
+        if cliAvailability[bin] == false { cliMissing = bin; return }
+        pendingCliProvider = provider
+    }
+
     private var terminalCliMenu: some View {
         Menu {
-            Button("Claude  (claude)") { pendingCliProvider = "anthropic" }
-            Button("Codex   (codex)")  { pendingCliProvider = "openai" }
-            Button("Gemini  (gemini)") { pendingCliProvider = "gemini" }
-            Button("Aider   (ollama)") { pendingCliProvider = "ollama" }
+            Button(cliMenuLabel("Claude", "claude")) { pickCli("anthropic", "claude") }
+            Button(cliMenuLabel("Codex",  "codex"))  { pickCli("openai", "codex") }
+            Button(cliMenuLabel("Gemini", "gemini")) { pickCli("gemini", "gemini") }
+            Button(cliMenuLabel("Aider",  "aider"))  { pickCli("ollama", "aider") }
         } label: {
             HStack(spacing: 4) {
                 Image(systemName: "terminal").font(.system(size: 11))
@@ -540,9 +565,11 @@ struct AssistantPane: View {
         // working session — show an actionable error instead of a dead pane.
         let bin = Self.cliName(for: provider)
         if !Self.cliInstalled(bin) {
-            cliError = "`\(bin)` is not installed or not on PATH. Install it, then try again.\n• codex: npm i -g @openai/codex\n• aider: pipx install aider-chat"
+            cliAvailability[bin] = false
+            cliMissing = bin     // surface the install alert
             return
         }
+        cliAvailability[bin] = true
         switchingCLI = true
         defer { switchingCLI = false }
         cliOverridden = true          // follow selectedProvider from now on
@@ -728,6 +755,24 @@ struct AssistantPane: View {
         } message: {
             let to = Self.cliName(for: pendingCliProvider ?? "")
             Text("@\(role.name)'s terminal will restart on \(to). The current session and everything in its terminal memory will be lost.")
+        }
+        .alert("\(cliMissing ?? "CLI") is not installed", isPresented: Binding(
+            get: { cliMissing != nil },
+            set: { if !$0 { cliMissing = nil } }
+        )) {
+            Button("OK", role: .cancel) { cliMissing = nil }
+        } message: {
+            Text(Self.installHint(for: cliMissing ?? ""))
+        }
+    }
+
+    static func installHint(for bin: String) -> String {
+        switch bin {
+        case "codex":  return "The OpenAI Codex CLI isn't on your PATH.\nInstall it, then try again:\n\n  npm i -g @openai/codex"
+        case "aider":  return "Aider isn't on your PATH.\nInstall it, then try again:\n\n  pipx install aider-chat"
+        case "gemini": return "The Gemini CLI isn't on your PATH.\nInstall it, then try again:\n\n  npm i -g @google/gemini-cli"
+        case "claude": return "Claude Code isn't on your PATH.\nInstall it from claude.com/claude-code, then try again."
+        default:       return "`\(bin)` isn't installed or not on PATH. Install it, then try again."
         }
     }
 
