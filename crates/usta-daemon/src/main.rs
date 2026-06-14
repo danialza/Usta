@@ -1306,20 +1306,26 @@ impl Usta for UstaSvc {
                 }
             }
             // Codex reads ~/.codex/config.toml [mcp_servers], NOT .mcp.json.
-            // Inject the Usta bus server at launch via a -c override so codex
-            // panes get the publish_event tool too. It inherits USTA_* env
-            // (set above), so usta-mcp connects to this exact workspace/role.
-            // (No global config file is touched.)
+            // Inject the Usta bus server at launch via -c overrides. Codex does
+            // NOT forward its own env to MCP subprocesses, so we must set the
+            // bus context (USTA_*) EXPLICITLY in the server's env table —
+            // otherwise usta-mcp boots with no workspace and publish_event
+            // fails ("USTA_WORKSPACE_ID not set"). No global config is touched.
             if effective_command.trim_start().starts_with("codex") {
                 if let Some(mcp) = usta_mcp_path() {
                     let trimmed = effective_command.trim_start();
                     let (head, tail) = trimmed.split_once(char::is_whitespace).unwrap_or((trimmed, ""));
-                    effective_command = format!(
-                        "{head} -c 'mcp_servers.usta.command=\"{mcp}\"' {tail}",
-                        head = head,
-                        mcp = mcp.to_string_lossy(),
-                        tail = tail
-                    );
+                    let mut cfg = format!(
+                        "-c 'mcp_servers.usta.command=\"{}\"'", mcp.to_string_lossy());
+                    cfg += &format!(
+                        " -c 'mcp_servers.usta.env.USTA_SOCKET=\"{}\"'", self.socket_path);
+                    cfg += &format!(
+                        " -c 'mcp_servers.usta.env.USTA_WORKSPACE_ID=\"{}\"'", workspace.id);
+                    if !r.role.is_empty() {
+                        cfg += &format!(
+                            " -c 'mcp_servers.usta.env.USTA_ROLE=\"{}\"'", r.role);
+                    }
+                    effective_command = format!("{head} {cfg} {tail}");
                 }
             }
         }

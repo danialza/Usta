@@ -153,14 +153,15 @@ struct AssistantsGrid: View {
                                 }
                             },
                             // Render the heavy SwiftTerm view only where it
-                            // matters: the sole focused/maximized pane, OR a
-                            // pane that is actively WORKING (so you watch live
-                            // output). Idle / pending / done panes sleep — their
-                            // PTYs keep running and buffering, so opening them
-                            // catches up instantly. This is what keeps a busy
-                            // 9-terminal grid fast.
+                            // matters: the sole focused/maximized pane, a pane
+                            // actively WORKING, or the role that's up NEXT (so
+                            // the one about to run stays awake). Everything else
+                            // sleeps — PTYs keep running + buffering, so opening
+                            // catches up instantly. Keeps a busy grid fast.
                             live: (isVisible && visibleCount == 1)
-                                || bus.state(of: role.name) == .working,
+                                || bus.state(of: role.name) == .working
+                                || bus.pinnedBottleneckName == role.name
+                                || bus.readyNow.first == role.name,
                             step: displayStep[role.name],
                             stateColor: stateColor(bus.state(of: role.name))
                         )
