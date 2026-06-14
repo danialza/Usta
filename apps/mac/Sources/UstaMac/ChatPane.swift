@@ -204,6 +204,12 @@ struct AssistantPane: View {
     /// Guards against the provider-picker onChange re-entering switchCLI when
     /// switchCLI itself sets selectedProvider.
     @State private var switchingCLI: Bool = false
+    /// Set once the user explicitly switches CLI in this pane — then the
+    /// resolved command follows selectedProvider, ignoring a pinned cli_command.
+    @State private var cliOverridden: Bool = false
+    /// Provider id the user picked in the Terminal-CLI menu, awaiting the
+    /// "this wipes the session" confirmation. nil = no dialog.
+    @State private var pendingCliProvider: String? = nil
     /// Slash-command skills user has invoked in this pane's pty since launch.
     /// Set when we type the command in, cleared on relaunch.
     @State private var activatedSkills: Set<String> = []
@@ -316,6 +322,76 @@ struct AssistantPane: View {
             }
         }
         .clipped()
+    }
+
+    /// Is a CLI binary resolvable on the user's login-shell PATH?
+    /// (The daemon launches via a login shell, so check the same way.)
+    static func cliInstalled(_ bin: String) -> Bool {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/bin/zsh")
+        p.arguments = ["-lic", "command -v \(bin)"]
+        let pipe = Pipe()
+        p.standardOutput = pipe
+        p.standardError = Pipe()
+        do {
+            try p.run()
+            p.waitUntilExit()
+            let out = (try? pipe.fileHandleForReading.readToEnd()) ?? Data()
+            return p.terminationStatus == 0 && !out.isEmpty
+        } catch {
+            return true   // can't check → don't block the user
+        }
+    }
+
+    /// Friendly CLI name for a provider id.
+    static func cliName(for provider: String) -> String {
+        switch provider {
+        case "openai": return "codex"
+        case "gemini": return "gemini"
+        case "ollama": return "aider"
+        default:        return "claude"
+        }
+    }
+
+    /// The CLI this pane currently launches (respecting an explicit override
+    /// over a pinned cli_command).
+    private var currentCliName: String {
+        if cliOverridden || role.cliCommand.isEmpty {
+            return Self.cliName(for: selectedProvider)
+        }
+        return String(role.cliCommand.split(separator: " ").first ?? "claude")
+    }
+
+    /// Full command that will be launched (for the "→ …" hint).
+    private var resolvedCliCommand: String {
+        if cliOverridden || role.cliCommand.isEmpty {
+            let m = Self.modelMatches(selectedModel, selectedProvider) ? selectedModel : ""
+            return Self.defaultCommand(provider: selectedProvider, model: m)
+        }
+        return role.cliCommand
+    }
+
+    /// Single picker for which CLI runs in this role's terminal. Each pick
+    /// asks for confirmation first (switching wipes the live session).
+    private var terminalCliMenu: some View {
+        Menu {
+            Button("Claude  (claude)") { pendingCliProvider = "anthropic" }
+            Button("Codex   (codex)")  { pendingCliProvider = "openai" }
+            Button("Gemini  (gemini)") { pendingCliProvider = "gemini" }
+            Button("Aider   (ollama)") { pendingCliProvider = "ollama" }
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "terminal").font(.system(size: 11))
+                Text("Terminal CLI: \(currentCliName)").font(.system(size: 11, weight: .medium))
+                Image(systemName: "chevron.down").font(.system(size: 8))
+            }
+            .padding(.horizontal, 8).padding(.vertical, 3)
+            .background(UstaTheme.dim.opacity(0.10))
+            .clipShape(Capsule())
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .help("Pick which CLI runs in @\(role.name)'s terminal")
     }
 
     /// Does a model id belong to a provider (prefix heuristic)?
@@ -450,7 +526,7 @@ struct AssistantPane: View {
             : Self.defaultCommand(provider: selectedProvider, model: selectedModel)
         cliError = nil
         cliLaunching = true
-        await launchCLI()
+        await launchCLI(forceNew: true)
         cliLaunching = false
     }
 
@@ -460,8 +536,16 @@ struct AssistantPane: View {
     /// Bulk switch passes force=false so roles with a custom command are kept.
     private func switchCLI(to provider: String, force: Bool = false) async {
         if !force && !role.cliCommand.isEmpty { return }
+        // Preflight: is the CLI binary installed? If not, DON'T tear down the
+        // working session — show an actionable error instead of a dead pane.
+        let bin = Self.cliName(for: provider)
+        if !Self.cliInstalled(bin) {
+            cliError = "`\(bin)` is not installed or not on PATH. Install it, then try again.\n• codex: npm i -g @openai/codex\n• aider: pipx install aider-chat"
+            return
+        }
         switchingCLI = true
         defer { switchingCLI = false }
+        cliOverridden = true          // follow selectedProvider from now on
         backend = .cli
         selectedProvider = provider
         // Drop the model if it belongs to a different provider (e.g. switching
@@ -474,14 +558,17 @@ struct AssistantPane: View {
         await tearDownTerminal()
         cliError = nil
         cliLaunching = true
-        await launchCLI()
+        await launchCLI(forceNew: true)
         cliLaunching = false
     }
 
-    private func launchCLI() async {
+    private func launchCLI(forceNew: Bool = false) async {
         // 1) Try reattach: find an alive terminal for this role on the
         // workspace. Survives pane re-mount (sidebar nav, role chip toggle).
-        let existing = await client.listTerminals(workspaceID: workspaceID)
+        // On an explicit CLI switch/relaunch we MUST NOT reattach — the old
+        // (claude) PTY may still report alive for a tick after closeTerminal,
+        // which would silently relaunch the OLD CLI instead of the new one.
+        let existing = forceNew ? nil : await client.listTerminals(workspaceID: workspaceID)
             .first { $0.role == role.name && $0.alive }
         let termID: String
         if let t = existing {
@@ -591,7 +678,8 @@ struct AssistantPane: View {
                     .foregroundStyle(UstaTheme.dim).lineLimit(1)
             }
             skillIndicatorRow
-            // Row 2: controls — picker, provider, model, relaunch, gear
+            // Row 2: controls. Chat mode → API provider+model. Terminal mode →
+            // a single "Terminal CLI" picker (claude / codex / gemini / aider).
             if !collapsed {
                 HStack(spacing: 6) {
                     Picker("", selection: $backend) {
@@ -600,36 +688,18 @@ struct AssistantPane: View {
                     }
                     .pickerStyle(.segmented)
                     .fixedSize()
-                    .onChange(of: selectedProvider) { _, p in
-                        if switchingCLI { return }
-                        // Live CLI session + user picked a new provider → relaunch
-                        // that terminal on the new CLI (claude → codex, etc.).
-                        if backend == .cli && cliSession != nil {
-                            // Explicit per-pane pick → relaunch on the new CLI,
-                            // overriding any pinned command.
-                            Task { await switchCLI(to: p, force: true) }
-                        } else if cliSession == nil {
-                            cliCommand = !role.cliCommand.isEmpty ? role.cliCommand : Self.defaultCommand(provider: p, model: selectedModel)
-                        }
-                    }
-                    .onChange(of: selectedModel) { _, m in
-                        if cliSession == nil { cliCommand = !role.cliCommand.isEmpty ? role.cliCommand : Self.defaultCommand(provider: selectedProvider, model: m) }
-                    }
-                    providerPicker
-                    modelPicker
-                    // Make it unmistakable: in terminal mode these pickers choose
-                    // the CLI. Show the resolved command (e.g. "codex -m gpt-4o").
                     if backend == .cli {
-                        let cmd = role.cliCommand.isEmpty
-                            ? Self.defaultCommand(provider: selectedProvider, model: selectedModel)
-                            : role.cliCommand
-                        if !cmd.isEmpty {
-                            Text("→ \(cmd)")
-                                .font(.system(size: 10, design: .monospaced))
-                                .foregroundStyle(UstaTheme.dim)
-                                .lineLimit(1)
-                                .help("This is the CLI launched for @\(role.name). Change the provider/model dropdowns to switch it (claude ↔ codex ↔ gemini ↔ aider).")
-                        }
+                        terminalCliMenu
+                        Text("→ \(resolvedCliCommand)")
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundStyle(UstaTheme.dim)
+                            .lineLimit(1)
+                    } else {
+                        providerPicker
+                        modelPicker
+                            .onChange(of: selectedModel) { _, m in
+                                if cliSession == nil { cliCommand = !role.cliCommand.isEmpty ? role.cliCommand : Self.defaultCommand(provider: selectedProvider, model: m) }
+                            }
                     }
                     Spacer(minLength: 0)
                     headerActions
@@ -643,6 +713,21 @@ struct AssistantPane: View {
                     _ = await client.addRole(workspaceID: workspaceID, role: updated)
                 }
             })
+        }
+        .alert("Switch terminal CLI?", isPresented: Binding(
+            get: { pendingCliProvider != nil },
+            set: { if !$0 { pendingCliProvider = nil } }
+        )) {
+            Button("Cancel", role: .cancel) { pendingCliProvider = nil }
+            Button("Switch", role: .destructive) {
+                if let p = pendingCliProvider {
+                    pendingCliProvider = nil
+                    Task { await switchCLI(to: p, force: true) }
+                }
+            }
+        } message: {
+            let to = Self.cliName(for: pendingCliProvider ?? "")
+            Text("@\(role.name)'s terminal will restart on \(to). The current session and everything in its terminal memory will be lost.")
         }
     }
 
