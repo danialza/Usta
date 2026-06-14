@@ -60,6 +60,9 @@ struct UstaSvc {
     tools: Arc<ToolRegistry>,
     approvals: Arc<tokio::sync::Mutex<std::collections::HashMap<String, tokio::sync::oneshot::Sender<bool>>>>,
     socket_path: String,
+    /// When this daemon process started (unix ms). Reported in Ping so the
+    /// app can detect + restart a stale daemon after a rebuild.
+    started_unix_ms: i64,
 }
 
 impl UstaSvc {
@@ -1090,6 +1093,7 @@ impl Usta for UstaSvc {
             daemon_version: usta_core::DAEMON_VERSION.into(),
             server_unix_ms: now_ms(),
             greeting: format!("hi {client}, ustad here"),
+            started_unix_ms: self.started_unix_ms,
         }))
     }
 
@@ -2931,6 +2935,7 @@ async fn main() -> anyhow::Result<()> {
         tools: Arc::new(ToolRegistry::with_defaults()),
         approvals: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
         socket_path: socket_path.to_string_lossy().into_owned(),
+        started_unix_ms: now_ms(),
     };
 
     // Auto-completion watcher: detects when a role's CLI agent went idle

@@ -41,6 +41,15 @@ enum DaemonSpawner {
         return nil
     }
 
+    /// Modification time (unix ms) of the ustad binary we would launch.
+    /// Used to detect a stale running daemon after a rebuild.
+    static func binaryMtimeMs() -> Int64? {
+        guard let u = locateBinary(),
+              let attrs = try? FileManager.default.attributesOfItem(atPath: u.path),
+              let mod = attrs[.modificationDate] as? Date else { return nil }
+        return Int64(mod.timeIntervalSince1970 * 1000)
+    }
+
     /// True if something is accepting on the given UDS path.
     static func isSocketAlive(_ path: String) -> Bool {
         guard FileManager.default.fileExists(atPath: path) else { return false }
