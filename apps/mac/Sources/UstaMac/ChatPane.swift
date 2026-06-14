@@ -617,6 +617,20 @@ struct AssistantPane: View {
                     }
                     providerPicker
                     modelPicker
+                    // Make it unmistakable: in terminal mode these pickers choose
+                    // the CLI. Show the resolved command (e.g. "codex -m gpt-4o").
+                    if backend == .cli {
+                        let cmd = role.cliCommand.isEmpty
+                            ? Self.defaultCommand(provider: selectedProvider, model: selectedModel)
+                            : role.cliCommand
+                        if !cmd.isEmpty {
+                            Text("→ \(cmd)")
+                                .font(.system(size: 10, design: .monospaced))
+                                .foregroundStyle(UstaTheme.dim)
+                                .lineLimit(1)
+                                .help("This is the CLI launched for @\(role.name). Change the provider/model dropdowns to switch it (claude ↔ codex ↔ gemini ↔ aider).")
+                        }
+                    }
                     Spacer(minLength: 0)
                     headerActions
                 }
