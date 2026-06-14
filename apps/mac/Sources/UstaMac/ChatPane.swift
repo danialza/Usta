@@ -318,6 +318,18 @@ struct AssistantPane: View {
         .clipped()
     }
 
+    /// Does a model id belong to a provider (prefix heuristic)?
+    static func modelMatches(_ model: String, _ provider: String) -> Bool {
+        if model.isEmpty { return false }
+        switch provider {
+        case "anthropic": return model.hasPrefix("claude")
+        case "openai":    return model.hasPrefix("gpt") || model.hasPrefix("o3") || model.hasPrefix("o4")
+        case "gemini":    return model.hasPrefix("gemini")
+        case "ollama":    return true   // free-form local tags
+        default:          return false
+        }
+    }
+
     static func defaultCommand(provider: String, model: String) -> String {
         switch provider {
         case "anthropic":
@@ -413,31 +425,53 @@ struct AssistantPane: View {
         }
     }
 
-    /// Switch this pane's CLI to a new provider (claude → codex etc.). Kills
-    /// the live terminal, recomputes the command, and relaunches. Ignores
-    /// roles pinned to a custom cli_command in their yaml (respect explicit).
-    private func switchCLI(to provider: String) async {
-        // A role with an explicit custom command opts out of bulk switching.
-        if !role.cliCommand.isEmpty { return }
-        switchingCLI = true
-        defer { switchingCLI = false }
-        backend = .cli
-        selectedProvider = provider
-        let newCmd = Self.defaultCommand(provider: provider, model: "")
-        if newCmd.isEmpty { return }
-        cliCommand = newCmd
-        // Tear down the current terminal so launchCLI doesn't reattach to it.
+    /// Close this role's terminal on BOTH sides (local session + daemon PTY)
+    /// so a subsequent launchCLI starts fresh instead of reattaching to the
+    /// old CLI. Without the daemon-side close, relaunch silently reattaches.
+    private func tearDownTerminal() async {
         if let s = cliSession {
             await client.closeTerminal(id: s.id)
             s.stop()
-            cliSession = nil
-            termCache.drop(role: role.name)
         }
-        // Also close any other alive terminal for this role on the daemon.
         for t in await client.listTerminals(workspaceID: workspaceID)
             where t.role == role.name && t.alive {
             await client.closeTerminal(id: t.id)
         }
+        cliSession = nil
+        termCache.drop(role: role.name)
+        activatedSkills.removeAll()
+    }
+
+    /// Relaunch the CLI using the current provider/model selection (or the
+    /// role's pinned cli_command). Used by the ↻ button.
+    private func relaunchCLI() async {
+        await tearDownTerminal()
+        cliCommand = !role.cliCommand.isEmpty ? role.cliCommand
+            : Self.defaultCommand(provider: selectedProvider, model: selectedModel)
+        cliError = nil
+        cliLaunching = true
+        await launchCLI()
+        cliLaunching = false
+    }
+
+    /// Switch this pane's CLI to a new provider (claude → codex etc.). Kills
+    /// the live terminal, recomputes the command, and relaunches.
+    /// `force` = explicit per-pane pick: override even a pinned cli_command.
+    /// Bulk switch passes force=false so roles with a custom command are kept.
+    private func switchCLI(to provider: String, force: Bool = false) async {
+        if !force && !role.cliCommand.isEmpty { return }
+        switchingCLI = true
+        defer { switchingCLI = false }
+        backend = .cli
+        selectedProvider = provider
+        // Drop the model if it belongs to a different provider (e.g. switching
+        // claude → codex must not pass `-m claude-sonnet`). CLI uses its default.
+        let model = Self.modelMatches(selectedModel, provider) ? selectedModel : ""
+        selectedModel = model
+        let newCmd = Self.defaultCommand(provider: provider, model: model)
+        if newCmd.isEmpty { return }
+        cliCommand = newCmd
+        await tearDownTerminal()
         cliError = nil
         cliLaunching = true
         await launchCLI()
@@ -483,6 +517,11 @@ struct AssistantPane: View {
     /// slash skills) into the freshly launched claude pty so every role
     /// boots into terse + memory-aware mode.
     private func sendSkillPrelude(session: TerminalSession) async {
+        // The `/caveman:caveman` + `/memsearch:memory-recall` preludes are
+        // Claude Code plugin slash-commands. Other CLIs (codex, gemini, aider)
+        // don't have them — injecting would just error in their prompt. Only
+        // run the prelude when this pane is launching the claude CLI.
+        guard cliCommand.trimmingCharacters(in: .whitespaces).hasPrefix("claude") else { return }
         // Wait for claude to finish welcome banner + reach prompt
         try? await Task.sleep(nanoseconds: 5_000_000_000)
         let preludes: [String] = [
@@ -565,8 +604,10 @@ struct AssistantPane: View {
                         if switchingCLI { return }
                         // Live CLI session + user picked a new provider → relaunch
                         // that terminal on the new CLI (claude → codex, etc.).
-                        if backend == .cli && cliSession != nil && role.cliCommand.isEmpty {
-                            Task { await switchCLI(to: p) }
+                        if backend == .cli && cliSession != nil {
+                            // Explicit per-pane pick → relaunch on the new CLI,
+                            // overriding any pinned command.
+                            Task { await switchCLI(to: p, force: true) }
                         } else if cliSession == nil {
                             cliCommand = !role.cliCommand.isEmpty ? role.cliCommand : Self.defaultCommand(provider: p, model: selectedModel)
                         }
@@ -608,18 +649,13 @@ struct AssistantPane: View {
             }
             if backend == .cli {
                 Button {
-                    cliSession?.stop()
-                    termCache.drop(role: role.name)   // forget cache on relaunch
-                    cliSession = nil
-                    activatedSkills.removeAll()
-                    cliCommand = !role.cliCommand.isEmpty ? role.cliCommand
-                        : Self.defaultCommand(provider: selectedProvider, model: selectedModel)
+                    Task { await relaunchCLI() }
                 } label: {
                     Image(systemName: "arrow.clockwise").font(.caption)
                 }
                 .buttonStyle(.borderless)
                 .foregroundStyle(UstaTheme.dim)
-                .help("Relaunch CLI")
+                .help("Relaunch CLI (picks up the current provider)")
             }
             Button { showRoleEditor = true } label: {
                 Image(systemName: "gearshape").font(.caption)
