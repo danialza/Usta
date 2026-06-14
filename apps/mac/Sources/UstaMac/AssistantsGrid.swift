@@ -152,6 +152,15 @@ struct AssistantsGrid: View {
                                     toggleMax(role.name)
                                 }
                             },
+                            // Render the heavy SwiftTerm view only where it
+                            // matters: the sole focused/maximized pane, OR a
+                            // pane that is actively WORKING (so you watch live
+                            // output). Idle / pending / done panes sleep — their
+                            // PTYs keep running and buffering, so opening them
+                            // catches up instantly. This is what keeps a busy
+                            // 9-terminal grid fast.
+                            live: (isVisible && visibleCount == 1)
+                                || bus.state(of: role.name) == .working,
                             step: displayStep[role.name],
                             stateColor: stateColor(bus.state(of: role.name))
                         )

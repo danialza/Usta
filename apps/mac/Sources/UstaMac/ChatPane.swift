@@ -175,6 +175,11 @@ struct AssistantPane: View {
     var onToggleCollapse: (() -> Void)? = nil
     var isMaximized: Bool = false
     var onToggleMaximize: (() -> Void)? = nil
+    /// When false the heavy SwiftTerm Metal view is NOT mounted (only the
+    /// focused/maximized pane renders live). The PTY keeps running and its
+    /// output is buffered in the session, so opening the pane catches up
+    /// instantly. This is what keeps a 9-terminal grid fast.
+    var live: Bool = true
     var step: Int? = nil
     var stateColor: Color? = nil
     @EnvironmentObject var client: UstaClientModel
@@ -225,6 +230,7 @@ struct AssistantPane: View {
          onToggleCollapse: (() -> Void)? = nil,
          isMaximized: Bool = false,
          onToggleMaximize: (() -> Void)? = nil,
+         live: Bool = true,
          step: Int? = nil,
          stateColor: Color? = nil) {
         self.workspaceID = workspaceID
@@ -233,6 +239,7 @@ struct AssistantPane: View {
         self.onToggleCollapse = onToggleCollapse
         self.isMaximized = isMaximized
         self.onToggleMaximize = onToggleMaximize
+        self.live = live
         self.step = step
         self.stateColor = stateColor
         _model = StateObject(wrappedValue: ChatPaneModel(role: role, workspaceID: workspaceID))
@@ -448,14 +455,48 @@ struct AssistantPane: View {
         }
     }
 
+    /// Cheap stand-in for a running-but-not-rendered terminal. The PTY keeps
+    /// running in the background; this avoids the SwiftTerm Metal cost.
+    private var sleepingTerminal: some View {
+        VStack(spacing: 8) {
+            Image(systemName: "moon.zzz.fill")
+                .font(.system(size: 22)).foregroundStyle(UstaTheme.dim)
+            Text("@\(role.name) running in background")
+                .font(.system(size: 12, weight: .medium)).foregroundStyle(.white.opacity(0.85))
+            Text("Sleeping to keep the app fast.\nIts terminal keeps running — open to view live.")
+                .font(.system(size: 10)).foregroundStyle(UstaTheme.dim)
+                .multilineTextAlignment(.center)
+            if let maxToggle = onToggleMaximize {
+                Button {
+                    maxToggle()
+                } label: {
+                    Label("Open live", systemImage: "arrow.up.left.and.arrow.down.right")
+                        .font(.system(size: 11, weight: .medium))
+                        .padding(.horizontal, 12).padding(.vertical, 5)
+                        .background(Color.accentColor).foregroundStyle(.white)
+                        .clipShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .padding(.top, 4)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .contentShape(Rectangle())
+        .onTapGesture { onToggleMaximize?() }
+    }
+
     @ViewBuilder
     private var cliView: some View {
         ZStack {
             Color.black
             if let s = cliSession {
-                PtyTerminalView(session: s)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .clipped()
+                if live {
+                    PtyTerminalView(session: s)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .clipped()
+                } else {
+                    sleepingTerminal
+                }
             } else if let err = cliError {
                 VStack(spacing: 10) {
                     Image(systemName: "exclamationmark.triangle.fill")
