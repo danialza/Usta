@@ -803,6 +803,42 @@ fn write_mcp_config(cwd: &str) {
     }
 }
 
+/// Codex does not reliably forward its env to MCP subprocesses, so wrap
+/// usta-mcp in a tiny shell script that exports the bus context then execs it.
+/// Codex's config just points `command` at this script. Returns the script
+/// path. Per-role so concurrent codex panes don't clobber each other.
+fn write_codex_mcp_wrapper(
+    cwd: &str,
+    role: &str,
+    socket: &str,
+    ws_id: &str,
+) -> Option<std::path::PathBuf> {
+    let mcp = usta_mcp_path()?;
+    let dir = std::path::Path::new(cwd).join(".usta");
+    let _ = std::fs::create_dir_all(&dir);
+    let safe_role = sanitize_role_name(role);
+    let path = dir.join(format!("codex-mcp-{safe_role}.sh"));
+    let script = format!(
+        "#!/bin/sh\nexport USTA_SOCKET={sock}\nexport USTA_WORKSPACE_ID={ws}\nexport USTA_ROLE={role}\nexec {mcp}\n",
+        sock = shell_quote(socket),
+        ws = shell_quote(ws_id),
+        role = shell_quote(role),
+        mcp = shell_quote(&mcp.to_string_lossy()),
+    );
+    std::fs::write(&path, script).ok()?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755));
+    }
+    Some(path)
+}
+
+/// Minimal single-quote shell escaping for a value embedded in a script.
+fn shell_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
+}
+
 /// Pre-approve project MCP servers so Claude Code doesn't prompt every launch.
 fn write_claude_settings(cwd: &str) {
     let dir = std::path::Path::new(cwd).join(".claude");
@@ -1305,27 +1341,24 @@ impl Usta for UstaSvc {
                     );
                 }
             }
-            // Codex reads ~/.codex/config.toml [mcp_servers], NOT .mcp.json.
-            // Inject the Usta bus server at launch via -c overrides. Codex does
-            // NOT forward its own env to MCP subprocesses, so we must set the
-            // bus context (USTA_*) EXPLICITLY in the server's env table —
-            // otherwise usta-mcp boots with no workspace and publish_event
-            // fails ("USTA_WORKSPACE_ID not set"). No global config is touched.
-            if effective_command.trim_start().starts_with("codex") {
-                if let Some(mcp) = usta_mcp_path() {
+            // Codex reads ~/.codex/config.toml [mcp_servers], NOT .mcp.json,
+            // and does NOT forward its env to MCP subprocesses. So we point its
+            // MCP `command` at a per-role wrapper script that exports the bus
+            // context (USTA_*) then execs usta-mcp. This is independent of any
+            // codex env-passing behaviour → publish_event always has context.
+            // No global config file is touched.
+            if effective_command.trim_start().starts_with("codex") && !r.role.is_empty() {
+                if let Some(wrapper) =
+                    write_codex_mcp_wrapper(&cwd, &r.role, &self.socket_path, &workspace.id)
+                {
                     let trimmed = effective_command.trim_start();
                     let (head, tail) = trimmed.split_once(char::is_whitespace).unwrap_or((trimmed, ""));
-                    let mut cfg = format!(
-                        "-c 'mcp_servers.usta.command=\"{}\"'", mcp.to_string_lossy());
-                    cfg += &format!(
-                        " -c 'mcp_servers.usta.env.USTA_SOCKET=\"{}\"'", self.socket_path);
-                    cfg += &format!(
-                        " -c 'mcp_servers.usta.env.USTA_WORKSPACE_ID=\"{}\"'", workspace.id);
-                    if !r.role.is_empty() {
-                        cfg += &format!(
-                            " -c 'mcp_servers.usta.env.USTA_ROLE=\"{}\"'", r.role);
-                    }
-                    effective_command = format!("{head} {cfg} {tail}");
+                    effective_command = format!(
+                        "{head} -c 'mcp_servers.usta.command=\"{wrapper}\"' {tail}",
+                        head = head,
+                        wrapper = wrapper.to_string_lossy(),
+                        tail = tail
+                    );
                 }
             }
         }
