@@ -315,11 +315,11 @@ fn spawn_idle_watcher(
                 let recent_files = ws_root.as_ref()
                     .map(|r| collect_changed_files_since(r, since_ms))
                     .unwrap_or_default();
-                if recent_files.is_empty() {
-                    tracing::debug!(role = %t.role, term = %t.id, since_ms,
-                                   "idle-watcher: marker hit but no file changes since blocker — skipping");
-                    continue;
-                }
+                // NOTE: the file-change requirement is enforced LATER and ONLY
+                // for the weak keyword path. An explicit topic signal (our
+                // marker, a bare topic line, or "Event X published") is trusted
+                // even with no new files — agents often verify existing work
+                // without rewriting it (idempotent rerun) yet still finished.
                 // (Detailed "candidate" log moved below — only emit when we
                 // actually have an unpublished topic to fire, so a role that
                 // already published doesn't spam the log every 10s tick.)
@@ -379,13 +379,21 @@ fn spawn_idle_watcher(
                         lower.lines().any(|ln| ln.trim() == tl)
                     })
                     .cloned().collect();
-                let candidate_pool: Vec<String> = if !marker_topics.is_empty() {
+                // Explicit topic signals (trusted without file changes):
+                let explicit_pool: Vec<String> = if !marker_topics.is_empty() {
                     marker_topics.into_iter().filter(|t| declared_ok(t)).collect()
                 } else if !explicit_topics.is_empty() {
                     explicit_topics.into_iter().filter(|t| declared_ok(t)).collect()
                 } else if !bare_topics.is_empty() {
                     bare_topics
-                } else if strong_markers.iter().any(|n| lower.contains(n)) {
+                } else {
+                    Vec::new()
+                };
+                let candidate_pool: Vec<String> = if !explicit_pool.is_empty() {
+                    explicit_pool
+                } else if strong_markers.iter().any(|n| lower.contains(n)) && !recent_files.is_empty() {
+                    // Weak keyword path: only trust it if the role actually
+                    // wrote files since the blocker (guards against narration).
                     role_def.handoff_topics.publishes.clone()
                 } else {
                     Vec::new()
