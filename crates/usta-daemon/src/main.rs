@@ -260,8 +260,16 @@ fn spawn_idle_watcher(
                 let idle_required = if has_strong_signal { 8 } else { 60 };
                 if now - last_ms < idle_required * 1000 { continue; }
                 let lower = tail_str;
+                // Proceed to the detailed declared-topic check when we have a
+                // strong signal, a keyword marker, OR the role has simply been
+                // idle ≥60s. The latter lets CLIs that don't emit our marker
+                // (codex / gemini / aider) still be detected via a bare topic
+                // line — but only the candidate-pool below actually publishes,
+                // and only if a declared topic literally appears + files changed.
+                let idle_enough = now - last_ms >= 60 * 1000;
                 let hit = has_strong_signal
-                    || strong_markers.iter().any(|n| lower.contains(n));
+                    || strong_markers.iter().any(|n| lower.contains(n))
+                    || idle_enough;
                 if !hit { continue; }
                 // Resolve workspace + role first so we can compute blocker ts
                 // before the file-change check (files written in a prior
@@ -359,10 +367,24 @@ fn spawn_idle_watcher(
                         p == t || p.ends_with(&t) || t.ends_with(&p)
                     })
                 };
+                // Bare topic on its own line: CLIs that don't speak our marker
+                // (codex / gemini / aider) often just print the topic name when
+                // done (the kickoff says "Publish logic.ready when done"). Match
+                // ONLY a line whose trimmed content equals a declared topic — so
+                // the instruction echo "Publish logic.ready when done" does NOT
+                // match, but the agent's final standalone "logic.ready" does.
+                let bare_topics: Vec<String> = role_def.handoff_topics.publishes.iter()
+                    .filter(|t| {
+                        let tl = t.to_lowercase();
+                        lower.lines().any(|ln| ln.trim() == tl)
+                    })
+                    .cloned().collect();
                 let candidate_pool: Vec<String> = if !marker_topics.is_empty() {
                     marker_topics.into_iter().filter(|t| declared_ok(t)).collect()
                 } else if !explicit_topics.is_empty() {
                     explicit_topics.into_iter().filter(|t| declared_ok(t)).collect()
+                } else if !bare_topics.is_empty() {
+                    bare_topics
                 } else if strong_markers.iter().any(|n| lower.contains(n)) {
                     role_def.handoff_topics.publishes.clone()
                 } else {
@@ -1271,6 +1293,23 @@ impl Usta for UstaSvc {
                         head = head,
                         cont = cont,
                         rel = rel_brief,
+                        tail = tail
+                    );
+                }
+            }
+            // Codex reads ~/.codex/config.toml [mcp_servers], NOT .mcp.json.
+            // Inject the Usta bus server at launch via a -c override so codex
+            // panes get the publish_event tool too. It inherits USTA_* env
+            // (set above), so usta-mcp connects to this exact workspace/role.
+            // (No global config file is touched.)
+            if effective_command.trim_start().starts_with("codex") {
+                if let Some(mcp) = usta_mcp_path() {
+                    let trimmed = effective_command.trim_start();
+                    let (head, tail) = trimmed.split_once(char::is_whitespace).unwrap_or((trimmed, ""));
+                    effective_command = format!(
+                        "{head} -c 'mcp_servers.usta.command=\"{mcp}\"' {tail}",
+                        head = head,
+                        mcp = mcp.to_string_lossy(),
                         tail = tail
                     );
                 }
