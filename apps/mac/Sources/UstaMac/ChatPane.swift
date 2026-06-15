@@ -448,8 +448,11 @@ struct AssistantPane: View {
         case "gemini":
             return model.isEmpty ? "gemini" : "gemini --model \(model)"
         case "openai":
-            // OpenAI's Codex CLI. -m picks the model.
-            return model.isEmpty ? "codex" : "codex -m \(model)"
+            // OpenAI's Codex CLI. `-a never` = never stop to ask for approval,
+            // `-s danger-full-access` = run freely (parity with how Claude runs
+            // in a role pane). `-m` picks the model.
+            let base = "codex -a never -s danger-full-access"
+            return model.isEmpty ? base : "\(base) -m \(model)"
         case "ollama":    return "aider --model ollama_chat/\(model) --yes-always"
         default:          return ""
         }

@@ -785,8 +785,35 @@ async fn run_role_headless(
 fn usta_mcp_path() -> Option<std::path::PathBuf> {
     let exe = std::env::current_exe().ok()?;
     let dir = exe.parent()?;
-    let cand = dir.join("usta-mcp");
-    if cand.exists() { Some(cand) } else { None }
+    let bundled = dir.join("usta-mcp");
+    if !bundled.exists() { return None; }
+    // The bundled binary lives inside Usta.app. If claude/codex exec a binary
+    // INSIDE another app's bundle, macOS raises the "App Management" permission
+    // prompt. Copy usta-mcp to a plain (non-bundle) support dir and point the
+    // MCP configs there instead — same binary, no App Management gate.
+    let home = std::env::var("HOME").ok()?;
+    let dest_dir = std::path::PathBuf::from(home)
+        .join("Library/Application Support/usta/bin");
+    let dest = dest_dir.join("usta-mcp");
+    let needs_copy = match (std::fs::metadata(&dest), std::fs::metadata(&bundled)) {
+        (Ok(d), Ok(b)) => {
+            // Re-copy if sizes differ or bundled is newer.
+            d.len() != b.len()
+                || b.modified().ok() > d.modified().ok()
+        }
+        _ => true,
+    };
+    if needs_copy {
+        let _ = std::fs::create_dir_all(&dest_dir);
+        if std::fs::copy(&bundled, &dest).is_ok() {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = std::fs::set_permissions(&dest, std::fs::Permissions::from_mode(0o755));
+            }
+        }
+    }
+    if dest.exists() { Some(dest) } else { Some(bundled) }
 }
 
 /// Write a project .mcp.json registering the Usta bus server, so
