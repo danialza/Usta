@@ -21,16 +21,29 @@ final class AppSettings: ObservableObject {
             Keychain.set(geminiKey, account: Self.gemKey)
         }
     }
+    @Published var openaiKey: String {
+        didSet {
+            let t = openaiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+            if t != openaiKey { openaiKey = t; return }
+            Keychain.set(openaiKey, account: Self.oaiKey)
+        }
+    }
     @Published var ollamaHost: String { didSet { save(Self.ollamaKey, ollamaHost) } }
     @Published var autoSpawnDaemon: Bool { didSet { UserDefaults.standard.set(autoSpawnDaemon, forKey: Self.autoSpawnKey) } }
 
     private static let socketKey = "usta.socketPath"
     private static let anthKey = "usta.anthropicKey"
     private static let gemKey = "usta.geminiKey"
+    private static let oaiKey = "usta.openaiKey"
     private static let ollamaKey = "usta.ollamaHost"
     private static let autoSpawnKey = "usta.autoSpawnDaemon"
 
     private func save(_ k: String, _ v: String) { UserDefaults.standard.set(v, forKey: k) }
+
+    /// Fingerprint of everything that, when changed, needs a daemon restart.
+    var snapshotKey: String {
+        [anthropicKey, geminiKey, openaiKey, ollamaHost, socketPath].joined(separator: "|")
+    }
 
     init() {
         let d = UserDefaults.standard
@@ -40,12 +53,15 @@ final class AppSettings: ObservableObject {
         // value into the Keychain and scrub it from defaults.
         let kcA = Keychain.get(account: Self.anthKey)
         let kcG = Keychain.get(account: Self.gemKey)
+        let kcO = Keychain.get(account: Self.oaiKey)
         let legacyA = d.string(forKey: Self.anthKey)
         let legacyG = d.string(forKey: Self.gemKey)
         let rawA = kcA ?? legacyA ?? (env["ANTHROPIC_API_KEY"] ?? "")
         let rawG = kcG ?? legacyG ?? (env["GEMINI_API_KEY"] ?? "")
+        let rawO = kcO ?? (env["OPENAI_API_KEY"] ?? "")
         self.anthropicKey = rawA.trimmingCharacters(in: .whitespacesAndNewlines)
         self.geminiKey    = rawG.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.openaiKey    = rawO.trimmingCharacters(in: .whitespacesAndNewlines)
         self.ollamaHost = d.string(forKey: Self.ollamaKey) ?? (env["OLLAMA_HOST"] ?? "http://127.0.0.1:11434")
         self.autoSpawnDaemon = d.object(forKey: Self.autoSpawnKey) as? Bool ?? true
         // One-time migration: if a legacy plaintext key existed, persist it to
@@ -156,6 +172,7 @@ struct SettingsView: View {
 
                 daemonBox
                 anthropicBox
+                openaiBox
                 geminiBox
                 ollamaBox
 
@@ -170,13 +187,14 @@ struct SettingsView: View {
         .toolbar {
             ToolbarItem(placement: .confirmationAction) {
                 Button("Done") {
-                    let current = settings.anthropicKey + "|" + settings.geminiKey + "|" + settings.ollamaHost + "|" + settings.socketPath
+                    let current = settings.snapshotKey
                     let changed = current != openSnapshot
                     dismiss()
                     if changed {
                         let sock = settings.socketPath
                         let aKey = settings.anthropicKey
                         let gKey = settings.geminiKey
+                        let oaKey = settings.openaiKey
                         let oHost = settings.ollamaHost
                         Task {
                             await Task.detached(priority: .userInitiated) {
@@ -185,6 +203,7 @@ struct SettingsView: View {
                                     socket: sock,
                                     anthropicKey: aKey,
                                     geminiKey: gKey,
+                                    openaiKey: oaKey,
                                     ollamaHost: oHost
                                 )
                             }.value
@@ -196,7 +215,7 @@ struct SettingsView: View {
             }
         }
         .task {
-            openSnapshot = settings.anthropicKey + "|" + settings.geminiKey + "|" + settings.ollamaHost + "|" + settings.socketPath
+            openSnapshot = settings.snapshotKey
             await ollama.refresh(base: settings.ollamaHost)
         }
     }
@@ -212,6 +231,7 @@ struct SettingsView: View {
                         let sock = settings.socketPath
                         let aKey = settings.anthropicKey
                         let gKey = settings.geminiKey
+                        let oaKey = settings.openaiKey
                         let oHost = settings.ollamaHost
                         Task {
                             await Task.detached(priority: .userInitiated) {
@@ -220,6 +240,7 @@ struct SettingsView: View {
                                     socket: sock,
                                     anthropicKey: aKey,
                                     geminiKey: gKey,
+                                    openaiKey: oaKey,
                                     ollamaHost: oHost
                                 )
                             }.value
@@ -276,6 +297,17 @@ struct SettingsView: View {
                 Text("GEMINI_API_KEY").font(.caption).foregroundStyle(.secondary)
                 SecureField("AIza…", text: $settings.geminiKey).textFieldStyle(.roundedBorder)
                 Text("aistudio.google.com → Get API key (free)").font(.caption2).foregroundStyle(.tertiary)
+            }
+            .padding(.vertical, 4)
+        }
+    }
+
+    private var openaiBox: some View {
+        GroupBox("OpenAI") {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("OPENAI_API_KEY").font(.caption).foregroundStyle(.secondary)
+                SecureField("sk-…", text: $settings.openaiKey).textFieldStyle(.roundedBorder)
+                Text("platform.openai.com → API keys").font(.caption2).foregroundStyle(.tertiary)
             }
             .padding(.vertical, 4)
         }

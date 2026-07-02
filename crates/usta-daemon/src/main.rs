@@ -60,6 +60,9 @@ struct UstaSvc {
     tools: Arc<ToolRegistry>,
     approvals: Arc<tokio::sync::Mutex<std::collections::HashMap<String, tokio::sync::oneshot::Sender<bool>>>>,
     socket_path: String,
+    /// When this daemon process started (unix ms). Reported in Ping so the
+    /// app can detect + restart a stale daemon after a rebuild.
+    started_unix_ms: i64,
 }
 
 impl UstaSvc {
@@ -244,15 +247,32 @@ fn spawn_idle_watcher(
                     }
                     out
                 };
+                // DETERMINISTIC SIGNAL (primary): the agent emits a structured
+                // marker we defined — `[[handoff: <topic> | <summary>]]` — when
+                // it finishes. This is a token WE control, not model prose, so
+                // it's reliable regardless of phrasing/locale. Parse it first.
+                let marker_topics: Vec<String> = parse_handoffs(&tail_str)
+                    .into_iter().map(|(t, _)| t).collect();
                 // Fast path: claude explicitly logged "Event <topic> published"
                 // — accept after just 8s quiet (claude already announced done).
                 let has_explicit_pub = tail_str.contains("event ")
                     && tail_str.contains("published");
-                let idle_required = if has_explicit_pub { 8 } else { 60 };
+                // A structured marker is as trustworthy as an explicit pub line
+                // → short idle threshold either way.
+                let has_strong_signal = has_explicit_pub || !marker_topics.is_empty();
+                let idle_required = if has_strong_signal { 8 } else { 60 };
                 if now - last_ms < idle_required * 1000 { continue; }
                 let lower = tail_str;
-                let hit = has_explicit_pub
-                    || strong_markers.iter().any(|n| lower.contains(n));
+                // Proceed to the detailed declared-topic check when we have a
+                // strong signal, a keyword marker, OR the role has simply been
+                // idle ≥60s. The latter lets CLIs that don't emit our marker
+                // (codex / gemini / aider) still be detected via a bare topic
+                // line — but only the candidate-pool below actually publishes,
+                // and only if a declared topic literally appears + files changed.
+                let idle_enough = now - last_ms >= 60 * 1000;
+                let hit = has_strong_signal
+                    || strong_markers.iter().any(|n| lower.contains(n))
+                    || idle_enough;
                 if !hit { continue; }
                 // Resolve workspace + role first so we can compute blocker ts
                 // before the file-change check (files written in a prior
@@ -298,13 +318,14 @@ fn spawn_idle_watcher(
                 let recent_files = ws_root.as_ref()
                     .map(|r| collect_changed_files_since(r, since_ms))
                     .unwrap_or_default();
-                if recent_files.is_empty() {
-                    tracing::info!(role = %t.role, term = %t.id, since_ms,
-                                   "idle-watcher: keyword hit but no file changes since blocker — skipping");
-                    continue;
-                }
-                tracing::info!(role = %t.role, files = recent_files.len(),
-                               "idle-watcher: candidate completion detected");
+                // NOTE: the file-change requirement is enforced LATER and ONLY
+                // for the weak keyword path. An explicit topic signal (our
+                // marker, a bare topic line, or "Event X published") is trusted
+                // even with no new files — agents often verify existing work
+                // without rewriting it (idempotent rerun) yet still finished.
+                // (Detailed "candidate" log moved below — only emit when we
+                // actually have an unpublished topic to fire, so a role that
+                // already published doesn't spam the log every 10s tick.)
                 let mine_topics: std::collections::HashSet<String> = mine_events.iter()
                     .filter(|e| e.from_role == role_def.name && e.created_unix_ms > latest_blocker_ms)
                     .map(|e| e.topic.clone()).collect();
@@ -336,14 +357,46 @@ fn spawn_idle_watcher(
                     }
                     out
                 };
-                // Prefer explicit list; fall back to declared publishes only
-                // when nothing explicit was found AND a strong marker exists.
-                let candidate_pool: Vec<String> = if !explicit_topics.is_empty() {
-                    explicit_topics.into_iter()
-                        .filter(|t| role_def.handoff_topics.publishes.iter()
-                                .any(|p| p == t || p.ends_with(t) || t.ends_with(p)))
-                        .collect()
-                } else if strong_markers.iter().any(|n| lower.contains(n)) {
+                // Topic source priority:
+                //   1. structured [[handoff: …]] markers — deterministic
+                //   2. "Event <topic> published" prose — explicit but loose
+                //   3. declared publishes — only if a strong keyword marker hit
+                // Each is intersected with the role's declared publishes so a
+                // hallucinated topic never escapes onto the bus.
+                let declared_ok = |t: &String| {
+                    let t = t.to_lowercase();
+                    role_def.handoff_topics.publishes.iter().any(|p| {
+                        let p = p.to_lowercase();
+                        p == t || p.ends_with(&t) || t.ends_with(&p)
+                    })
+                };
+                // Bare topic on its own line: CLIs that don't speak our marker
+                // (codex / gemini / aider) often just print the topic name when
+                // done (the kickoff says "Publish logic.ready when done"). Match
+                // ONLY a line whose trimmed content equals a declared topic — so
+                // the instruction echo "Publish logic.ready when done" does NOT
+                // match, but the agent's final standalone "logic.ready" does.
+                let bare_topics: Vec<String> = role_def.handoff_topics.publishes.iter()
+                    .filter(|t| {
+                        let tl = t.to_lowercase();
+                        lower.lines().any(|ln| ln.trim() == tl)
+                    })
+                    .cloned().collect();
+                // Explicit topic signals (trusted without file changes):
+                let explicit_pool: Vec<String> = if !marker_topics.is_empty() {
+                    marker_topics.into_iter().filter(|t| declared_ok(t)).collect()
+                } else if !explicit_topics.is_empty() {
+                    explicit_topics.into_iter().filter(|t| declared_ok(t)).collect()
+                } else if !bare_topics.is_empty() {
+                    bare_topics
+                } else {
+                    Vec::new()
+                };
+                let candidate_pool: Vec<String> = if !explicit_pool.is_empty() {
+                    explicit_pool
+                } else if strong_markers.iter().any(|n| lower.contains(n)) && !recent_files.is_empty() {
+                    // Weak keyword path: only trust it if the role actually
+                    // wrote files since the blocker (guards against narration).
                     role_def.handoff_topics.publishes.clone()
                 } else {
                     Vec::new()
@@ -378,6 +431,8 @@ fn spawn_idle_watcher(
                     true
                 });
                 if unpub.is_empty() { continue; }
+                tracing::info!(role = %t.role, files = recent_files.len(), topics = ?unpub,
+                               "idle-watcher: completion detected → publishing");
                 let files = ws_root.as_ref().map(|r| collect_changed_files(r)).unwrap_or_default();
                 for topic in unpub {
                     let summary = format!("auto-detected completion (idle {}s + keyword in pty tail)", (now - last_ms) / 1000);
@@ -603,7 +658,11 @@ fn dispatch_event(
         if role.name == from_role {
             continue;
         }
-        if !role.handoff_topics.subscribes.iter().any(|t| t == &topic) {
+        // Case-insensitive exact match. With graph-repaired teams (topics
+        // normalized at build), producer and consumer strings are identical,
+        // so this lines the headless fan-out up with what the UI shows ready.
+        let topic_lc = topic.to_lowercase();
+        if !role.handoff_topics.subscribes.iter().any(|t| t.to_lowercase() == topic_lc) {
             continue;
         }
         let Some(provider) = providers.get(&role.default_provider) else { continue };
@@ -726,8 +785,35 @@ async fn run_role_headless(
 fn usta_mcp_path() -> Option<std::path::PathBuf> {
     let exe = std::env::current_exe().ok()?;
     let dir = exe.parent()?;
-    let cand = dir.join("usta-mcp");
-    if cand.exists() { Some(cand) } else { None }
+    let bundled = dir.join("usta-mcp");
+    if !bundled.exists() { return None; }
+    // The bundled binary lives inside Usta.app. If claude/codex exec a binary
+    // INSIDE another app's bundle, macOS raises the "App Management" permission
+    // prompt. Copy usta-mcp to a plain (non-bundle) support dir and point the
+    // MCP configs there instead — same binary, no App Management gate.
+    let home = std::env::var("HOME").ok()?;
+    let dest_dir = std::path::PathBuf::from(home)
+        .join("Library/Application Support/usta/bin");
+    let dest = dest_dir.join("usta-mcp");
+    let needs_copy = match (std::fs::metadata(&dest), std::fs::metadata(&bundled)) {
+        (Ok(d), Ok(b)) => {
+            // Re-copy if sizes differ or bundled is newer.
+            d.len() != b.len()
+                || b.modified().ok() > d.modified().ok()
+        }
+        _ => true,
+    };
+    if needs_copy {
+        let _ = std::fs::create_dir_all(&dest_dir);
+        if std::fs::copy(&bundled, &dest).is_ok() {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = std::fs::set_permissions(&dest, std::fs::Permissions::from_mode(0o755));
+            }
+        }
+    }
+    if dest.exists() { Some(dest) } else { Some(bundled) }
 }
 
 /// Write a project .mcp.json registering the Usta bus server, so
@@ -745,6 +831,42 @@ fn write_mcp_config(cwd: &str) {
     if let Ok(s) = serde_json::to_string_pretty(&cfg) {
         let _ = std::fs::write(&path, s);
     }
+}
+
+/// Codex does not reliably forward its env to MCP subprocesses, so wrap
+/// usta-mcp in a tiny shell script that exports the bus context then execs it.
+/// Codex's config just points `command` at this script. Returns the script
+/// path. Per-role so concurrent codex panes don't clobber each other.
+fn write_codex_mcp_wrapper(
+    cwd: &str,
+    role: &str,
+    socket: &str,
+    ws_id: &str,
+) -> Option<std::path::PathBuf> {
+    let mcp = usta_mcp_path()?;
+    let dir = std::path::Path::new(cwd).join(".usta");
+    let _ = std::fs::create_dir_all(&dir);
+    let safe_role = sanitize_role_name(role);
+    let path = dir.join(format!("codex-mcp-{safe_role}.sh"));
+    let script = format!(
+        "#!/bin/sh\nexport USTA_SOCKET={sock}\nexport USTA_WORKSPACE_ID={ws}\nexport USTA_ROLE={role}\nexec {mcp}\n",
+        sock = shell_quote(socket),
+        ws = shell_quote(ws_id),
+        role = shell_quote(role),
+        mcp = shell_quote(&mcp.to_string_lossy()),
+    );
+    std::fs::write(&path, script).ok()?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755));
+    }
+    Some(path)
+}
+
+/// Minimal single-quote shell escaping for a value embedded in a script.
+fn shell_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
 }
 
 /// Pre-approve project MCP servers so Claude Code doesn't prompt every launch.
@@ -807,8 +929,12 @@ fn render_role_brief(role: &RoleDef, workspace_path: &str) -> String {
          orchestrator literally cannot detect 'done' any other way.\n\n\
          WRONG: write a report and stop. Usta never marks you done.\n\
          RIGHT: write report → call publish_event → THEN you may end the turn.\n\n\
-         Also speak the line `Event <topic> published.` in your final\n\
-         message so the idle-watcher has a fallback signal if MCP fails.\n\n",
+         DETERMINISTIC FALLBACK: on the FINAL line of your turn, print one\n\
+         marker per finished topic, EXACTLY in this format (the orchestrator\n\
+         parses it literally, so do not paraphrase):\n\
+             [[handoff: <topic> | <one-line summary>]]\n\
+         Example: [[handoff: api.ready | REST endpoints for auth + products done]]\n\
+         This guarantees the bus learns you finished even if the MCP call drops.\n\n",
         pubs = pubs_csv
     ));
 
@@ -994,6 +1120,7 @@ impl Usta for UstaSvc {
             daemon_version: usta_core::DAEMON_VERSION.into(),
             server_unix_ms: now_ms(),
             greeting: format!("hi {client}, ustad here"),
+            started_unix_ms: self.started_unix_ms,
         }))
     }
 
@@ -1241,6 +1368,26 @@ impl Usta for UstaSvc {
                         head = head,
                         cont = cont,
                         rel = rel_brief,
+                        tail = tail
+                    );
+                }
+            }
+            // Codex reads ~/.codex/config.toml [mcp_servers], NOT .mcp.json,
+            // and does NOT forward its env to MCP subprocesses. So we point its
+            // MCP `command` at a per-role wrapper script that exports the bus
+            // context (USTA_*) then execs usta-mcp. This is independent of any
+            // codex env-passing behaviour → publish_event always has context.
+            // No global config file is touched.
+            if effective_command.trim_start().starts_with("codex") && !r.role.is_empty() {
+                if let Some(wrapper) =
+                    write_codex_mcp_wrapper(&cwd, &r.role, &self.socket_path, &workspace.id)
+                {
+                    let trimmed = effective_command.trim_start();
+                    let (head, tail) = trimmed.split_once(char::is_whitespace).unwrap_or((trimmed, ""));
+                    effective_command = format!(
+                        "{head} -c 'mcp_servers.usta.command=\"{wrapper}\"' {tail}",
+                        head = head,
+                        wrapper = wrapper.to_string_lossy(),
                         tail = tail
                     );
                 }
@@ -2815,6 +2962,7 @@ async fn main() -> anyhow::Result<()> {
         tools: Arc::new(ToolRegistry::with_defaults()),
         approvals: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
         socket_path: socket_path.to_string_lossy().into_owned(),
+        started_unix_ms: now_ms(),
     };
 
     // Auto-completion watcher: detects when a role's CLI agent went idle

@@ -33,7 +33,10 @@ struct PtyTerminalView: NSViewRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator() }
 
     func makeNSView(context: Context) -> TerminalView {
-        let term = TerminalView()
+        // Reuse the session's cached SwiftTerm view if it already built one
+        // (pane was opened before, then slept). Avoids reallocating the Metal
+        // layer + font atlas on every open. New panes allocate once.
+        let term = session.cachedView ?? TerminalView()
         term.terminalDelegate = context.coordinator
         context.coordinator.hosted = term
         context.coordinator.onInput = { [weak session] data in

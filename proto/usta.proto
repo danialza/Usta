@@ -188,6 +188,10 @@ message PingResponse {
   string daemon_version = 1;
   int64  server_unix_ms = 2;
   string greeting       = 3;
+  // When this daemon process started listening (unix ms). The app compares
+  // this to the bundled ustad binary's mtime: if the binary is newer, the
+  // running daemon is stale and gets auto-restarted.
+  int64  started_unix_ms = 4;
 }
 
 // --- Workspace ---

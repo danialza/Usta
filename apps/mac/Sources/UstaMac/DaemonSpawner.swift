@@ -41,6 +41,15 @@ enum DaemonSpawner {
         return nil
     }
 
+    /// Modification time (unix ms) of the ustad binary we would launch.
+    /// Used to detect a stale running daemon after a rebuild.
+    static func binaryMtimeMs() -> Int64? {
+        guard let u = locateBinary(),
+              let attrs = try? FileManager.default.attributesOfItem(atPath: u.path),
+              let mod = attrs[.modificationDate] as? Date else { return nil }
+        return Int64(mod.timeIntervalSince1970 * 1000)
+    }
+
     /// True if something is accepting on the given UDS path.
     static func isSocketAlive(_ path: String) -> Bool {
         guard FileManager.default.fileExists(atPath: path) else { return false }
@@ -111,6 +120,7 @@ enum DaemonSpawner {
         socket: String,
         anthropicKey: String? = nil,
         geminiKey: String? = nil,
+        openaiKey: String? = nil,
         ollamaHost: String? = nil
     ) -> URL? {
         // Refuse stomping a live daemon.
@@ -123,6 +133,7 @@ enum DaemonSpawner {
         var env = ProcessInfo.processInfo.environment
         if let key = anthropicKey, !key.isEmpty { env["ANTHROPIC_API_KEY"] = key }
         if let key = geminiKey, !key.isEmpty { env["GEMINI_API_KEY"] = key }
+        if let key = openaiKey, !key.isEmpty { env["OPENAI_API_KEY"] = key }
         if let h = ollamaHost, !h.isEmpty { env["OLLAMA_HOST"] = h }
         // Bump daemon log level so the file is useful for debugging.
         if env["RUST_LOG"] == nil {

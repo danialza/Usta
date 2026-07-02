@@ -152,6 +152,16 @@ struct AssistantsGrid: View {
                                     toggleMax(role.name)
                                 }
                             },
+                            // Render the heavy SwiftTerm view only where it
+                            // matters: the sole focused/maximized pane, a pane
+                            // actively WORKING, or the role that's up NEXT (so
+                            // the one about to run stays awake). Everything else
+                            // sleeps — PTYs keep running + buffering, so opening
+                            // catches up instantly. Keeps a busy grid fast.
+                            live: (isVisible && visibleCount == 1)
+                                || bus.state(of: role.name) == .working
+                                || bus.pinnedBottleneckName == role.name
+                                || bus.readyNow.first == role.name,
                             step: displayStep[role.name],
                             stateColor: stateColor(bus.state(of: role.name))
                         )

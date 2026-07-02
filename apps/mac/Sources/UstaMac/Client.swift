@@ -10,6 +10,8 @@ import SwiftProtobuf
 final class UstaClientModel: ObservableObject {
     @Published var connected: Bool = false
     @Published var daemonVersion: String? = nil
+    /// When the connected daemon process started (unix ms). 0 = unknown.
+    @Published var daemonStartedMs: Int64 = 0
     @Published var workspaces: [Usta_V1_Workspace] = []
     @Published var lastError: String? = nil {
         didSet {
@@ -65,6 +67,7 @@ final class UstaClientModel: ObservableObject {
             let ping = Usta_V1_PingRequest.with { $0.clientName = "UstaMac" }
             let resp = try await stub.ping(ping)
             self.daemonVersion = resp.daemonVersion
+            self.daemonStartedMs = resp.startedUnixMs
             self.connected = true
             self.lastError = nil
             await refreshWorkspaces()

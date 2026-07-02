@@ -14,6 +14,13 @@ extension Notification.Name {
     /// Posted with `object: roleName` after OrchestrateFeature wrote a new
     /// kickoff into the role's yaml. Pane should re-show banner.
     static let ustaResetKickoff = Notification.Name("UstaResetKickoff")
+    /// Posted with `object: roleName` to focus a single pane full-screen.
+    /// Does NOT send anything — the user reviews + sends the prompt manually.
+    static let ustaFocusRole = Notification.Name("UstaFocusRole")
+    /// Posted with `object: providerId` ("anthropic"/"openai"/"gemini"/"ollama")
+    /// to switch EVERY role's CLI at once (claude → codex, etc.). Each pane
+    /// relaunches its terminal with the new command.
+    static let ustaSetAllCLI = Notification.Name("UstaSetAllCLI")
 }
 
 enum ChatItemKind { case user, assistant, tool, approval }
@@ -168,6 +175,11 @@ struct AssistantPane: View {
     var onToggleCollapse: (() -> Void)? = nil
     var isMaximized: Bool = false
     var onToggleMaximize: (() -> Void)? = nil
+    /// When false the heavy SwiftTerm Metal view is NOT mounted (only the
+    /// focused/maximized pane renders live). The PTY keeps running and its
+    /// output is buffered in the session, so opening the pane catches up
+    /// instantly. This is what keeps a 9-terminal grid fast.
+    var live: Bool = true
     var step: Int? = nil
     var stateColor: Color? = nil
     @EnvironmentObject var client: UstaClientModel
@@ -190,6 +202,24 @@ struct AssistantPane: View {
     @State private var kickoffSent: Bool = false
     @State private var regenInFlight: Bool = false
     @State private var regeneratedKickoff: String? = nil
+    /// The exact prompt text most recently sent to this pane. Survives Send so
+    /// the user can re-show / re-send / copy it (e.g. after clearing the input).
+    @State private var lastSentPrompt: String = ""
+    @State private var showLastPrompt: Bool = false
+    /// Guards against the provider-picker onChange re-entering switchCLI when
+    /// switchCLI itself sets selectedProvider.
+    @State private var switchingCLI: Bool = false
+    /// Set once the user explicitly switches CLI in this pane — then the
+    /// resolved command follows selectedProvider, ignoring a pinned cli_command.
+    @State private var cliOverridden: Bool = false
+    /// Provider id the user picked in the Terminal-CLI menu, awaiting the
+    /// "this wipes the session" confirmation. nil = no dialog.
+    @State private var pendingCliProvider: String? = nil
+    /// Installed-status of each CLI binary, filled on appear. Drives the
+    /// picker labels + the "not installed" alert.
+    @State private var cliAvailability: [String: Bool] = [:]
+    /// Binary name to surface in the "CLI not installed" alert. nil = hidden.
+    @State private var cliMissing: String? = nil
     /// Slash-command skills user has invoked in this pane's pty since launch.
     /// Set when we type the command in, cleared on relaunch.
     @State private var activatedSkills: Set<String> = []
@@ -200,6 +230,7 @@ struct AssistantPane: View {
          onToggleCollapse: (() -> Void)? = nil,
          isMaximized: Bool = false,
          onToggleMaximize: (() -> Void)? = nil,
+         live: Bool = true,
          step: Int? = nil,
          stateColor: Color? = nil) {
         self.workspaceID = workspaceID
@@ -208,6 +239,7 @@ struct AssistantPane: View {
         self.onToggleCollapse = onToggleCollapse
         self.isMaximized = isMaximized
         self.onToggleMaximize = onToggleMaximize
+        self.live = live
         self.step = step
         self.stateColor = stateColor
         _model = StateObject(wrappedValue: ChatPaneModel(role: role, workspaceID: workspaceID))
@@ -261,6 +293,10 @@ struct AssistantPane: View {
             regeneratedKickoff = nil
             kickoffSent = false
         }
+        .onReceive(NotificationCenter.default.publisher(for: .ustaSetAllCLI)) { note in
+            guard let provider = note.object as? String else { return }
+            Task { await switchCLI(to: provider) }
+        }
         .onReceive(NotificationCenter.default.publisher(for: .ustaAutoRegenerate)) { note in
             guard let name = note.object as? String, name == role.name else { return }
             // Dedup: only auto-fire when we don't already have a regenerated
@@ -283,6 +319,15 @@ struct AssistantPane: View {
                     ? role.cliCommand
                     : Self.defaultCommand(provider: selectedProvider, model: selectedModel)
             }
+            // One-shot: which CLIs are actually installed (drives the picker
+            // labels). Done off the main thread; each `which` spawns a shell.
+            let bins = ["claude", "codex", "gemini", "aider"]
+            let avail = await Task.detached { () -> [String: Bool] in
+                var m: [String: Bool] = [:]
+                for b in bins { m[b] = Self.cliInstalled(b) }
+                return m
+            }.value
+            cliAvailability = avail
         }
     }
 
@@ -300,6 +345,99 @@ struct AssistantPane: View {
         .clipped()
     }
 
+    /// Is a CLI binary resolvable on the user's login-shell PATH?
+    /// (The daemon launches via a login shell, so check the same way.)
+    nonisolated static func cliInstalled(_ bin: String) -> Bool {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/bin/zsh")
+        p.arguments = ["-lic", "command -v \(bin)"]
+        let pipe = Pipe()
+        p.standardOutput = pipe
+        p.standardError = Pipe()
+        do {
+            try p.run()
+            p.waitUntilExit()
+            let out = (try? pipe.fileHandleForReading.readToEnd()) ?? Data()
+            return p.terminationStatus == 0 && !out.isEmpty
+        } catch {
+            return true   // can't check → don't block the user
+        }
+    }
+
+    /// Friendly CLI name for a provider id.
+    static func cliName(for provider: String) -> String {
+        switch provider {
+        case "openai": return "codex"
+        case "gemini": return "gemini"
+        case "ollama": return "aider"
+        default:        return "claude"
+        }
+    }
+
+    /// The CLI this pane currently launches (respecting an explicit override
+    /// over a pinned cli_command).
+    private var currentCliName: String {
+        if cliOverridden || role.cliCommand.isEmpty {
+            return Self.cliName(for: selectedProvider)
+        }
+        return String(role.cliCommand.split(separator: " ").first ?? "claude")
+    }
+
+    /// Full command that will be launched (for the "→ …" hint).
+    private var resolvedCliCommand: String {
+        if cliOverridden || role.cliCommand.isEmpty {
+            let m = Self.modelMatches(selectedModel, selectedProvider) ? selectedModel : ""
+            return Self.defaultCommand(provider: selectedProvider, model: m)
+        }
+        return role.cliCommand
+    }
+
+    /// Single picker for which CLI runs in this role's terminal. Each pick
+    /// asks for confirmation first (switching wipes the live session).
+    private func cliMenuLabel(_ name: String, _ bin: String) -> String {
+        // unknown (nil) = treat as available until the probe finishes
+        let ok = cliAvailability[bin] ?? true
+        return ok ? "\(name) (\(bin))" : "\(name) (\(bin)) — not installed"
+    }
+
+    private func pickCli(_ provider: String, _ bin: String) {
+        if cliAvailability[bin] == false { cliMissing = bin; return }
+        pendingCliProvider = provider
+    }
+
+    private var terminalCliMenu: some View {
+        Menu {
+            Button(cliMenuLabel("Claude", "claude")) { pickCli("anthropic", "claude") }
+            Button(cliMenuLabel("Codex",  "codex"))  { pickCli("openai", "codex") }
+            Button(cliMenuLabel("Gemini", "gemini")) { pickCli("gemini", "gemini") }
+            Button(cliMenuLabel("Aider",  "aider"))  { pickCli("ollama", "aider") }
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "terminal").font(.system(size: 11))
+                Text("Terminal CLI: \(currentCliName)").font(.system(size: 11, weight: .medium))
+                Image(systemName: "chevron.down").font(.system(size: 8))
+            }
+            .padding(.horizontal, 8).padding(.vertical, 3)
+            .background(UstaTheme.dim.opacity(0.10))
+            .clipShape(Capsule())
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .help("Pick which CLI runs in @\(role.name)'s terminal")
+    }
+
+    /// Does a model id belong to a provider (prefix heuristic)?
+    static func modelMatches(_ model: String, _ provider: String) -> Bool {
+        if model.isEmpty { return false }
+        switch provider {
+        case "anthropic": return model.hasPrefix("claude")
+        case "openai":    return model.hasPrefix("gpt") || model.hasPrefix("o3") || model.hasPrefix("o4")
+        case "gemini":    return model.hasPrefix("gemini")
+        case "ollama":    return true   // free-form local tags
+        default:          return false
+        }
+    }
+
     static func defaultCommand(provider: String, model: String) -> String {
         switch provider {
         case "anthropic":
@@ -309,9 +447,45 @@ struct AssistantPane: View {
             return model.isEmpty ? "claude" : "claude --model \(model)"
         case "gemini":
             return model.isEmpty ? "gemini" : "gemini --model \(model)"
+        case "openai":
+            // OpenAI's Codex CLI. `-a never` = never stop to ask for approval,
+            // `-s danger-full-access` = run freely (parity with how Claude runs
+            // in a role pane). `-m` picks the model.
+            let base = "codex -a never -s danger-full-access"
+            return model.isEmpty ? base : "\(base) -m \(model)"
         case "ollama":    return "aider --model ollama_chat/\(model) --yes-always"
         default:          return ""
         }
+    }
+
+    /// Cheap stand-in for a running-but-not-rendered terminal. The PTY keeps
+    /// running in the background; this avoids the SwiftTerm Metal cost.
+    private var sleepingTerminal: some View {
+        VStack(spacing: 8) {
+            Image(systemName: "moon.zzz.fill")
+                .font(.system(size: 22)).foregroundStyle(UstaTheme.dim)
+            Text("@\(role.name) running in background")
+                .font(.system(size: 12, weight: .medium)).foregroundStyle(.white.opacity(0.85))
+            Text("Sleeping to keep the app fast.\nIts terminal keeps running — open to view live.")
+                .font(.system(size: 10)).foregroundStyle(UstaTheme.dim)
+                .multilineTextAlignment(.center)
+            if let maxToggle = onToggleMaximize {
+                Button {
+                    maxToggle()
+                } label: {
+                    Label("Open live", systemImage: "arrow.up.left.and.arrow.down.right")
+                        .font(.system(size: 11, weight: .medium))
+                        .padding(.horizontal, 12).padding(.vertical, 5)
+                        .background(Color.accentColor).foregroundStyle(.white)
+                        .clipShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .padding(.top, 4)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .contentShape(Rectangle())
+        .onTapGesture { onToggleMaximize?() }
     }
 
     @ViewBuilder
@@ -319,9 +493,13 @@ struct AssistantPane: View {
         ZStack {
             Color.black
             if let s = cliSession {
-                PtyTerminalView(session: s)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .clipped()
+                if live {
+                    PtyTerminalView(session: s)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .clipped()
+                } else {
+                    sleepingTerminal
+                }
             } else if let err = cliError {
                 VStack(spacing: 10) {
                     Image(systemName: "exclamationmark.triangle.fill")
@@ -392,10 +570,76 @@ struct AssistantPane: View {
         }
     }
 
-    private func launchCLI() async {
+    /// Close this role's terminal on BOTH sides (local session + daemon PTY)
+    /// so a subsequent launchCLI starts fresh instead of reattaching to the
+    /// old CLI. Without the daemon-side close, relaunch silently reattaches.
+    private func tearDownTerminal() async {
+        if let s = cliSession {
+            await client.closeTerminal(id: s.id)
+            s.stop()
+        }
+        for t in await client.listTerminals(workspaceID: workspaceID)
+            where t.role == role.name && t.alive {
+            await client.closeTerminal(id: t.id)
+        }
+        cliSession = nil
+        termCache.drop(role: role.name)
+        activatedSkills.removeAll()
+    }
+
+    /// Relaunch the CLI using the current provider/model selection (or the
+    /// role's pinned cli_command). Used by the ↻ button.
+    private func relaunchCLI() async {
+        await tearDownTerminal()
+        cliCommand = !role.cliCommand.isEmpty ? role.cliCommand
+            : Self.defaultCommand(provider: selectedProvider, model: selectedModel)
+        cliError = nil
+        cliLaunching = true
+        await launchCLI(forceNew: true)
+        cliLaunching = false
+    }
+
+    /// Switch this pane's CLI to a new provider (claude → codex etc.). Kills
+    /// the live terminal, recomputes the command, and relaunches.
+    /// `force` = explicit per-pane pick: override even a pinned cli_command.
+    /// Bulk switch passes force=false so roles with a custom command are kept.
+    private func switchCLI(to provider: String, force: Bool = false) async {
+        if !force && !role.cliCommand.isEmpty { return }
+        // Preflight: is the CLI binary installed? If not, DON'T tear down the
+        // working session — show an actionable error instead of a dead pane.
+        let bin = Self.cliName(for: provider)
+        if !Self.cliInstalled(bin) {
+            cliAvailability[bin] = false
+            cliMissing = bin     // surface the install alert
+            return
+        }
+        cliAvailability[bin] = true
+        switchingCLI = true
+        defer { switchingCLI = false }
+        cliOverridden = true          // follow selectedProvider from now on
+        backend = .cli
+        selectedProvider = provider
+        // Drop the model if it belongs to a different provider (e.g. switching
+        // claude → codex must not pass `-m claude-sonnet`). CLI uses its default.
+        let model = Self.modelMatches(selectedModel, provider) ? selectedModel : ""
+        selectedModel = model
+        let newCmd = Self.defaultCommand(provider: provider, model: model)
+        if newCmd.isEmpty { return }
+        cliCommand = newCmd
+        await tearDownTerminal()
+        cliError = nil
+        cliLaunching = true
+        await launchCLI(forceNew: true)
+        cliLaunching = false
+    }
+
+    private func launchCLI(forceNew: Bool = false) async {
         // 1) Try reattach: find an alive terminal for this role on the
         // workspace. Survives pane re-mount (sidebar nav, role chip toggle).
-        let existing = await client.listTerminals(workspaceID: workspaceID)
+        // On an explicit CLI switch/relaunch we MUST NOT reattach — the old
+        // (claude) PTY may still report alive for a tick after closeTerminal,
+        // which would silently relaunch the OLD CLI instead of the new one.
+        let existing = forceNew ? nil : await client.listTerminals(workspaceID: workspaceID)
             .first { $0.role == role.name && $0.alive }
         let termID: String
         if let t = existing {
@@ -431,6 +675,11 @@ struct AssistantPane: View {
     /// slash skills) into the freshly launched claude pty so every role
     /// boots into terse + memory-aware mode.
     private func sendSkillPrelude(session: TerminalSession) async {
+        // The `/caveman:caveman` + `/memsearch:memory-recall` preludes are
+        // Claude Code plugin slash-commands. Other CLIs (codex, gemini, aider)
+        // don't have them — injecting would just error in their prompt. Only
+        // run the prelude when this pane is launching the claude CLI.
+        guard cliCommand.trimmingCharacters(in: .whitespaces).hasPrefix("claude") else { return }
         // Wait for claude to finish welcome banner + reach prompt
         try? await Task.sleep(nanoseconds: 5_000_000_000)
         let preludes: [String] = [
@@ -500,7 +749,8 @@ struct AssistantPane: View {
                     .foregroundStyle(UstaTheme.dim).lineLimit(1)
             }
             skillIndicatorRow
-            // Row 2: controls — picker, provider, model, relaunch, gear
+            // Row 2: controls. Chat mode → API provider+model. Terminal mode →
+            // a single "Terminal CLI" picker (claude / codex / gemini / aider).
             if !collapsed {
                 HStack(spacing: 6) {
                     Picker("", selection: $backend) {
@@ -509,14 +759,19 @@ struct AssistantPane: View {
                     }
                     .pickerStyle(.segmented)
                     .fixedSize()
-                    .onChange(of: selectedProvider) { _, p in
-                        if cliSession == nil { cliCommand = !role.cliCommand.isEmpty ? role.cliCommand : Self.defaultCommand(provider: p, model: selectedModel) }
+                    if backend == .cli {
+                        terminalCliMenu
+                        Text("→ \(resolvedCliCommand)")
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundStyle(UstaTheme.dim)
+                            .lineLimit(1)
+                    } else {
+                        providerPicker
+                        modelPicker
+                            .onChange(of: selectedModel) { _, m in
+                                if cliSession == nil { cliCommand = !role.cliCommand.isEmpty ? role.cliCommand : Self.defaultCommand(provider: selectedProvider, model: m) }
+                            }
                     }
-                    .onChange(of: selectedModel) { _, m in
-                        if cliSession == nil { cliCommand = !role.cliCommand.isEmpty ? role.cliCommand : Self.defaultCommand(provider: selectedProvider, model: m) }
-                    }
-                    providerPicker
-                    modelPicker
                     Spacer(minLength: 0)
                     headerActions
                 }
@@ -529,6 +784,39 @@ struct AssistantPane: View {
                     _ = await client.addRole(workspaceID: workspaceID, role: updated)
                 }
             })
+        }
+        .alert("Switch terminal CLI?", isPresented: Binding(
+            get: { pendingCliProvider != nil },
+            set: { if !$0 { pendingCliProvider = nil } }
+        )) {
+            Button("Cancel", role: .cancel) { pendingCliProvider = nil }
+            Button("Switch", role: .destructive) {
+                if let p = pendingCliProvider {
+                    pendingCliProvider = nil
+                    Task { await switchCLI(to: p, force: true) }
+                }
+            }
+        } message: {
+            let to = Self.cliName(for: pendingCliProvider ?? "")
+            Text("@\(role.name)'s terminal will restart on \(to). The current session and everything in its terminal memory will be lost.")
+        }
+        .alert("\(cliMissing ?? "CLI") is not installed", isPresented: Binding(
+            get: { cliMissing != nil },
+            set: { if !$0 { cliMissing = nil } }
+        )) {
+            Button("OK", role: .cancel) { cliMissing = nil }
+        } message: {
+            Text(Self.installHint(for: cliMissing ?? ""))
+        }
+    }
+
+    static func installHint(for bin: String) -> String {
+        switch bin {
+        case "codex":  return "The OpenAI Codex CLI isn't on your PATH.\nInstall it, then try again:\n\n  npm i -g @openai/codex"
+        case "aider":  return "Aider isn't on your PATH.\nInstall it, then try again:\n\n  pipx install aider-chat"
+        case "gemini": return "The Gemini CLI isn't on your PATH.\nInstall it, then try again:\n\n  npm i -g @google/gemini-cli"
+        case "claude": return "Claude Code isn't on your PATH.\nInstall it from claude.com/claude-code, then try again."
+        default:       return "`\(bin)` isn't installed or not on PATH. Install it, then try again."
         }
     }
 
@@ -549,18 +837,13 @@ struct AssistantPane: View {
             }
             if backend == .cli {
                 Button {
-                    cliSession?.stop()
-                    termCache.drop(role: role.name)   // forget cache on relaunch
-                    cliSession = nil
-                    activatedSkills.removeAll()
-                    cliCommand = !role.cliCommand.isEmpty ? role.cliCommand
-                        : Self.defaultCommand(provider: selectedProvider, model: selectedModel)
+                    Task { await relaunchCLI() }
                 } label: {
                     Image(systemName: "arrow.clockwise").font(.caption)
                 }
                 .buttonStyle(.borderless)
                 .foregroundStyle(UstaTheme.dim)
-                .help("Relaunch CLI")
+                .help("Relaunch CLI (picks up the current provider)")
             }
             Button { showRoleEditor = true } label: {
                 Image(systemName: "gearshape").font(.caption)
@@ -682,7 +965,56 @@ struct AssistantPane: View {
             blockedBanner
         } else if !effectiveKickoff.isEmpty && !kickoffSent {
             kickoffBannerCore
+        } else if !lastSentPrompt.isEmpty {
+            // After Send the active banner is gone — keep a compact handle on
+            // the last prompt so the user can re-read, re-send, or copy it.
+            lastPromptBar
         }
+    }
+
+    @ViewBuilder
+    private var lastPromptBar: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Image(systemName: "arrow.uturn.backward").font(.system(size: 10))
+                    .foregroundStyle(UstaTheme.dim)
+                Text("Last prompt sent").font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button { withAnimation { showLastPrompt.toggle() } } label: {
+                    Text(showLastPrompt ? "Hide" : "Show").font(.system(size: 10, weight: .medium))
+                }.buttonStyle(.borderless)
+                Button {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(lastSentPrompt, forType: .string)
+                } label: {
+                    Label("Copy", systemImage: "doc.on.doc").labelStyle(.iconOnly).font(.system(size: 10))
+                }.buttonStyle(.borderless).help("Copy the last prompt")
+                Button { Task { await resendLastPrompt() } } label: {
+                    HStack(spacing: 3) {
+                        Image(systemName: "paperplane").font(.system(size: 9))
+                        Text("Re-send").font(.system(size: 10, weight: .medium))
+                    }
+                    .padding(.horizontal, 7).padding(.vertical, 2)
+                    .background(Color.accentColor).foregroundStyle(.white)
+                    .clipShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .help("Paste the last prompt back into the terminal (you press Enter to run)")
+            }
+            if showLastPrompt {
+                Text(lastSentPrompt)
+                    .font(.system(size: 11)).foregroundStyle(.primary)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .padding(8)
+        .background(UstaTheme.dim.opacity(0.06))
+        .overlay(RoundedRectangle(cornerRadius: 6).stroke(UstaTheme.border))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .padding(.horizontal, 10)
     }
 
     @ViewBuilder
@@ -855,6 +1187,7 @@ struct AssistantPane: View {
         let text = effectiveKickoff
         if text.isEmpty { return }
         kickoffSent = true
+        lastSentPrompt = text          // keep for re-show / re-send / copy
         bus.markWorking(role.name)
         if backend == .cli {
             // Wait briefly so a freshly-launched CLI has its prompt up.
@@ -866,6 +1199,20 @@ struct AssistantPane: View {
             }
         } else {
             input = text
+        }
+    }
+
+    /// Re-paste the last sent prompt into the CLI (e.g. user cleared the
+    /// input). Does NOT auto-submit — they press Enter when ready.
+    private func resendLastPrompt() async {
+        guard backend == .cli, !lastSentPrompt.isEmpty else {
+            input = lastSentPrompt
+            return
+        }
+        if cliSession == nil { try? await Task.sleep(nanoseconds: 600_000_000) }
+        guard let s = cliSession else { return }
+        if let data = lastSentPrompt.data(using: .utf8) {
+            await s.sendInput(data)
         }
     }
 

@@ -308,6 +308,11 @@ impl Pm {
             .map_err(|e| anyhow::anyhow!("parse proposal JSON: {e}\n--- raw ---\n{body}"))?;
         // Sanitise slug.
         proposal.project_slug = sanitize_slug(&proposal.project_slug);
+        // Close the handoff graph: every subscribe must map onto a real
+        // producer (exact). Dynamic topics stay; only mismatches are fixed.
+        for note in repair_team_graph(&mut proposal.team) {
+            tracing::info!(target: "pm::graph", "{note}");
+        }
         Ok(proposal)
     }
 
@@ -400,6 +405,9 @@ Rules:
         let mut proposal: ProjectProposal = serde_json::from_str(body)
             .map_err(|e| anyhow::anyhow!("parse refined proposal: {e}\n--- raw ---\n{body}"))?;
         proposal.project_slug = sanitize_slug(&proposal.project_slug);
+        for note in repair_team_graph(&mut proposal.team) {
+            tracing::info!(target: "pm::graph", "{note}");
+        }
         Ok(proposal)
     }
 
@@ -427,7 +435,11 @@ Rules:
                 ChatDelta::Done { .. } => break,
             }
         }
-        parse_analysis(&full)
+        let mut analysis = parse_analysis(&full)?;
+        for note in repair_team_graph(&mut analysis.team) {
+            tracing::info!(target: "pm::graph", "{note}");
+        }
+        Ok(analysis)
     }
 
     /// Regenerate a single role's next-step kickoff message based on what
@@ -604,6 +616,90 @@ Rules:
     }
 }
 
+/// Topics produced OUTSIDE the team (by the user/system), so a subscribe to
+/// them is legitimate even though no role publishes them. Never dropped.
+fn is_external_topic(t: &str) -> bool {
+    matches!(t, "feature.requested" | "kickoff.plan.ready" | "issue.reported")
+}
+
+/// Normalize a handoff topic: trim + lowercase. Kills the casing/whitespace
+/// drift that made producer and consumer strings silently mismatch.
+pub fn norm_topic(t: &str) -> String {
+    t.trim().to_lowercase()
+}
+
+/// Does any published topic plausibly satisfy `sub`? Returns the EXACT
+/// producer string so the subscribe can be rewritten to match it 1:1.
+/// Conservative: exact, dotted-suffix either direction, or last-two-segment
+/// match. (No bare last-segment match — `.ready` must not match everything.)
+fn find_producer(sub: &str, published: &[String]) -> Option<String> {
+    if let Some(p) = published.iter().find(|p| p.as_str() == sub) {
+        return Some(p.clone());
+    }
+    let parts: Vec<&str> = sub.split('.').collect();
+    let last2 = if parts.len() >= 2 {
+        parts[parts.len() - 2..].join(".")
+    } else {
+        String::new()
+    };
+    for p in published {
+        if p.ends_with(&format!(".{sub}")) || sub.ends_with(&format!(".{p}")) {
+            return Some(p.clone());
+        }
+        if !last2.is_empty() && (p == &last2 || p.ends_with(&format!(".{last2}"))) {
+            return Some(p.clone());
+        }
+    }
+    None
+}
+
+/// Validate + repair a proposed team's handoff graph so every subscribe maps
+/// EXACTLY onto some role's publish. The team stays fully dynamic — we only
+/// make the two sides agree: normalize topics, rewrite fuzzy subscribes to the
+/// producer's exact string, and drop orphan subscribes that nothing produces.
+/// After this, exact matching works everywhere and the fuzzy matcher (UI +
+/// daemon) becomes unnecessary. Returns human-readable change notes.
+pub fn repair_team_graph(team: &mut [ProposedRole]) -> Vec<String> {
+    for r in team.iter_mut() {
+        for t in r.publishes.iter_mut() { *t = norm_topic(t); }
+        for t in r.subscribes.iter_mut() { *t = norm_topic(t); }
+        r.publishes.sort();
+        r.publishes.dedup();
+        r.subscribes.sort();
+        r.subscribes.dedup();
+    }
+    let published: Vec<String> = {
+        let mut v: Vec<String> = team.iter().flat_map(|r| r.publishes.clone()).collect();
+        v.sort();
+        v.dedup();
+        v
+    };
+    let mut notes = Vec::new();
+    for r in team.iter_mut() {
+        let role = r.name.clone();
+        let mut kept: Vec<String> = Vec::new();
+        for sub in std::mem::take(&mut r.subscribes) {
+            if is_external_topic(&sub) || published.iter().any(|p| p == &sub) {
+                kept.push(sub);
+                continue;
+            }
+            match find_producer(&sub, &published) {
+                Some(exact) => {
+                    notes.push(format!("@{role}: subscribe '{sub}' → '{exact}' (matched producer)"));
+                    kept.push(exact);
+                }
+                None => {
+                    notes.push(format!("@{role}: dropped orphan subscribe '{sub}' (no producer)"));
+                }
+            }
+        }
+        kept.sort();
+        kept.dedup();
+        r.subscribes = kept;
+    }
+    notes
+}
+
 fn parse_analysis(s: &str) -> anyhow::Result<WorkspaceAnalysis> {
     // Find ```json ... ``` block, else best-effort first {…} block.
     let body = extract_json(s).ok_or_else(|| anyhow::anyhow!("no JSON block in response"))?;
@@ -652,4 +748,81 @@ fn extract_json(s: &str) -> Option<&str> {
         }
     }
     None
+}
+
+#[cfg(test)]
+mod graph_tests {
+    use super::*;
+
+    fn role(name: &str, pubs: &[&str], subs: &[&str]) -> ProposedRole {
+        ProposedRole {
+            name: name.into(),
+            emoji: String::new(),
+            why: String::new(),
+            recommended_model: String::new(),
+            tools: vec![],
+            system_prompt: String::new(),
+            recommended_provider: default_provider(),
+            claude_skills: vec![],
+            publishes: pubs.iter().map(|s| s.to_string()).collect(),
+            subscribes: subs.iter().map(|s| s.to_string()).collect(),
+            cli_command: String::new(),
+            kickoff: String::new(),
+        }
+    }
+
+    #[test]
+    fn rewrites_fuzzy_subscribe_to_exact_producer() {
+        // dba publishes "schema.defined", backend subscribes "schema.ready".
+        // last-2 segments differ, so this is a true mismatch the PM made.
+        // backend also subscribes "db.schema.defined" (dotted-suffix of producer).
+        let mut team = vec![
+            role("dba", &["schema.defined"], &[]),
+            role("backend", &["api.ready"], &["db.schema.defined"]),
+        ];
+        let notes = repair_team_graph(&mut team);
+        assert_eq!(team[1].subscribes, vec!["schema.defined"]);
+        assert!(notes.iter().any(|n| n.contains("matched producer")));
+    }
+
+    #[test]
+    fn drops_orphan_subscribe() {
+        let mut team = vec![
+            role("frontend", &["ui.ready"], &["payments.configured"]),
+        ];
+        let notes = repair_team_graph(&mut team);
+        assert!(team[0].subscribes.is_empty());
+        assert!(notes.iter().any(|n| n.contains("orphan")));
+    }
+
+    #[test]
+    fn keeps_external_topic() {
+        let mut team = vec![
+            role("pm", &["kickoff.plan.ready"], &["feature.requested"]),
+        ];
+        repair_team_graph(&mut team);
+        assert_eq!(team[0].subscribes, vec!["feature.requested"]);
+    }
+
+    #[test]
+    fn normalizes_case_and_whitespace() {
+        let mut team = vec![
+            role("dba", &[" Schema.Defined "], &[]),
+            role("backend", &["api.ready"], &["SCHEMA.DEFINED"]),
+        ];
+        repair_team_graph(&mut team);
+        assert_eq!(team[0].publishes, vec!["schema.defined"]);
+        assert_eq!(team[1].subscribes, vec!["schema.defined"]);
+    }
+
+    #[test]
+    fn exact_match_unchanged() {
+        let mut team = vec![
+            role("a", &["x.done"], &[]),
+            role("b", &["y.done"], &["x.done"]),
+        ];
+        let notes = repair_team_graph(&mut team);
+        assert_eq!(team[1].subscribes, vec!["x.done"]);
+        assert!(notes.is_empty());
+    }
 }

@@ -160,6 +160,15 @@ struct NewProjectWizard: View {
                     HStack {
                         sectionLabel("Team")
                         Spacer()
+                        Menu {
+                            Text("Set ALL roles to:").font(.caption)
+                            Button("Claude (anthropic)") { setAllProviders("anthropic") }
+                            Button("Codex (openai)")     { setAllProviders("openai") }
+                            Button("Gemini")             { setAllProviders("gemini") }
+                            Button("Ollama")             { setAllProviders("ollama") }
+                        } label: { Label("Set all", systemImage: "wand.and.stars") }
+                            .menuStyle(.borderlessButton).fixedSize()
+                            .help("Switch every role's provider/CLI at once")
                         Button {
                             showAddRole = true
                         } label: { Label("Add Role", systemImage: "plus") }
@@ -362,6 +371,24 @@ struct NewProjectWizard: View {
 
     // MARK: actions
 
+    /// Switch every proposed role to one provider + its default model.
+    private func setAllProviders(_ p: String) {
+        let model: String = {
+            switch p {
+            case "anthropic": return "claude-sonnet-4-6"
+            case "openai":    return "gpt-4o"
+            case "gemini":    return "gemini-2.5-flash"
+            case "ollama":    return "qwen2.5-coder:7b"
+            default:          return ""
+            }
+        }()
+        guard proposal != nil else { return }
+        for i in proposal!.team.indices {
+            proposal!.team[i].recommendedProvider = p
+            proposal!.team[i].recommendedModel = model
+        }
+    }
+
     private func propose() async {
         working = true; errorMsg = nil
         defer { working = false }
@@ -444,9 +471,10 @@ struct NewProjectWizard: View {
 
 struct ProposedRoleCard: View {
     @Binding var role: Usta_V1_ProposedRole
-    var providers: [String] = ["anthropic", "gemini", "ollama"]
+    var providers: [String] = ["anthropic", "openai", "gemini", "ollama"]
     var modelsByProvider: [String: [String]] = [
         "anthropic": ["claude-opus-4-7", "claude-sonnet-4-6", "claude-haiku-4-5-20251001"],
+        "openai":    ["gpt-4o", "gpt-4o-mini", "gpt-4.1", "gpt-4.1-mini", "o4-mini", "o3-mini"],
         "gemini":    ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-2.0-flash-lite",
                       "gemini-1.5-flash-002", "gemini-2.5-pro", "gemini-1.5-pro-002"],
         "ollama":    ["qwen2.5-coder:1.5b", "qwen2.5-coder:3b", "llama3.2:3b",

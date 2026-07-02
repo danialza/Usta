@@ -373,6 +373,12 @@ struct WorkspaceDetailView: View {
         .overlay(alignment: .topTrailing) {
             ToastStack().environmentObject(bus)
         }
+        // Run/Open buttons focus a single pane full-screen — no auto-send.
+        .onReceive(NotificationCenter.default.publisher(for: .ustaFocusRole)) { note in
+            guard let name = note.object as? String,
+                  let r = roles.first(where: { $0.name == name }) else { return }
+            selectedRole = r
+        }
         .task(id: ws.id) {
             roles = await client.listRoles(workspaceID: ws.id)
             bus.start(workspaceID: ws.id, client: client, roles: roles)
@@ -726,17 +732,18 @@ struct WorkspaceDetailView: View {
             Spacer()
             if let r = ready.first {
                 Button {
-                    NotificationCenter.default.post(name: .ustaKickoffRole, object: r)
+                    if let role = roles.first(where: { $0.name == r }) { selectedRole = role }
                 } label: {
                     HStack(spacing: 4) {
-                        Image(systemName: "play.fill").font(.system(size: 10))
-                        Text("Run @\(r)").font(.system(size: 11, weight: .medium))
+                        Image(systemName: "arrow.up.left.and.arrow.down.right").font(.system(size: 10))
+                        Text("Open @\(r)").font(.system(size: 11, weight: .medium))
                     }
                     .padding(.horizontal, 10).padding(.vertical, 5)
                     .background(Color.accentColor).foregroundStyle(.white)
                     .clipShape(Capsule())
                 }
                 .buttonStyle(.plain)
+                .help("Open @\(r) full-screen. Review its prompt, then Send.")
             } else if let f = focusName {
                 let unpub = bus.unpublishedFor(f)
                 if !unpub.isEmpty {
@@ -830,6 +837,37 @@ struct WorkspaceDetailView: View {
     }
 
     /// One adaptive layout — full labels, icon-only, or icon + overflow Menu.
+    /// Bulk-switch every role's terminal CLI at once (Claude → Codex etc.).
+    /// Broadcasts to each pane, which relaunches with the new command. Roles
+    /// pinned to a custom cli_command in their yaml are left untouched.
+    @ViewBuilder
+    private func cliSwitchMenu(compact: Bool) -> some View {
+        Menu {
+            Text("Switch ALL terminals to:").font(.caption)
+            Button("Claude (claude)")     { setAllCLI("anthropic") }
+            Button("Codex (codex)")       { setAllCLI("openai") }
+            Button("Gemini (gemini)")     { setAllCLI("gemini") }
+            Button("Aider · Ollama")      { setAllCLI("ollama") }
+        } label: {
+            if compact {
+                Image(systemName: "terminal").frame(width: 30, height: 24)
+            } else {
+                Label("CLI", systemImage: "terminal")
+                    .font(.caption.weight(.medium))
+                    .padding(.horizontal, 8).padding(.vertical, 4)
+            }
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .help("Switch every role's terminal to one CLI (claude / codex / gemini / aider)")
+    }
+
+    private func setAllCLI(_ provider: String) {
+        NotificationCenter.default.post(name: .ustaSetAllCLI, object: provider)
+        bus.toast(kind: .info, title: "Switching CLIs",
+                  body: "All roles → \(provider). Relaunching terminals…")
+    }
+
     @ViewBuilder
     private func toolbarRow(compact: Bool, includeOverflow: Bool) -> some View {
         HStack(spacing: 8) {
@@ -851,6 +889,7 @@ struct WorkspaceDetailView: View {
                       compact: compact) {
                     if !startingTeam { Task { await startTeamSequentially() } }
                 }
+                cliSwitchMenu(compact: compact)
             }
             if includeOverflow {
                 Menu {
