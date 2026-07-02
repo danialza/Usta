@@ -60,8 +60,8 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
     <key>CFBundleName</key>                    <string>Usta</string>
     <key>CFBundleDisplayName</key>             <string>Usta</string>
     <key>CFBundleIdentifier</key>              <string>dev.usta.Usta</string>
-    <key>CFBundleVersion</key>                 <string>0.1.0</string>
-    <key>CFBundleShortVersionString</key>      <string>0.1.0</string>
+    <key>CFBundleVersion</key>                 <string>0.1.1</string>
+    <key>CFBundleShortVersionString</key>      <string>0.1.1</string>
     <key>CFBundleExecutable</key>              <string>Usta</string>
     <key>CFBundleIconFile</key>                <string>Usta</string>
     <key>CFBundlePackageType</key>             <string>APPL</string>
