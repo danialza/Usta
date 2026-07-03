@@ -319,7 +319,7 @@ struct WelcomeView: View {
     }
 }
 
-enum DetailMode { case assistants, terminals }
+enum DetailMode { case assistants, graph, terminals }
 
 struct WorkspaceDetailView: View {
     let ws: Usta_V1_Workspace
@@ -343,6 +343,8 @@ struct WorkspaceDetailView: View {
     @State private var templateStatus: String? = nil
     // Cost dashboard
     @State private var showCosts = false
+    // Session replay
+    @State private var showReplay = false
     // Workshop grill: post-scaffold refinement
     @State private var showGrillMore: Bool = false
     @State private var grillMoreLoading: Bool = false
@@ -361,6 +363,10 @@ struct WorkspaceDetailView: View {
                 case .assistants:
                     AssistantsGrid(workspaceID: ws.id, roles: roles, focus: selectedRole?.name,
                                    onClearFocus: { selectedRole = nil })
+                        .environmentObject(bus)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                case .graph:
+                    HandoffGraphView(roles: roles)
                         .environmentObject(bus)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 case .terminals:
@@ -388,6 +394,7 @@ struct WorkspaceDetailView: View {
             guard let name = note.object as? String,
                   let r = roles.first(where: { $0.name == name }) else { return }
             selectedRole = r
+            mode = .assistants   // graph/terminal taps land on the live pane
         }
         .task(id: ws.id) {
             roles = await client.listRoles(workspaceID: ws.id)
@@ -424,6 +431,10 @@ struct WorkspaceDetailView: View {
         .sheet(isPresented: $showCosts) {
             CostDashboard(workspaceID: ws.id)
                 .environmentObject(client)
+        }
+        .sheet(isPresented: $showReplay) {
+            ReplayView(workspaceName: (ws.path as NSString).lastPathComponent)
+                .environmentObject(bus)
         }
         .sheet(isPresented: $showApplyTeam) { applyTeamSheet }
         .sheet(isPresented: $showAddRole) {
@@ -862,6 +873,7 @@ struct WorkspaceDetailView: View {
     private var modePicker: some View {
         Picker("", selection: $mode) {
             Image(systemName: "person.3.sequence").tag(DetailMode.assistants)
+            Image(systemName: "point.3.connected.trianglepath.dotted").tag(DetailMode.graph)
             Image(systemName: "terminal").tag(DetailMode.terminals)
         }
         .pickerStyle(.segmented)
@@ -1009,6 +1021,7 @@ struct WorkspaceDetailView: View {
                     Button("Add Role") { showAddRole = true }
                     Button("Apply Team") { showApplyTeam = true }
                     Button("Costs…") { showCosts = true }
+                    Button("Replay…") { showReplay = true }
                     Divider()
                     Button("Export Team…") { exportTeamToFile() }
                     Button("Import Team…") { pickTeamFile() }
@@ -1050,6 +1063,7 @@ struct WorkspaceDetailView: View {
                 tbBtn("Add Role", "plus", compact: compact) { showAddRole = true }
                 tbBtn("Apply Team", "person.3.sequence", compact: compact) { showApplyTeam = true }
                 tbBtn("Costs", "dollarsign.circle", compact: compact) { showCosts = true }
+                tbBtn("Replay", "memories", compact: compact) { showReplay = true }
                 Menu {
                     Button("Export Team…") { exportTeamToFile() }
                     Button("Import Team…") { pickTeamFile() }
