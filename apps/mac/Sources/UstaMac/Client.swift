@@ -310,6 +310,38 @@ final class UstaClientModel: ObservableObject {
         })
     }
 
+    // --- Team templates ---
+
+    func exportTeam(workspaceID: String, name: String, description: String = "") async -> String? {
+        guard let stub else { return nil }
+        do {
+            let r = try await stub.exportTeam(.with {
+                $0.workspaceID = workspaceID
+                $0.name = name
+                $0.description_p = description
+            })
+            return r.yaml
+        } catch {
+            self.lastError = "export team: \(error)"
+            return nil
+        }
+    }
+
+    func importTeam(workspaceID: String, yaml: String, replace: Bool) async -> [Usta_V1_Role]? {
+        guard let stub else { return nil }
+        do {
+            let r = try await stub.importTeam(.with {
+                $0.workspaceID = workspaceID
+                $0.yaml = yaml
+                $0.replace = replace
+            })
+            return r.roles
+        } catch {
+            self.lastError = "import team: \(error)"
+            return nil
+        }
+    }
+
     // --- New project ---
 
     func proposeProject(idea: String, provider: String = "anthropic", model: String = "claude-sonnet-4-6") async -> Usta_V1_ProjectProposal? {

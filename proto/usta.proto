@@ -95,7 +95,28 @@ service Usta {
   rpc GenerateGrillQuestions(GrillQuestionsRequest) returns (GrillQuestionsResponse);
   // 2) Re-propose the project incorporating the user's grill answers.
   rpc RefineProposal(RefineProposalRequest) returns (ProjectProposal);
+
+  // Team templates: export the workspace team as a shareable YAML bundle,
+  // or import one (writes .usta/roles/*.yaml).
+  rpc ExportTeam(ExportTeamRequest) returns (ExportTeamResponse);
+  rpc ImportTeam(ImportTeamRequest) returns (ImportTeamResponse);
 }
+
+message ExportTeamRequest {
+  string workspace_id = 1;
+  string name         = 2; // template display name
+  string description  = 3;
+}
+
+message ExportTeamResponse { string yaml = 1; }
+
+message ImportTeamRequest {
+  string workspace_id = 1;
+  string yaml         = 2;
+  bool   replace      = 3; // true: wipe existing workspace roles first
+}
+
+message ImportTeamResponse { repeated Role roles = 1; }
 
 message GrillQuestionsRequest {
   string idea               = 1;

@@ -10,6 +10,8 @@
 ***Usta gives you a team — that talks to itself.***
 
 <p>
+  <a href="https://github.com/danialza/Usta/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/danialza/Usta/ci.yml?branch=main&style=for-the-badge&label=CI&labelColor=050810"></a>
+  <a href="https://github.com/danialza/Usta/releases/latest"><img alt="Release" src="https://img.shields.io/github/v/release/danialza/Usta?style=for-the-badge&color=34d399&labelColor=050810"></a>
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-22d3ee?style=for-the-badge&labelColor=050810"></a>
   <img alt="macOS 15+" src="https://img.shields.io/badge/macOS-15+-fbbf24?style=for-the-badge&logo=apple&logoColor=white&labelColor=050810">
   <img alt="Swift 6" src="https://img.shields.io/badge/Swift-6-b794f4?style=for-the-badge&logo=swift&logoColor=white&labelColor=050810">
