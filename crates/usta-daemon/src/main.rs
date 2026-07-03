@@ -1,3 +1,4 @@
+mod costs;
 mod toolexec;
 
 use anyhow::Context;
@@ -20,6 +21,7 @@ use usta_proto::v1::{
     RefineProposalRequest,
     ExportTeamRequest, ExportTeamResponse, ImportTeamRequest, ImportTeamResponse,
     MergeRoleBranchRequest, MergeRoleBranchResponse,
+    GetCostsRequest, CostReport, RoleCost,
     ApproveToolRequest, ProviderInfo, ProviderList, PtyClientMsg, PublishEventRequest,
     RegenerateKickoffRequest, RegenerateKickoffResponse,
     OrchestrateFeatureRequest, OrchestrateFeatureResponse, AffectedRole as PbAffectedRole,
@@ -2604,6 +2606,52 @@ impl Usta for UstaSvc {
             }
         }).await.unwrap_or((false, "merge task panicked".into()));
         Ok(Response::new(MergeRoleBranchResponse { ok, output }))
+    }
+
+    async fn get_costs(
+        &self,
+        req: Request<GetCostsRequest>,
+    ) -> Result<Response<CostReport>, Status> {
+        let r = req.into_inner();
+        let db = self.db.clone();
+        let ws_id = r.workspace_id.clone();
+        let workspaces = tokio::task::spawn_blocking(move || db.list_workspaces())
+            .await.unwrap()
+            .map_err(|e| Status::internal(e.to_string()))?;
+        let ws = workspaces.into_iter().find(|w| w.id == ws_id)
+            .ok_or_else(|| Status::not_found(format!("workspace '{}' not found", r.workspace_id)))?;
+        let db = self.db.clone();
+        let ws_id = r.workspace_id.clone();
+        let terms = tokio::task::spawn_blocking(move || db.list_terminals(Some(&ws_id)))
+            .await.unwrap()
+            .map_err(|e| Status::internal(e.to_string()))?
+            .into_iter()
+            .filter(|t| !t.role.is_empty())
+            .map(|t| costs::TermWindow {
+                role: t.role,
+                created_ms: t.created_unix_ms,
+                closed_ms: t.closed_unix_ms,
+            })
+            .collect::<Vec<_>>();
+        let ws_path = ws.path.clone();
+        let usage = tokio::task::spawn_blocking(move || costs::compute(&ws_path, &terms))
+            .await
+            .map_err(|e| Status::internal(format!("cost scan: {e}")))?;
+        let mut roles: Vec<RoleCost> = usage.into_iter()
+            .map(|(role, u)| RoleCost {
+                role,
+                vendor: u.vendor.to_string(),
+                input_tokens: u.input,
+                output_tokens: u.output,
+                cache_read_tokens: u.cache_read,
+                cache_write_tokens: u.cache_write,
+                cost_usd: u.cost_usd,
+                sessions: u.sessions,
+            })
+            .collect();
+        roles.sort_by(|a, b| b.cost_usd.partial_cmp(&a.cost_usd).unwrap_or(std::cmp::Ordering::Equal));
+        let total_usd = roles.iter().map(|x| x.cost_usd).sum();
+        Ok(Response::new(CostReport { roles, total_usd }))
     }
 
     async fn scaffold_project(

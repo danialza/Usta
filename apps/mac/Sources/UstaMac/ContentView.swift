@@ -341,6 +341,8 @@ struct WorkspaceDetailView: View {
     // Team templates: export / import
     @State private var importConfirmYaml: String? = nil
     @State private var templateStatus: String? = nil
+    // Cost dashboard
+    @State private var showCosts = false
     // Workshop grill: post-scaffold refinement
     @State private var showGrillMore: Bool = false
     @State private var grillMoreLoading: Bool = false
@@ -418,6 +420,10 @@ struct WorkspaceDetailView: View {
             Button("OK") { templateStatus = nil }
         } message: {
             Text(templateStatus ?? "")
+        }
+        .sheet(isPresented: $showCosts) {
+            CostDashboard(workspaceID: ws.id)
+                .environmentObject(client)
         }
         .sheet(isPresented: $showApplyTeam) { applyTeamSheet }
         .sheet(isPresented: $showAddRole) {
@@ -1002,6 +1008,7 @@ struct WorkspaceDetailView: View {
                     Button(showActivity ? "Hide Activity" : "Activity") { showActivity.toggle() }
                     Button("Add Role") { showAddRole = true }
                     Button("Apply Team") { showApplyTeam = true }
+                    Button("Costs…") { showCosts = true }
                     Divider()
                     Button("Export Team…") { exportTeamToFile() }
                     Button("Import Team…") { pickTeamFile() }
@@ -1042,6 +1049,7 @@ struct WorkspaceDetailView: View {
                 }
                 tbBtn("Add Role", "plus", compact: compact) { showAddRole = true }
                 tbBtn("Apply Team", "person.3.sequence", compact: compact) { showApplyTeam = true }
+                tbBtn("Costs", "dollarsign.circle", compact: compact) { showCosts = true }
                 Menu {
                     Button("Export Team…") { exportTeamToFile() }
                     Button("Import Team…") { pickTeamFile() }

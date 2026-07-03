@@ -130,6 +130,17 @@ final class UstaClientModel: ObservableObject {
         }
     }
 
+    /// Per-role token/cost report parsed from local CLI session logs.
+    func getCosts(workspaceID: String) async -> Usta_V1_CostReport? {
+        guard let stub else { return nil }
+        do {
+            return try await stub.getCosts(.with { $0.workspaceID = workspaceID })
+        } catch {
+            self.lastError = "get costs: \(error)"
+            return nil
+        }
+    }
+
     /// Merge a role's worktree branch (usta/<role>) into the workspace branch.
     func mergeRoleBranch(workspaceID: String, role: String) async -> (ok: Bool, output: String)? {
         guard let stub else { return nil }

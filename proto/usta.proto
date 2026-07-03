@@ -104,6 +104,28 @@ service Usta {
   // Merge a role's worktree branch (usta/<role>) back into the workspace's
   // current branch. Returns git's output either way.
   rpc MergeRoleBranch(MergeRoleBranchRequest) returns (MergeRoleBranchResponse);
+
+  // Per-role token/cost report, parsed from local CLI session logs
+  // (~/.claude/projects, ~/.codex/sessions). Estimates, not invoices.
+  rpc GetCosts(GetCostsRequest) returns (CostReport);
+}
+
+message GetCostsRequest { string workspace_id = 1; }
+
+message RoleCost {
+  string role               = 1; // role name, or "(shared)" when unattributable
+  string vendor             = 2; // "claude" | "codex"
+  int64  input_tokens       = 3;
+  int64  output_tokens      = 4;
+  int64  cache_read_tokens  = 5;
+  int64  cache_write_tokens = 6;
+  double cost_usd           = 7;
+  int32  sessions           = 8;
+}
+
+message CostReport {
+  repeated RoleCost roles = 1;
+  double total_usd        = 2;
 }
 
 message MergeRoleBranchRequest {
