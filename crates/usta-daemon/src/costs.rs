@@ -93,7 +93,8 @@ fn attribute(start_ms: i64, terms: &[TermWindow]) -> Option<String> {
 
 fn add(map: &mut HashMap<String, RoleUsage>, role: String, u: RoleUsage) {
     let e = map.entry(role).or_insert_with(|| RoleUsage { vendor: u.vendor, ..Default::default() });
-    e.vendor = u.vendor;
+    // A role that ran multiple CLIs shows "mixed", not whichever came last.
+    if e.sessions > 0 && e.vendor != u.vendor { e.vendor = "mixed"; }
     e.input += u.input;
     e.output += u.output;
     e.cache_read += u.cache_read;
