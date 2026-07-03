@@ -19,7 +19,8 @@ struct ContentView: View {
                     WelcomeView(
                         onOpen: { Task { await openFolder() } },
                         onNew: { showNewProject = true },
-                        onSettings: { showSettings = true }
+                        onSettings: { showSettings = true },
+                        onDemo: { Task { if let ws = await DemoRunner.run(client: client) { selection = ws } } }
                     )
                 } else {
                     NavigationSplitView(columnVisibility: $sidebarVisibility) {
@@ -242,6 +243,7 @@ struct WelcomeView: View {
     var onOpen: () -> Void
     var onNew: () -> Void = {}
     var onSettings: () -> Void = {}
+    var onDemo: () -> Void = {}
 
     var body: some View {
         ZStack {
@@ -286,6 +288,14 @@ struct WelcomeView: View {
                 }
                 .frame(maxWidth: 720)
                 .padding(.top, 8)
+                Button(action: onDemo) {
+                    Label("Watch the demo — no API key needed", systemImage: "play.circle.fill")
+                        .font(.system(size: 13, weight: .medium))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(UstaTheme.accentTeal)
+                .padding(.top, 4)
+                .help("Creates a demo workspace and replays a real team run on the event bus — see the orchestration before configuring anything.")
             }
             .padding(.horizontal, 40)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)

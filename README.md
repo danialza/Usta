@@ -81,19 +81,24 @@ I wanted AI tooling that worked the same way. So I built it.
 
 ## Install
 
-**Step 1 — Download & install**
+**Homebrew (recommended)**
 
-Grab the latest `Usta-macOS.dmg` from [Releases](https://github.com/danialza/Usta/releases). Open it and drag **Usta.app** into your **Applications** folder.
-
-**Step 2 — Run this command in Terminal**
-
-```
-xattr -dr com.apple.quarantine /Applications/Usta.app
+```sh
+brew install --cask danialza/usta/usta
 ```
 
-**Step 3 — Launch the app**
+Then open **Usta** from Applications — done. The cask clears the Gatekeeper flag for you.
 
-Open **Usta** from Applications (or Spotlight). The daemon spawns automatically.
+**Manual**
+
+1. Grab the latest `Usta-macOS.dmg` from [Releases](https://github.com/danialza/Usta/releases) and drag **Usta.app** into **Applications**.
+2. Run once in Terminal:
+   ```
+   xattr -dr com.apple.quarantine /Applications/Usta.app
+   ```
+3. Open **Usta**. The daemon spawns automatically.
+
+> 🕹 No API key yet? Hit **“Watch the demo”** on the welcome screen — it replays a real team run so you can see the orchestration before configuring anything.
 
 > 📖 First time? Walk through the full 10-step guide: **[usta-ai.vercel.app/guide.html](https://usta-ai.vercel.app/guide.html)**
 
