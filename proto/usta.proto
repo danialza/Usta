@@ -100,6 +100,20 @@ service Usta {
   // or import one (writes .usta/roles/*.yaml).
   rpc ExportTeam(ExportTeamRequest) returns (ExportTeamResponse);
   rpc ImportTeam(ImportTeamRequest) returns (ImportTeamResponse);
+
+  // Merge a role's worktree branch (usta/<role>) back into the workspace's
+  // current branch. Returns git's output either way.
+  rpc MergeRoleBranch(MergeRoleBranchRequest) returns (MergeRoleBranchResponse);
+}
+
+message MergeRoleBranchRequest {
+  string workspace_id = 1;
+  string role         = 2;
+}
+
+message MergeRoleBranchResponse {
+  bool   ok     = 1;
+  string output = 2;
 }
 
 message ExportTeamRequest {
@@ -275,6 +289,9 @@ message CreateTerminalRequest {
   int32  rows         = 5;
   string command      = 6;  // optional: run this CLI instead of a shell
   string role         = 7;  // optional: role name (for MCP bus context)
+  // Run this role in its own git worktree (.usta/worktrees/<role> on
+  // branch usta/<role>) so parallel agents never touch the same files.
+  bool   use_worktree = 8;
 }
 
 message Terminal {

@@ -112,7 +112,7 @@ final class UstaClientModel: ObservableObject {
         }
     }
 
-    func createTerminal(workspaceID: String, cols: Int = 80, rows: Int = 24, command: String = "", role: String = "") async -> Usta_V1_Terminal? {
+    func createTerminal(workspaceID: String, cols: Int = 80, rows: Int = 24, command: String = "", role: String = "", useWorktree: Bool = false) async -> Usta_V1_Terminal? {
         guard let stub else { return nil }
         do {
             let req = Usta_V1_CreateTerminalRequest.with {
@@ -121,10 +121,26 @@ final class UstaClientModel: ObservableObject {
                 $0.rows = Int32(rows)
                 $0.command = command
                 $0.role = role
+                $0.useWorktree = useWorktree
             }
             return try await stub.createTerminal(req)
         } catch {
             self.lastError = "create terminal: \(error)"
+            return nil
+        }
+    }
+
+    /// Merge a role's worktree branch (usta/<role>) into the workspace branch.
+    func mergeRoleBranch(workspaceID: String, role: String) async -> (ok: Bool, output: String)? {
+        guard let stub else { return nil }
+        do {
+            let r = try await stub.mergeRoleBranch(.with {
+                $0.workspaceID = workspaceID
+                $0.role = role
+            })
+            return (r.ok, r.output)
+        } catch {
+            self.lastError = "merge branch: \(error)"
             return nil
         }
     }

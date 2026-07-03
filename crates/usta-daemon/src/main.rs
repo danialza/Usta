@@ -19,6 +19,7 @@ use usta_proto::v1::{
     GrillQuestionsRequest, GrillQuestionsResponse, GrillQuestion as PbGrillQuestion,
     RefineProposalRequest,
     ExportTeamRequest, ExportTeamResponse, ImportTeamRequest, ImportTeamResponse,
+    MergeRoleBranchRequest, MergeRoleBranchResponse,
     ApproveToolRequest, ProviderInfo, ProviderList, PtyClientMsg, PublishEventRequest,
     RegenerateKickoffRequest, RegenerateKickoffResponse,
     OrchestrateFeatureRequest, OrchestrateFeatureResponse, AffectedRole as PbAffectedRole,
@@ -900,6 +901,62 @@ fn write_claude_settings(cwd: &str) {
 
 /// Remove every .yaml/.yml in the workspace roles dir so a fresh team
 /// replaces (not merges with) the old one.
+/// Create (or reuse) a git worktree for a role at
+/// `<ws>/.usta/worktrees/<role>` on branch `usta/<role>`.
+/// Returns None when the workspace isn't a git repo or git fails —
+/// caller falls back to the shared workspace dir.
+fn ensure_role_worktree(ws_path: &str, role: &str) -> Option<std::path::PathBuf> {
+    let root = std::path::Path::new(ws_path);
+    if !root.join(".git").exists() { return None; }
+    let safe: String = role.chars()
+        .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '-' })
+        .collect();
+    let wt_dir = root.join(".usta").join("worktrees").join(&safe);
+    let branch = format!("usta/{safe}");
+    // Reuse an existing, valid worktree.
+    if wt_dir.join(".git").exists() { return Some(wt_dir); }
+    let _ = std::fs::create_dir_all(wt_dir.parent()?);
+    // Keep agent worktrees out of the repo's own history.
+    append_gitignore_line(root, ".usta/worktrees/");
+    let git = |args: &[&str]| std::process::Command::new("git")
+        .arg("-C").arg(ws_path).args(args).output();
+    // Branch may already exist from a previous run → plain add; else -b.
+    let branch_exists = git(&["rev-parse", "--verify", &branch])
+        .map(|o| o.status.success()).unwrap_or(false);
+    let out = if branch_exists {
+        git(&["worktree", "add", &wt_dir.to_string_lossy(), &branch])
+    } else {
+        git(&["worktree", "add", "-b", &branch, &wt_dir.to_string_lossy()])
+    };
+    match out {
+        Ok(o) if o.status.success() => {
+            tracing::info!(role = %role, dir = %wt_dir.display(), "worktree ready");
+            Some(wt_dir)
+        }
+        Ok(o) => {
+            tracing::warn!(role = %role, err = %String::from_utf8_lossy(&o.stderr),
+                           "worktree add failed — using shared dir");
+            None
+        }
+        Err(e) => {
+            tracing::warn!(role = %role, err = %e, "git not available — using shared dir");
+            None
+        }
+    }
+}
+
+/// Append a line to `<root>/.gitignore` if not already present.
+fn append_gitignore_line(root: &std::path::Path, line: &str) {
+    let gi = root.join(".gitignore");
+    let cur = std::fs::read_to_string(&gi).unwrap_or_default();
+    if cur.lines().any(|l| l.trim() == line) { return; }
+    let mut next = cur;
+    if !next.is_empty() && !next.ends_with('\n') { next.push('\n'); }
+    next.push_str(line);
+    next.push('\n');
+    let _ = std::fs::write(&gi, next);
+}
+
 /// Shareable team template: one YAML doc bundling a whole team's role
 /// definitions. `usta_template: 1` is the format version.
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -1321,7 +1378,16 @@ impl Usta for UstaSvc {
         } else {
             r.shell
         };
-        let cwd = if r.cwd.is_empty() { workspace.path.clone() } else { r.cwd };
+        let mut cwd = if r.cwd.is_empty() { workspace.path.clone() } else { r.cwd };
+        // Per-role git worktree: the agent works on branch usta/<role> in
+        // .usta/worktrees/<role>, so parallel roles never clobber each
+        // other's files. Falls back silently to the shared dir when the
+        // workspace isn't a git repo or worktree setup fails.
+        if r.use_worktree && !r.role.is_empty() {
+            if let Some(wt) = ensure_role_worktree(&workspace.path, &r.role) {
+                cwd = wt.to_string_lossy().into_owned();
+            }
+        }
         let cols = if r.cols > 0 { r.cols as u16 } else { 120 };
         let rows = if r.rows > 0 { r.rows as u16 } else { 32 };
 
@@ -2490,6 +2556,54 @@ impl Usta for UstaSvc {
         }
         tracing::info!(n = out.len(), ws = %ws.path, "team template imported");
         Ok(Response::new(ImportTeamResponse { roles: out }))
+    }
+
+    async fn merge_role_branch(
+        &self,
+        req: Request<MergeRoleBranchRequest>,
+    ) -> Result<Response<MergeRoleBranchResponse>, Status> {
+        let r = req.into_inner();
+        if r.role.is_empty() {
+            return Err(Status::invalid_argument("missing role"));
+        }
+        let db = self.db.clone();
+        let ws_id = r.workspace_id.clone();
+        let workspaces = tokio::task::spawn_blocking(move || db.list_workspaces())
+            .await.unwrap()
+            .map_err(|e| Status::internal(e.to_string()))?;
+        let ws = workspaces.into_iter().find(|w| w.id == ws_id)
+            .ok_or_else(|| Status::not_found(format!("workspace '{}' not found", r.workspace_id)))?;
+        let safe: String = r.role.chars()
+            .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '-' })
+            .collect();
+        let branch = format!("usta/{safe}");
+        let ws_path = ws.path.clone();
+        let (ok, output) = tokio::task::spawn_blocking(move || {
+            let git = |args: &[&str]| std::process::Command::new("git")
+                .arg("-C").arg(&ws_path).args(args).output();
+            // Commit any pending work in the role's worktree first, so the
+            // merge picks up everything the agent wrote.
+            let wt = std::path::Path::new(&ws_path).join(".usta/worktrees").join(&safe);
+            if wt.join(".git").exists() {
+                let gitw = |args: &[&str]| std::process::Command::new("git")
+                    .arg("-C").arg(&wt).args(args).output();
+                let _ = gitw(&["add", "-A"]);
+                let _ = gitw(&["commit", "-m", &format!("wip(@{safe}): auto-commit before merge")]);
+            }
+            match git(&["merge", "--no-ff", &branch, "-m", &format!("merge @{safe}'s branch ({branch})")]) {
+                Ok(o) => {
+                    let mut text = String::from_utf8_lossy(&o.stdout).into_owned();
+                    text.push_str(&String::from_utf8_lossy(&o.stderr));
+                    if !o.status.success() {
+                        // Leave the tree clean rather than half-merged.
+                        let _ = git(&["merge", "--abort"]);
+                    }
+                    (o.status.success(), text)
+                }
+                Err(e) => (false, format!("git unavailable: {e}")),
+            }
+        }).await.unwrap_or((false, "merge task panicked".into()));
+        Ok(Response::new(MergeRoleBranchResponse { ok, output }))
     }
 
     async fn scaffold_project(

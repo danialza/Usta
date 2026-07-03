@@ -900,6 +900,37 @@ struct WorkspaceDetailView: View {
                   body: "All roles → \(provider). Relaunching terminals…")
     }
 
+    // MARK: - Worktrees
+
+    /// Per-workspace opt-in for role worktrees, persisted in UserDefaults.
+    private var worktreeBinding: Binding<Bool> {
+        Binding(
+            get: { UserDefaults.standard.bool(forKey: "usta.worktrees.\(ws.id)") },
+            set: { UserDefaults.standard.set($0, forKey: "usta.worktrees.\(ws.id)") }
+        )
+    }
+
+    /// Per-workspace opt-in for cross-vendor auto-review.
+    private var crossReviewBinding: Binding<Bool> {
+        Binding(
+            get: { UserDefaults.standard.bool(forKey: "usta.crossreview.\(ws.id)") },
+            set: { UserDefaults.standard.set($0, forKey: "usta.crossreview.\(ws.id)") }
+        )
+    }
+
+    private func mergeRole(_ name: String) {
+        Task {
+            guard let r = await client.mergeRoleBranch(workspaceID: ws.id, role: name) else {
+                templateStatus = client.lastError ?? "merge failed"
+                return
+            }
+            let tail = r.output.split(separator: "\n").suffix(4).joined(separator: "\n")
+            templateStatus = r.ok
+                ? "Merged @\(name)'s branch.\n\(tail)"
+                : "Merge failed (aborted, tree left clean):\n\(tail)"
+        }
+    }
+
     // MARK: - Team templates
 
     /// Export this workspace's team as a shareable `.ustateam.yaml`.
@@ -974,6 +1005,18 @@ struct WorkspaceDetailView: View {
                     Divider()
                     Button("Export Team…") { exportTeamToFile() }
                     Button("Import Team…") { pickTeamFile() }
+                    Divider()
+                    Toggle("Cross-review (other vendor)", isOn: crossReviewBinding)
+                        .help("When a role publishes *.ready, a different-vendor role (Claude ↔ Codex) gets a review prompt in its pane. You still hit Send.")
+                    Toggle("Worktree per role", isOn: worktreeBinding)
+                        .help("New role terminals run on their own git branch (usta/<role>) in an isolated worktree — no file conflicts between agents.")
+                    if worktreeBinding.wrappedValue {
+                        Menu("Merge role branch") {
+                            ForEach(roles, id: \.name) { r in
+                                Button("@\(r.name) → current branch") { mergeRole(r.name) }
+                            }
+                        }
+                    }
                     if !roles.isEmpty && mode == .assistants {
                         Button(grillMoreLoading ? "Grilling…" : "Grill More") {
                             if !grillMoreLoading { Task { await openGrillMore() } }

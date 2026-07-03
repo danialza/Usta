@@ -21,6 +21,10 @@ extension Notification.Name {
     /// to switch EVERY role's CLI at once (claude → codex, etc.). Each pane
     /// relaunches its terminal with the new command.
     static let ustaSetAllCLI = Notification.Name("UstaSetAllCLI")
+    /// Posted with userInfo ["role": name, "prompt": text] when a
+    /// different-vendor role should review freshly-published work. The pane
+    /// surfaces the prompt in its kickoff banner — the user sends it.
+    static let ustaCrossReview = Notification.Name("UstaCrossReview")
 }
 
 enum ChatItemKind { case user, assistant, tool, approval }
@@ -296,6 +300,13 @@ struct AssistantPane: View {
         .onReceive(NotificationCenter.default.publisher(for: .ustaSetAllCLI)) { note in
             guard let provider = note.object as? String else { return }
             Task { await switchCLI(to: provider) }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .ustaCrossReview)) { note in
+            guard let name = note.userInfo?["role"] as? String, name == role.name,
+                  let prompt = note.userInfo?["prompt"] as? String else { return }
+            // Surface as a ready-to-send kickoff — never auto-send.
+            regeneratedKickoff = prompt
+            kickoffSent = false
         }
         .onReceive(NotificationCenter.default.publisher(for: .ustaAutoRegenerate)) { note in
             guard let name = note.object as? String, name == role.name else { return }
@@ -645,7 +656,10 @@ struct AssistantPane: View {
         if let t = existing {
             termID = t.id
         } else {
-            guard let t = await client.createTerminal(workspaceID: workspaceID, command: cliCommand, role: role.name) else {
+            // Per-workspace opt-in: run each role in its own git worktree
+            // (branch usta/<role>) so parallel agents never conflict.
+            let useWT = UserDefaults.standard.bool(forKey: "usta.worktrees.\(workspaceID)")
+            guard let t = await client.createTerminal(workspaceID: workspaceID, command: cliCommand, role: role.name, useWorktree: useWT) else {
                 cliError = client.lastError ?? "createTerminal returned nil (daemon unreachable?)"
                 return
             }
