@@ -165,10 +165,13 @@ struct AssistantsGrid: View {
                             step: displayStep[role.name],
                             stateColor: stateColor(bus.state(of: role.name))
                         )
-                        .frame(minHeight: isVisible
+                        // FINITE heights only. `maxHeight: .infinity` inside a
+                        // lazy container in a ScrollView made SwiftUI's lazy
+                        // placement never converge — the app hard-froze at
+                        // 100% CPU in LazySubviewPlacements.placeSubviews.
+                        .frame(height: isVisible
                                 ? (collapsed.contains(role.name) ? 56 : visibleMinHeight)
-                                : 0,
-                               maxHeight: isVisible ? .infinity : 0)
+                                : 0)
                         .opacity(isVisible ? 1 : 0)
                         .allowsHitTesting(isVisible)
                         .background(UstaTheme.cell)
