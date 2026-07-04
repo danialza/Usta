@@ -29,11 +29,11 @@ jobs:
 
   mac:
     name: Mac app (SwiftPM)
-    runs-on: macos-15
+    # macos-26 ships Xcode 26.x — grpc-swift-nio-transport needs the newer
+    # SDK (SecCertificate is only Sendable there).
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
-      - name: Select Xcode
-        run: sudo xcode-select -s /Applications/Xcode_16.2.app || sudo xcode-select -s /Applications/Xcode.app
       - name: Install protoc (needed by GRPCProtobufGenerator plugin)
         run: brew install protobuf
       - name: Build
