@@ -3813,7 +3813,7 @@ dependencies = [
 
 [[package]]
 name = "usta-cli"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -3838,7 +3838,7 @@ dependencies = [
 
 [[package]]
 name = "usta-core"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3855,7 +3855,7 @@ dependencies = [
 
 [[package]]
 name = "usta-daemon"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -3882,7 +3882,7 @@ dependencies = [
 
 [[package]]
 name = "usta-index"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3898,7 +3898,7 @@ dependencies = [
 
 [[package]]
 name = "usta-mcp"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "hyper-util",
@@ -3912,7 +3912,7 @@ dependencies = [
 
 [[package]]
 name = "usta-pm"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3929,7 +3929,7 @@ dependencies = [
 
 [[package]]
 name = "usta-proto"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "prost",
  "prost-types",
@@ -3939,7 +3939,7 @@ dependencies = [
 
 [[package]]
 name = "usta-providers"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -3956,7 +3956,7 @@ dependencies = [
 
 [[package]]
 name = "usta-roles"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "directories",
