@@ -419,6 +419,54 @@ final class WorkspaceBus: ObservableObject {
         Task { await self.refresh(workspaceID: workspaceID) }
     }
 
+    // MARK: - Cross-vendor review
+
+    /// Event ids we've already queued a review for (session-scoped dedup).
+    private var crossReviewedIds: Set<Int64> = []
+
+    /// CLI vendor family for a role ("claude" / "codex" / "gemini" / "aider").
+    private func vendor(of role: Usta_V1_Role) -> String {
+        let cmd = role.cliCommand.trimmingCharacters(in: .whitespaces)
+        if cmd.isEmpty { return "claude" }
+        return String(cmd.split(separator: " ").first ?? "claude")
+    }
+
+    /// When a role finishes something (topic *.ready) and the workspace has
+    /// cross-review enabled, prep a review kickoff in a DIFFERENT-vendor
+    /// role's pane (Claude writes → Codex critiques). Never auto-sends —
+    /// the prompt appears in the reviewer's kickoff banner for the user.
+    private func maybeQueueCrossReview(for ev: Usta_V1_Event, workspaceID: String) {
+        guard UserDefaults.standard.bool(forKey: "usta.crossreview.\(workspaceID)") else { return }
+        guard ev.topic.hasSuffix(".ready"), ev.topic != "kickoff.plan.ready" else { return }
+        guard !crossReviewedIds.contains(ev.id) else { return }
+        guard let publisher = roles.first(where: { $0.name == ev.fromRole }) else { return }
+        let pubVendor = vendor(of: publisher)
+        let candidates = roles.filter { $0.name != ev.fromRole && vendor(of: $0) != pubVendor }
+        guard !candidates.isEmpty else { return }
+        // Prefer natural reviewer roles, else any different-vendor role.
+        let reviewer = candidates.first {
+            let n = $0.name.lowercased()
+            return n.contains("qa") || n.contains("review") || n.contains("security")
+        } ?? candidates[0]
+        crossReviewedIds.insert(ev.id)
+        let prompt = """
+        Cross-review: @\(ev.fromRole) just published `\(ev.topic)` — "\(ev.summary)". \
+        You run a different AI vendor, so review their work with fresh eyes. \
+        Inspect the recent changes (git diff / files listed in the event), check \
+        correctness, edge cases, and security. Write findings to \
+        /docs/REVIEW-\(ev.topic.replacingOccurrences(of: ".", with: "-")).md. \
+        Publish issue.reported for each concrete defect (one line each), or state LGTM if clean.
+        """
+        NotificationCenter.default.post(
+            name: .ustaCrossReview,
+            object: nil,
+            userInfo: ["role": reviewer.name, "prompt": prompt]
+        )
+        toast(kind: .info,
+              title: "Cross-review queued",
+              body: "@\(reviewer.name) (\(vendor(of: reviewer))) will review @\(ev.fromRole)'s \(ev.topic) — prompt ready in its pane")
+    }
+
     private func shouldAutoRegen(_ name: String) -> Bool {
         if autoRegenFired.contains(name) { return false }
         if let until = autoRegenCooldown[name], until > Date() { return false }
@@ -492,6 +540,7 @@ final class WorkspaceBus: ObservableObject {
                     NotificationCenter.default.post(name: .ustaEventForRole, object: r.name)
                     triggered.insert(r.name)
                 }
+                maybeQueueCrossReview(for: ev, workspaceID: workspaceID)
             }
             if !triggered.isEmpty {
                 let names = triggered.sorted().map { "@\($0)" }.joined(separator: ", ")

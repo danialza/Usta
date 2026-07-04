@@ -18,6 +18,7 @@ usta-roles = { path = "../usta-roles" }
 futures = { workspace = true }
 async-stream = { workspace = true }
 uuid = { workspace = true }
+serde = { workspace = true }
 serde_json = { workspace = true }
 serde_yaml = "0.9"
 tokio = { workspace = true }

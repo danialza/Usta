@@ -21,6 +21,10 @@ extension Notification.Name {
     /// to switch EVERY role's CLI at once (claude → codex, etc.). Each pane
     /// relaunches its terminal with the new command.
     static let ustaSetAllCLI = Notification.Name("UstaSetAllCLI")
+    /// Posted with userInfo ["role": name, "prompt": text] when a
+    /// different-vendor role should review freshly-published work. The pane
+    /// surfaces the prompt in its kickoff banner — the user sends it.
+    static let ustaCrossReview = Notification.Name("UstaCrossReview")
 }
 
 enum ChatItemKind { case user, assistant, tool, approval }
@@ -297,6 +301,13 @@ struct AssistantPane: View {
             guard let provider = note.object as? String else { return }
             Task { await switchCLI(to: provider) }
         }
+        .onReceive(NotificationCenter.default.publisher(for: .ustaCrossReview)) { note in
+            guard let name = note.userInfo?["role"] as? String, name == role.name,
+                  let prompt = note.userInfo?["prompt"] as? String else { return }
+            // Surface as a ready-to-send kickoff — never auto-send.
+            regeneratedKickoff = prompt
+            kickoffSent = false
+        }
         .onReceive(NotificationCenter.default.publisher(for: .ustaAutoRegenerate)) { note in
             guard let name = note.object as? String, name == role.name else { return }
             // Dedup: only auto-fire when we don't already have a regenerated
@@ -464,9 +475,12 @@ struct AssistantPane: View {
         VStack(spacing: 8) {
             Image(systemName: "moon.zzz.fill")
                 .font(.system(size: 22)).foregroundStyle(UstaTheme.dim)
-            Text("@\(role.name) running in background")
+            Text(cliSession != nil ? "@\(role.name) running in background"
+                                   : "@\(role.name) is asleep")
                 .font(.system(size: 12, weight: .medium)).foregroundStyle(.white.opacity(0.85))
-            Text("Sleeping to keep the app fast.\nIts terminal keeps running — open to view live.")
+            Text(cliSession != nil
+                 ? "Sleeping to keep the app fast.\nIts terminal keeps running — open to view live."
+                 : "Sleeping to keep the app fast.\nIts CLI launches when you open it or its turn starts.")
                 .font(.system(size: 10)).foregroundStyle(UstaTheme.dim)
                 .multilineTextAlignment(.center)
             if let maxToggle = onToggleMaximize {
@@ -533,6 +547,10 @@ struct AssistantPane: View {
                         .font(.caption2).foregroundStyle(UstaTheme.dim)
                 }
                 .padding()
+            } else if !live {
+                // Not launched yet AND not live — don't burn a CLI process
+                // for a pane nobody is looking at.
+                sleepingTerminal
             } else {
                 VStack(spacing: 8) {
                     ProgressView().scaleEffect(0.7)
@@ -554,9 +572,14 @@ struct AssistantPane: View {
             if cliSession == nil, let cached = termCache.session(for: role.name) {
                 cliSession = cached
                 cliError = nil
+                if !live { cached.suspend() }
                 return
             }
-            // Auto-launch as soon as the CLI pane appears (no manual button).
+            // LAZY LAUNCH: only spin up the CLI for panes that are actually
+            // live (focused / working / next-up). Launching all 9 role CLIs
+            // at workspace-open burned ~2GB RAM and 9 PTY streams before the
+            // user did anything. Sleeping panes launch on wake instead.
+            guard live else { return }
             if cliSession == nil && !cliLaunching && cliError == nil {
                 let cmd = cliCommand.trimmingCharacters(in: .whitespaces)
                 if cmd.isEmpty {
@@ -566,6 +589,24 @@ struct AssistantPane: View {
                 cliLaunching = true
                 await launchCLI()
                 cliLaunching = false
+            }
+        }
+        .onChange(of: live) { _, isLive in
+            if isLive {
+                if let s = cliSession {
+                    s.resume()
+                } else if !cliLaunching && cliError == nil && backend == .cli {
+                    // Woken for the first time → launch (or reattach) now.
+                    Task {
+                        cliLaunching = true
+                        await launchCLI()
+                        cliLaunching = false
+                    }
+                }
+            } else {
+                // Going to sleep: keep the PTY + process, stop main-thread
+                // SwiftTerm parsing for this pane.
+                cliSession?.suspend()
             }
         }
     }
@@ -645,7 +686,10 @@ struct AssistantPane: View {
         if let t = existing {
             termID = t.id
         } else {
-            guard let t = await client.createTerminal(workspaceID: workspaceID, command: cliCommand, role: role.name) else {
+            // Per-workspace opt-in: run each role in its own git worktree
+            // (branch usta/<role>) so parallel agents never conflict.
+            let useWT = UserDefaults.standard.bool(forKey: "usta.worktrees.\(workspaceID)")
+            guard let t = await client.createTerminal(workspaceID: workspaceID, command: cliCommand, role: role.name, useWorktree: useWT) else {
                 cliError = client.lastError ?? "createTerminal returned nil (daemon unreachable?)"
                 return
             }
@@ -1190,8 +1234,15 @@ struct AssistantPane: View {
         lastSentPrompt = text          // keep for re-show / re-send / copy
         bus.markWorking(role.name)
         if backend == .cli {
-            // Wait briefly so a freshly-launched CLI has its prompt up.
-            if cliSession == nil { try? await Task.sleep(nanoseconds: 1_200_000_000) }
+            // Lazy-launch world: the pane may not have started its CLI yet
+            // (it was asleep). Launch now, then give the CLI a moment to
+            // bring its prompt up before typing.
+            if cliSession == nil && !cliLaunching {
+                cliLaunching = true
+                await launchCLI()
+                cliLaunching = false
+            }
+            if cliSession != nil { try? await Task.sleep(nanoseconds: 1_500_000_000) }
             guard let s = cliSession else { return }
             // Type text + Enter.
             if let data = (text + "\n").data(using: .utf8) {

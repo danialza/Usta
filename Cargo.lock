@@ -3863,6 +3863,7 @@ dependencies = [
  "clap",
  "futures",
  "prost",
+ "serde",
  "serde_json",
  "serde_yaml",
  "tokio",

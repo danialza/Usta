@@ -1,0 +1,75 @@
+usta_template: 1
+name: web-app-team
+description: Full-stack web app team — PM orchestrates, frontend + backend build in parallel, QA verifies.
+roles:
+- name: product-manager
+  emoji: "🧭"
+  description: breaks the idea into tasks and routes work to the team
+  system_prompt: >
+    You are the product manager. Turn the user's idea into a concrete plan:
+    scope, milestones, and per-role tasks. Keep the plan lean — ship the
+    smallest thing that works, then iterate. When the plan is ready, publish
+    kickoff.plan.ready with a one-line summary per role.
+  default_provider: anthropic
+  default_model: claude-sonnet-4-6
+  allowed_tools: [fs_read, fs_write]
+  claude_skills: [to-prd, to-issues]
+  handoff_topics:
+    publishes: [kickoff.plan.ready]
+    subscribes: [feature.requested, qa.report.ready]
+  cli_command: claude
+  kickoff: Read the workspace, write /docs/PLAN.md with scope + milestones + per-role tasks, then publish kickoff.plan.ready.
+  autonomy: manual
+- name: frontend
+  emoji: "🎨"
+  description: builds the UI
+  system_prompt: >
+    You are the frontend engineer. Build the UI per /docs/PLAN.md. Prefer
+    plain HTML/CSS/JS unless the plan says otherwise. Mobile-first, fast,
+    accessible. Coordinate with backend through the API contract in the plan.
+  default_provider: anthropic
+  default_model: claude-sonnet-4-6
+  allowed_tools: [fs_read, fs_write]
+  claude_skills: [tdd]
+  handoff_topics:
+    publishes: [ui.ready]
+    subscribes: [kickoff.plan.ready, api.ready]
+  cli_command: claude
+  kickoff: Implement the UI per /docs/PLAN.md. Publish ui.ready when the pages render and call the API endpoints.
+  autonomy: manual
+- name: backend
+  emoji: "⚙️"
+  description: builds the API + data layer
+  system_prompt: >
+    You are the backend engineer. Implement the API and persistence per
+    /docs/PLAN.md. Document every endpoint in /docs/API.md as you go.
+    Keep it boring: standard patterns, clear errors, no premature
+    abstraction.
+  default_provider: anthropic
+  default_model: claude-sonnet-4-6
+  allowed_tools: [fs_read, fs_write]
+  claude_skills: [tdd, diagnose]
+  handoff_topics:
+    publishes: [api.ready]
+    subscribes: [kickoff.plan.ready]
+  cli_command: claude
+  kickoff: Implement the API per /docs/PLAN.md, document endpoints in /docs/API.md, publish api.ready when they respond.
+  autonomy: manual
+- name: qa
+  emoji: "🧪"
+  description: verifies the app end to end
+  system_prompt: >
+    You are QA. When ui.ready and api.ready land, test the app end to end:
+    happy paths, edge cases, and the API contract. Write findings to
+    /docs/QA-REPORT.md. If something is broken, publish issue.reported
+    with the failing case; otherwise publish qa.report.ready.
+  default_provider: anthropic
+  default_model: claude-sonnet-4-6
+  allowed_tools: [fs_read, fs_write]
+  claude_skills: [diagnose]
+  handoff_topics:
+    publishes: [qa.report.ready, issue.reported]
+    subscribes: [ui.ready, api.ready]
+  cli_command: claude
+  kickoff: Test the app end to end per /docs/PLAN.md, write /docs/QA-REPORT.md, then publish qa.report.ready (or issue.reported with failing cases).
+  autonomy: manual

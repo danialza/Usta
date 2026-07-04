@@ -95,7 +95,64 @@ service Usta {
   rpc GenerateGrillQuestions(GrillQuestionsRequest) returns (GrillQuestionsResponse);
   // 2) Re-propose the project incorporating the user's grill answers.
   rpc RefineProposal(RefineProposalRequest) returns (ProjectProposal);
+
+  // Team templates: export the workspace team as a shareable YAML bundle,
+  // or import one (writes .usta/roles/*.yaml).
+  rpc ExportTeam(ExportTeamRequest) returns (ExportTeamResponse);
+  rpc ImportTeam(ImportTeamRequest) returns (ImportTeamResponse);
+
+  // Merge a role's worktree branch (usta/<role>) back into the workspace's
+  // current branch. Returns git's output either way.
+  rpc MergeRoleBranch(MergeRoleBranchRequest) returns (MergeRoleBranchResponse);
+
+  // Per-role token/cost report, parsed from local CLI session logs
+  // (~/.claude/projects, ~/.codex/sessions). Estimates, not invoices.
+  rpc GetCosts(GetCostsRequest) returns (CostReport);
 }
+
+message GetCostsRequest { string workspace_id = 1; }
+
+message RoleCost {
+  string role               = 1; // role name, or "(shared)" when unattributable
+  string vendor             = 2; // "claude" | "codex"
+  int64  input_tokens       = 3;
+  int64  output_tokens      = 4;
+  int64  cache_read_tokens  = 5;
+  int64  cache_write_tokens = 6;
+  double cost_usd           = 7;
+  int32  sessions           = 8;
+}
+
+message CostReport {
+  repeated RoleCost roles = 1;
+  double total_usd        = 2;
+}
+
+message MergeRoleBranchRequest {
+  string workspace_id = 1;
+  string role         = 2;
+}
+
+message MergeRoleBranchResponse {
+  bool   ok     = 1;
+  string output = 2;
+}
+
+message ExportTeamRequest {
+  string workspace_id = 1;
+  string name         = 2; // template display name
+  string description  = 3;
+}
+
+message ExportTeamResponse { string yaml = 1; }
+
+message ImportTeamRequest {
+  string workspace_id = 1;
+  string yaml         = 2;
+  bool   replace      = 3; // true: wipe existing workspace roles first
+}
+
+message ImportTeamResponse { repeated Role roles = 1; }
 
 message GrillQuestionsRequest {
   string idea               = 1;
@@ -254,6 +311,9 @@ message CreateTerminalRequest {
   int32  rows         = 5;
   string command      = 6;  // optional: run this CLI instead of a shell
   string role         = 7;  // optional: role name (for MCP bus context)
+  // Run this role in its own git worktree (.usta/worktrees/<role> on
+  // branch usta/<role>) so parallel agents never touch the same files.
+  bool   use_worktree = 8;
 }
 
 message Terminal {

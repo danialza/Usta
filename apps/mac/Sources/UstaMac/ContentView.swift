@@ -9,25 +9,31 @@ struct ContentView: View {
     @State private var showNewProject = false
     @State private var showSettings = false
     @State private var sidebarVisibility: NavigationSplitViewVisibility = .all
+    @StateObject private var updates = UpdateChecker()
 
     var body: some View {
-        Group {
-            if client.workspaces.isEmpty {
-                WelcomeView(
-                    onOpen: { Task { await openFolder() } },
-                    onNew: { showNewProject = true },
-                    onSettings: { showSettings = true }
-                )
-            } else {
-                NavigationSplitView(columnVisibility: $sidebarVisibility) {
-                    sidebar
-                } detail: {
-                    detail
+        VStack(spacing: 0) {
+            UpdateBanner(checker: updates)
+            Group {
+                if client.workspaces.isEmpty {
+                    WelcomeView(
+                        onOpen: { Task { await openFolder() } },
+                        onNew: { showNewProject = true },
+                        onSettings: { showSettings = true },
+                        onDemo: { Task { if let ws = await DemoRunner.run(client: client) { selection = ws } } }
+                    )
+                } else {
+                    NavigationSplitView(columnVisibility: $sidebarVisibility) {
+                        sidebar
+                    } detail: {
+                        detail
+                    }
+                    .environment(\.sidebarCollapsed,
+                                 sidebarVisibility == .detailOnly)
                 }
-                .environment(\.sidebarCollapsed,
-                             sidebarVisibility == .detailOnly)
             }
         }
+        .task { await updates.checkOnLaunch() }
         .preferredColorScheme(.dark)
         .background(BrandBackground().ignoresSafeArea())
         .background(ChromelessWindow())
@@ -237,6 +243,7 @@ struct WelcomeView: View {
     var onOpen: () -> Void
     var onNew: () -> Void = {}
     var onSettings: () -> Void = {}
+    var onDemo: () -> Void = {}
 
     var body: some View {
         ZStack {
@@ -281,6 +288,14 @@ struct WelcomeView: View {
                 }
                 .frame(maxWidth: 720)
                 .padding(.top, 8)
+                Button(action: onDemo) {
+                    Label("Watch the demo — no API key needed", systemImage: "play.circle.fill")
+                        .font(.system(size: 13, weight: .medium))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(UstaTheme.accentTeal)
+                .padding(.top, 4)
+                .help("Creates a demo workspace and replays a real team run on the event bus — see the orchestration before configuring anything.")
             }
             .padding(.horizontal, 40)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
@@ -314,7 +329,7 @@ struct WelcomeView: View {
     }
 }
 
-enum DetailMode { case assistants, terminals }
+enum DetailMode { case assistants, graph, terminals }
 
 struct WorkspaceDetailView: View {
     let ws: Usta_V1_Workspace
@@ -333,6 +348,13 @@ struct WorkspaceDetailView: View {
     @State private var newFeatureText: String = ""
     @State private var showNewFeature: Bool = false
     @State private var newFeatureRole: String = "product-manager"
+    // Team templates: export / import
+    @State private var importConfirmYaml: String? = nil
+    @State private var templateStatus: String? = nil
+    // Cost dashboard
+    @State private var showCosts = false
+    // Session replay
+    @State private var showReplay = false
     // Workshop grill: post-scaffold refinement
     @State private var showGrillMore: Bool = false
     @State private var grillMoreLoading: Bool = false
@@ -351,6 +373,10 @@ struct WorkspaceDetailView: View {
                 case .assistants:
                     AssistantsGrid(workspaceID: ws.id, roles: roles, focus: selectedRole?.name,
                                    onClearFocus: { selectedRole = nil })
+                        .environmentObject(bus)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                case .graph:
+                    HandoffGraphView(roles: roles)
                         .environmentObject(bus)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 case .terminals:
@@ -378,6 +404,7 @@ struct WorkspaceDetailView: View {
             guard let name = note.object as? String,
                   let r = roles.first(where: { $0.name == name }) else { return }
             selectedRole = r
+            mode = .assistants   // graph/terminal taps land on the live pane
         }
         .task(id: ws.id) {
             roles = await client.listRoles(workspaceID: ws.id)
@@ -387,6 +414,38 @@ struct WorkspaceDetailView: View {
             }
         }
         .onDisappear { bus.stop(); rate.stop() }
+        .alert("Import team template?", isPresented: Binding(
+            get: { importConfirmYaml != nil },
+            set: { if !$0 { importConfirmYaml = nil } }
+        )) {
+            Button("Replace current team", role: .destructive) {
+                if let y = importConfirmYaml { importTeam(yaml: y, replace: true) }
+                importConfirmYaml = nil
+            }
+            Button("Merge with current team") {
+                if let y = importConfirmYaml { importTeam(yaml: y, replace: false) }
+                importConfirmYaml = nil
+            }
+            Button("Cancel", role: .cancel) { importConfirmYaml = nil }
+        } message: {
+            Text("Replace deletes this workspace's existing roles first. Merge keeps them and adds/overwrites by name.")
+        }
+        .alert("Team template", isPresented: Binding(
+            get: { templateStatus != nil },
+            set: { if !$0 { templateStatus = nil } }
+        )) {
+            Button("OK") { templateStatus = nil }
+        } message: {
+            Text(templateStatus ?? "")
+        }
+        .sheet(isPresented: $showCosts) {
+            CostDashboard(workspaceID: ws.id)
+                .environmentObject(client)
+        }
+        .sheet(isPresented: $showReplay) {
+            ReplayView(workspaceName: (ws.path as NSString).lastPathComponent)
+                .environmentObject(bus)
+        }
         .sheet(isPresented: $showApplyTeam) { applyTeamSheet }
         .sheet(isPresented: $showAddRole) {
             RoleEditor(onSave: { newRole in
@@ -824,6 +883,7 @@ struct WorkspaceDetailView: View {
     private var modePicker: some View {
         Picker("", selection: $mode) {
             Image(systemName: "person.3.sequence").tag(DetailMode.assistants)
+            Image(systemName: "point.3.connected.trianglepath.dotted").tag(DetailMode.graph)
             Image(systemName: "terminal").tag(DetailMode.terminals)
         }
         .pickerStyle(.segmented)
@@ -868,7 +928,81 @@ struct WorkspaceDetailView: View {
                   body: "All roles → \(provider). Relaunching terminals…")
     }
 
-    @ViewBuilder
+    // MARK: - Worktrees
+
+    /// Per-workspace opt-in for role worktrees, persisted in UserDefaults.
+    private var worktreeBinding: Binding<Bool> {
+        Binding(
+            get: { UserDefaults.standard.bool(forKey: "usta.worktrees.\(ws.id)") },
+            set: { UserDefaults.standard.set($0, forKey: "usta.worktrees.\(ws.id)") }
+        )
+    }
+
+    /// Per-workspace opt-in for cross-vendor auto-review.
+    private var crossReviewBinding: Binding<Bool> {
+        Binding(
+            get: { UserDefaults.standard.bool(forKey: "usta.crossreview.\(ws.id)") },
+            set: { UserDefaults.standard.set($0, forKey: "usta.crossreview.\(ws.id)") }
+        )
+    }
+
+    private func mergeRole(_ name: String) {
+        Task {
+            guard let r = await client.mergeRoleBranch(workspaceID: ws.id, role: name) else {
+                templateStatus = client.lastError ?? "merge failed"
+                return
+            }
+            let tail = r.output.split(separator: "\n").suffix(4).joined(separator: "\n")
+            templateStatus = r.ok
+                ? "Merged @\(name)'s branch.\n\(tail)"
+                : "Merge failed (aborted, tree left clean):\n\(tail)"
+        }
+    }
+
+    // MARK: - Team templates
+
+    /// Export this workspace's team as a shareable `.ustateam.yaml`.
+    private func exportTeamToFile() {
+        Task {
+            let wsName = (ws.path as NSString).lastPathComponent
+            guard let yaml = await client.exportTeam(workspaceID: ws.id, name: wsName) else {
+                templateStatus = client.lastError ?? "export failed"
+                return
+            }
+            let panel = NSSavePanel()
+            panel.nameFieldStringValue = "\(wsName).ustateam.yaml"
+            panel.title = "Export Team Template"
+            if panel.runModal() == .OK, let url = panel.url {
+                try? yaml.write(to: url, atomically: true, encoding: .utf8)
+                templateStatus = "Team exported → \(url.lastPathComponent)"
+            }
+        }
+    }
+
+    /// Pick a template file, then confirm replace-vs-merge before applying.
+    private func pickTeamFile() {
+        let panel = NSOpenPanel()
+        panel.title = "Import Team Template"
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        if panel.runModal() == .OK, let url = panel.url,
+           let yaml = try? String(contentsOf: url, encoding: .utf8) {
+            importConfirmYaml = yaml
+        }
+    }
+
+    private func importTeam(yaml: String, replace: Bool) {
+        Task {
+            guard let imported = await client.importTeam(workspaceID: ws.id, yaml: yaml, replace: replace) else {
+                templateStatus = client.lastError ?? "import failed"
+                return
+            }
+            roles = await client.listRoles(workspaceID: ws.id)
+            bus.updateRoles(roles)
+            templateStatus = "Imported \(imported.count) roles"
+        }
+    }
+
     private func toolbarRow(compact: Bool, includeOverflow: Bool) -> some View {
         HStack(spacing: 8) {
             modePicker
@@ -896,6 +1030,23 @@ struct WorkspaceDetailView: View {
                     Button(showActivity ? "Hide Activity" : "Activity") { showActivity.toggle() }
                     Button("Add Role") { showAddRole = true }
                     Button("Apply Team") { showApplyTeam = true }
+                    Button("Costs…") { showCosts = true }
+                    Button("Replay…") { showReplay = true }
+                    Divider()
+                    Button("Export Team…") { exportTeamToFile() }
+                    Button("Import Team…") { pickTeamFile() }
+                    Divider()
+                    Toggle("Cross-review (other vendor)", isOn: crossReviewBinding)
+                        .help("When a role publishes *.ready, a different-vendor role (Claude ↔ Codex) gets a review prompt in its pane. You still hit Send.")
+                    Toggle("Worktree per role", isOn: worktreeBinding)
+                        .help("New role terminals run on their own git branch (usta/<role>) in an isolated worktree — no file conflicts between agents.")
+                    if worktreeBinding.wrappedValue {
+                        Menu("Merge role branch") {
+                            ForEach(roles, id: \.name) { r in
+                                Button("@\(r.name) → current branch") { mergeRole(r.name) }
+                            }
+                        }
+                    }
                     if !roles.isEmpty && mode == .assistants {
                         Button(grillMoreLoading ? "Grilling…" : "Grill More") {
                             if !grillMoreLoading { Task { await openGrillMore() } }
@@ -921,6 +1072,19 @@ struct WorkspaceDetailView: View {
                 }
                 tbBtn("Add Role", "plus", compact: compact) { showAddRole = true }
                 tbBtn("Apply Team", "person.3.sequence", compact: compact) { showApplyTeam = true }
+                tbBtn("Costs", "dollarsign.circle", compact: compact) { showCosts = true }
+                tbBtn("Replay", "memories", compact: compact) { showReplay = true }
+                Menu {
+                    Button("Export Team…") { exportTeamToFile() }
+                    Button("Import Team…") { pickTeamFile() }
+                } label: {
+                    Image(systemName: "square.and.arrow.up.on.square")
+                        .font(.caption.weight(.medium))
+                        .frame(width: 30, height: 24)
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                .help("Share team as a template / import one")
                 if !roles.isEmpty && mode == .assistants {
                     tbBtn(grillMoreLoading ? "Grilling…" : "Grill More",
                           grillMoreLoading ? "hourglass" : "questionmark.bubble",

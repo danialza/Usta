@@ -10,6 +10,8 @@
 ***Usta gives you a team — that talks to itself.***
 
 <p>
+  <a href="https://github.com/danialza/Usta/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/danialza/Usta/ci.yml?branch=main&style=for-the-badge&label=CI&labelColor=050810"></a>
+  <a href="https://github.com/danialza/Usta/releases/latest"><img alt="Release" src="https://img.shields.io/github/v/release/danialza/Usta?style=for-the-badge&color=34d399&labelColor=050810"></a>
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-22d3ee?style=for-the-badge&labelColor=050810"></a>
   <img alt="macOS 15+" src="https://img.shields.io/badge/macOS-15+-fbbf24?style=for-the-badge&logo=apple&logoColor=white&labelColor=050810">
   <img alt="Swift 6" src="https://img.shields.io/badge/Swift-6-b794f4?style=for-the-badge&logo=swift&logoColor=white&labelColor=050810">
@@ -79,19 +81,24 @@ I wanted AI tooling that worked the same way. So I built it.
 
 ## Install
 
-**Step 1 — Download & install**
+**Homebrew (recommended)**
 
-Grab the latest `Usta-macOS.dmg` from [Releases](https://github.com/danialza/Usta/releases). Open it and drag **Usta.app** into your **Applications** folder.
-
-**Step 2 — Run this command in Terminal**
-
-```
-xattr -dr com.apple.quarantine /Applications/Usta.app
+```sh
+brew install --cask danialza/usta/usta
 ```
 
-**Step 3 — Launch the app**
+Then open **Usta** from Applications — done. The cask clears the Gatekeeper flag for you.
 
-Open **Usta** from Applications (or Spotlight). The daemon spawns automatically.
+**Manual**
+
+1. Grab the latest `Usta-macOS.dmg` from [Releases](https://github.com/danialza/Usta/releases) and drag **Usta.app** into **Applications**.
+2. Run once in Terminal:
+   ```
+   xattr -dr com.apple.quarantine /Applications/Usta.app
+   ```
+3. Open **Usta**. The daemon spawns automatically.
+
+> 🕹 No API key yet? Hit **“Watch the demo”** on the welcome screen — it replays a real team run so you can see the orchestration before configuring anything.
 
 > 📖 First time? Walk through the full 10-step guide: **[usta-ai.vercel.app/guide.html](https://usta-ai.vercel.app/guide.html)**
 

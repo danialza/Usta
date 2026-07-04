@@ -362,6 +362,7 @@ async fn main() -> Result<()> {
                     cols: cols as i32, rows: rows as i32,
                     command: String::new(),
                     role: String::new(),
+                    use_worktree: false,
                 }).await?.into_inner();
                 println!("{} {}", "✓".green(), r.id.bold());
                 println!("  {} {}", "shell".dimmed(), r.shell);

@@ -187,6 +187,17 @@ struct ActivityFeed: View {
                     .clipShape(Capsule())
                     .foregroundStyle(UstaTheme.dim)
                 Spacer()
+                if e.summary.hasPrefix("[inferred]") {
+                    // Low-confidence: idle-watcher guessed from pty keywords,
+                    // not an explicit publish/marker from the agent itself.
+                    Text("INFERRED")
+                        .font(.system(size: 8, weight: .bold))
+                        .padding(.horizontal, 4).padding(.vertical, 1)
+                        .background(UstaTheme.dim2.opacity(0.4))
+                        .foregroundStyle(UstaTheme.dim)
+                        .clipShape(Capsule())
+                        .help("Auto-detected from terminal output — the agent didn't explicitly publish. Verify before trusting downstream.")
+                }
                 if isFresh {
                     Text("NEW")
                         .font(.system(size: 8, weight: .bold))
@@ -196,7 +207,10 @@ struct ActivityFeed: View {
                         .clipShape(Capsule())
                 }
             }
-            Text(e.summary).font(.system(size: 12))
+            Text(e.summary.hasPrefix("[inferred]")
+                 ? String(e.summary.dropFirst("[inferred]".count)).trimmingCharacters(in: .whitespaces)
+                 : e.summary)
+                .font(.system(size: 12))
                 .foregroundStyle(.primary)
                 .fixedSize(horizontal: false, vertical: true)
             if !e.filesChanged.isEmpty {

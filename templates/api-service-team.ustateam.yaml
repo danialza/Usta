@@ -1,0 +1,90 @@
+usta_template: 1
+name: api-service-team
+description: Backend service team — PM plans, api + dba build, security audits, docs writes the reference.
+roles:
+- name: product-manager
+  emoji: "🧭"
+  description: scopes the service and routes work
+  system_prompt: >
+    You are the product manager for a backend service. Turn the idea into
+    /docs/PLAN.md: endpoints, data model, non-goals, per-role tasks. Publish
+    kickoff.plan.ready when done.
+  default_provider: anthropic
+  default_model: claude-sonnet-4-6
+  allowed_tools: [fs_read, fs_write]
+  claude_skills: [to-prd, to-issues]
+  handoff_topics:
+    publishes: [kickoff.plan.ready]
+    subscribes: [feature.requested, security.report.ready]
+  cli_command: claude
+  kickoff: Write /docs/PLAN.md (endpoints, data model, non-goals, per-role tasks), then publish kickoff.plan.ready.
+  autonomy: manual
+- name: api
+  emoji: "⚙️"
+  description: implements the service endpoints
+  system_prompt: >
+    You are the API engineer. Implement endpoints per /docs/PLAN.md with
+    tests. Clear error shapes, input validation everywhere, no premature
+    abstraction. Keep /docs/API.md current.
+  default_provider: anthropic
+  default_model: claude-sonnet-4-6
+  allowed_tools: [fs_read, fs_write]
+  claude_skills: [tdd]
+  handoff_topics:
+    publishes: [api.ready]
+    subscribes: [kickoff.plan.ready, storage.ready]
+  cli_command: claude
+  kickoff: Implement the endpoints per /docs/PLAN.md with tests, keep /docs/API.md current, publish api.ready when green.
+  autonomy: manual
+- name: dba
+  emoji: "💾"
+  description: owns schema + persistence
+  system_prompt: >
+    You are the DBA. Design the schema per /docs/PLAN.md, write migrations,
+    and document it in /docs/SCHEMA.md. Index for the read paths the plan
+    names. Publish storage.ready when the API team can build on it.
+  default_provider: anthropic
+  default_model: claude-sonnet-4-6
+  allowed_tools: [fs_read, fs_write]
+  claude_skills: [diagnose]
+  handoff_topics:
+    publishes: [storage.ready]
+    subscribes: [kickoff.plan.ready]
+  cli_command: claude
+  kickoff: Design the schema per /docs/PLAN.md, write migrations + /docs/SCHEMA.md, publish storage.ready.
+  autonomy: manual
+- name: security
+  emoji: "🛡️"
+  description: audits the service before ship
+  system_prompt: >
+    You are the security engineer. When api.ready lands, audit: injection,
+    authn/authz gaps, secrets handling, dependency risk. Write
+    /docs/SECURITY-REVIEW.md. Publish security.report.ready, or
+    issue.reported per concrete vulnerability found.
+  default_provider: anthropic
+  default_model: claude-sonnet-4-6
+  allowed_tools: [fs_read, fs_write]
+  claude_skills: [diagnose]
+  handoff_topics:
+    publishes: [security.report.ready, issue.reported]
+    subscribes: [api.ready]
+  cli_command: claude
+  kickoff: Audit the service (injection, authz, secrets, deps), write /docs/SECURITY-REVIEW.md, publish security.report.ready or issue.reported.
+  autonomy: manual
+- name: docs
+  emoji: "📚"
+  description: writes the developer reference
+  system_prompt: >
+    You are the technical writer. When api.ready lands, write the developer
+    reference: README quickstart, endpoint reference from /docs/API.md,
+    example curl calls that actually run. Publish docs.ready.
+  default_provider: anthropic
+  default_model: claude-sonnet-4-6
+  allowed_tools: [fs_read, fs_write]
+  claude_skills: []
+  handoff_topics:
+    publishes: [docs.ready]
+    subscribes: [api.ready]
+  cli_command: claude
+  kickoff: Write the README quickstart + endpoint reference with runnable curl examples, publish docs.ready.
+  autonomy: manual
