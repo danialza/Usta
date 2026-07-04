@@ -28,48 +28,71 @@ struct HandoffGraphView: View {
 
     var body: some View {
         GeometryReader { geo in
+            // Layout + active-edge lookup computed HERE — i.e. only when the
+            // view re-evaluates (roles/bus/size change), NOT on every
+            // animation tick. Keeping this inside the TimelineView closure
+            // recomputed the whole graph 30×/s and janked the entire app.
             let (nodes, edges) = layout(in: geo.size)
-            TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { timeline in
-                let now = timeline.date.timeIntervalSince1970
-                ZStack {
-                    // Edges + travelling pulses
-                    Canvas { ctx, _ in
-                        for e in edges {
-                            guard let a = nodes.first(where: { $0.id == e.from })?.pos,
-                                  let b = nodes.first(where: { $0.id == e.to })?.pos else { continue }
-                            let path = curve(from: a, to: b)
-                            let active = pulsePhase(edge: e, now: now)
-                            ctx.stroke(path,
-                                       with: .color(active != nil
-                                                    ? UstaTheme.accentTeal.opacity(0.9)
-                                                    : UstaTheme.border.opacity(0.9)),
-                                       style: StrokeStyle(lineWidth: active != nil ? 2 : 1.2))
-                            // Arrowhead near the target
-                            let tip = point(on: (a, b), t: 0.92)
-                            let dirP = point(on: (a, b), t: 0.86)
-                            ctx.fill(arrowhead(at: tip, from: dirP),
-                                     with: .color(active != nil ? UstaTheme.accentTeal : UstaTheme.dim2))
-                            // Pulse dot animating along the curve
-                            if let phase = active {
-                                let p = point(on: (a, b), t: phase)
-                                let r: CGFloat = 5
-                                ctx.fill(Path(ellipseIn: CGRect(x: p.x - r, y: p.y - r, width: r * 2, height: r * 2)),
-                                         with: .color(UstaTheme.accentTeal))
-                                ctx.fill(Path(ellipseIn: CGRect(x: p.x - r * 2, y: p.y - r * 2, width: r * 4, height: r * 4)),
-                                         with: .color(UstaTheme.accentTeal.opacity(0.25)))
-                            }
-                        }
-                    }
-                    // Nodes
-                    ForEach(nodes) { n in
-                        nodeView(n)
-                            .position(n.pos)
-                    }
+            let pos = Dictionary(uniqueKeysWithValues: nodes.map { ($0.id, $0.pos) })
+            let activeEdges = activeEdgeIds(edges)
+            ZStack {
+                // Static layer: nodes never need per-frame invalidation.
+                edgeCanvas(edges: edges, pos: pos, activeEdges: activeEdges)
+                ForEach(nodes) { n in
+                    nodeView(n)
+                        .position(n.pos)
                 }
             }
         }
         .background(UstaTheme.bg)
         .overlay(alignment: .bottomLeading) { legend.padding(10) }
+    }
+
+    /// Edge layer. Animates at 24fps ONLY while a pulse is in flight;
+    /// otherwise the TimelineView is paused and this is a one-shot draw.
+    private func edgeCanvas(edges: [Edge], pos: [String: CGPoint], activeEdges: Set<String>) -> some View {
+        TimelineView(.animation(minimumInterval: 1.0 / 24.0, paused: activeEdges.isEmpty)) { timeline in
+            let now = timeline.date.timeIntervalSince1970
+            Canvas { ctx, _ in
+                for e in edges {
+                    guard let a = pos[e.from], let b = pos[e.to] else { continue }
+                    let path = curve(from: a, to: b)
+                    let isActive = activeEdges.contains(e.id)
+                    ctx.stroke(path,
+                               with: .color(isActive
+                                            ? UstaTheme.accentTeal.opacity(0.9)
+                                            : UstaTheme.border.opacity(0.9)),
+                               style: StrokeStyle(lineWidth: isActive ? 2 : 1.2))
+                    // Arrowhead near the target
+                    let tip = point(on: (a, b), t: 0.92)
+                    let dirP = point(on: (a, b), t: 0.86)
+                    ctx.fill(arrowhead(at: tip, from: dirP),
+                             with: .color(isActive ? UstaTheme.accentTeal : UstaTheme.dim2))
+                    // Pulse dot animating along the curve
+                    if isActive {
+                        let phase = CGFloat((now / 1.6).truncatingRemainder(dividingBy: 1.0))
+                        let p = point(on: (a, b), t: phase)
+                        let r: CGFloat = 5
+                        ctx.fill(Path(ellipseIn: CGRect(x: p.x - r, y: p.y - r, width: r * 2, height: r * 2)),
+                                 with: .color(UstaTheme.accentTeal))
+                        ctx.fill(Path(ellipseIn: CGRect(x: p.x - r * 2, y: p.y - r * 2, width: r * 4, height: r * 4)),
+                                 with: .color(UstaTheme.accentTeal.opacity(0.25)))
+                    }
+                }
+            }
+        }
+    }
+
+    /// Edges whose topic fired on the bus in the last 45s. Recomputed only
+    /// when bus.events changes.
+    private func activeEdgeIds(_ edges: [Edge]) -> Set<String> {
+        let cutoff = Int64((Date().timeIntervalSince1970 - 45) * 1000)
+        var lastByKey: [String: Int64] = [:]
+        for ev in bus.events where ev.createdUnixMs >= cutoff {
+            lastByKey["\(ev.fromRole)|\(ev.topic)"] = ev.createdUnixMs
+        }
+        guard !lastByKey.isEmpty else { return [] }
+        return Set(edges.filter { lastByKey["\($0.from)|\($0.topic)"] != nil }.map(\.id))
     }
 
     // MARK: node view
@@ -139,17 +162,6 @@ struct HandoffGraphView: View {
         .padding(.horizontal, 10).padding(.vertical, 5)
         .background(UstaTheme.panel.opacity(0.9))
         .clipShape(Capsule())
-    }
-
-    // MARK: pulses
-
-    /// If this edge's topic saw a bus event in the last 45s, return the
-    /// pulse position 0→1 (loops every 1.6s while fresh).
-    private func pulsePhase(edge: Edge, now: TimeInterval) -> CGFloat? {
-        guard let ev = bus.events.last(where: { $0.topic == edge.topic && $0.fromRole == edge.from }) else { return nil }
-        let age = now - Double(ev.createdUnixMs) / 1000.0
-        guard age >= 0 && age < 45 else { return nil }
-        return CGFloat((now / 1.6).truncatingRemainder(dividingBy: 1.0))
     }
 
     // MARK: geometry

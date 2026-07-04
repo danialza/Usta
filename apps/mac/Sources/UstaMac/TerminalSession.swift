@@ -39,6 +39,21 @@ final class TerminalSession: ObservableObject, Identifiable {
         flushPending(to: view)
     }
 
+    /// Sleeping pane: stop feeding SwiftTerm entirely. The PTY keeps running
+    /// server-side; bytes land in the (capped) pending buffer instead of
+    /// being parsed on the main thread. With 9 idle claude TUIs each
+    /// redrawing spinners, parsing them all offscreen was the app-wide lag.
+    func suspend() {
+        bound = nil
+    }
+
+    /// Wake: rebind the cached view and replay whatever accumulated.
+    func resume() {
+        guard let v = cachedView else { return }
+        bound = v
+        flushPending(to: v)
+    }
+
     func flushPending(to view: TerminalView) {
         guard !pendingBytes.isEmpty else { return }
         view.feed(byteArray: ArraySlice(pendingBytes))

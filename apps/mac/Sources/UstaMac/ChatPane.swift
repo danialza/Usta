@@ -475,9 +475,12 @@ struct AssistantPane: View {
         VStack(spacing: 8) {
             Image(systemName: "moon.zzz.fill")
                 .font(.system(size: 22)).foregroundStyle(UstaTheme.dim)
-            Text("@\(role.name) running in background")
+            Text(cliSession != nil ? "@\(role.name) running in background"
+                                   : "@\(role.name) is asleep")
                 .font(.system(size: 12, weight: .medium)).foregroundStyle(.white.opacity(0.85))
-            Text("Sleeping to keep the app fast.\nIts terminal keeps running — open to view live.")
+            Text(cliSession != nil
+                 ? "Sleeping to keep the app fast.\nIts terminal keeps running — open to view live."
+                 : "Sleeping to keep the app fast.\nIts CLI launches when you open it or its turn starts.")
                 .font(.system(size: 10)).foregroundStyle(UstaTheme.dim)
                 .multilineTextAlignment(.center)
             if let maxToggle = onToggleMaximize {
@@ -544,6 +547,10 @@ struct AssistantPane: View {
                         .font(.caption2).foregroundStyle(UstaTheme.dim)
                 }
                 .padding()
+            } else if !live {
+                // Not launched yet AND not live — don't burn a CLI process
+                // for a pane nobody is looking at.
+                sleepingTerminal
             } else {
                 VStack(spacing: 8) {
                     ProgressView().scaleEffect(0.7)
@@ -565,9 +572,14 @@ struct AssistantPane: View {
             if cliSession == nil, let cached = termCache.session(for: role.name) {
                 cliSession = cached
                 cliError = nil
+                if !live { cached.suspend() }
                 return
             }
-            // Auto-launch as soon as the CLI pane appears (no manual button).
+            // LAZY LAUNCH: only spin up the CLI for panes that are actually
+            // live (focused / working / next-up). Launching all 9 role CLIs
+            // at workspace-open burned ~2GB RAM and 9 PTY streams before the
+            // user did anything. Sleeping panes launch on wake instead.
+            guard live else { return }
             if cliSession == nil && !cliLaunching && cliError == nil {
                 let cmd = cliCommand.trimmingCharacters(in: .whitespaces)
                 if cmd.isEmpty {
@@ -577,6 +589,24 @@ struct AssistantPane: View {
                 cliLaunching = true
                 await launchCLI()
                 cliLaunching = false
+            }
+        }
+        .onChange(of: live) { _, isLive in
+            if isLive {
+                if let s = cliSession {
+                    s.resume()
+                } else if !cliLaunching && cliError == nil && backend == .cli {
+                    // Woken for the first time → launch (or reattach) now.
+                    Task {
+                        cliLaunching = true
+                        await launchCLI()
+                        cliLaunching = false
+                    }
+                }
+            } else {
+                // Going to sleep: keep the PTY + process, stop main-thread
+                // SwiftTerm parsing for this pane.
+                cliSession?.suspend()
             }
         }
     }
@@ -1204,8 +1234,15 @@ struct AssistantPane: View {
         lastSentPrompt = text          // keep for re-show / re-send / copy
         bus.markWorking(role.name)
         if backend == .cli {
-            // Wait briefly so a freshly-launched CLI has its prompt up.
-            if cliSession == nil { try? await Task.sleep(nanoseconds: 1_200_000_000) }
+            // Lazy-launch world: the pane may not have started its CLI yet
+            // (it was asleep). Launch now, then give the CLI a moment to
+            // bring its prompt up before typing.
+            if cliSession == nil && !cliLaunching {
+                cliLaunching = true
+                await launchCLI()
+                cliLaunching = false
+            }
+            if cliSession != nil { try? await Task.sleep(nanoseconds: 1_500_000_000) }
             guard let s = cliSession else { return }
             // Type text + Enter.
             if let data = (text + "\n").data(using: .utf8) {
