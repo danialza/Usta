@@ -24,9 +24,8 @@ jobs:
         run: cargo build --workspace
       - name: Test
         run: cargo test --workspace
-      - name: Clippy
-        run: cargo clippy --workspace -- -D warnings
-        continue-on-error: true # informational for now
+      - name: Clippy (informational)
+        run: cargo clippy --workspace -- -D warnings || true
 
   mac:
     name: Mac app (SwiftPM)
@@ -35,5 +34,10 @@ jobs:
       - uses: actions/checkout@v4
       - name: Select Xcode
         run: sudo xcode-select -s /Applications/Xcode_16.2.app || sudo xcode-select -s /Applications/Xcode.app
+      - name: Install protoc (needed by GRPCProtobufGenerator plugin)
+        run: brew install protobuf
       - name: Build
         run: swift build --package-path apps/mac
+        env:
+          # Let the SwiftPM build plugin find the brew-installed protoc.
+          PROTOC_PATH: /opt/homebrew/bin/protoc
