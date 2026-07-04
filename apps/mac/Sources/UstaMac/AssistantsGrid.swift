@@ -124,7 +124,6 @@ struct AssistantsGrid: View {
             // Column count based on visible pane count, not total (so a
             // single focused role gets a full-width pane).
             let n = cols(for: geo.size.width, count: max(1, visibleCount))
-            let layout = Array(repeating: GridItem(.flexible(minimum: 380), spacing: 8), count: n)
             // In single-focus mode let the focused pane fill the whole grid
             // height (no scrolling). In All mode the scrollview lets a tall
             // list overflow.
@@ -132,10 +131,13 @@ struct AssistantsGrid: View {
                 ? max(360, geo.size.height - 20)
                 : 360
             ScrollView {
-                // Regular VGrid (NOT Lazy) — keeps every pane in the SwiftUI
-                // tree even when scrolled off / hidden. SwiftTerm.TerminalView
-                // instances live across chip toggles.
-                LazyVGrid(columns: layout, spacing: 8) {
+                // Truly NON-lazy fixed-column layout. LazyVGrid's placement
+                // machinery hard-looped twice (100% CPU in
+                // LazySubviewPlacements.placeSubviews) with this pane set —
+                // and laziness bought nothing anyway, since hidden panes stay
+                // in the tree to keep SwiftTerm views alive. A dumb
+                // deterministic Layout cannot loop.
+                FixedColumnsLayout(columns: n, spacing: 8) {
                     ForEach(ordered, id: \.name) { role in
                         let isVisible = visible.contains(role.name)
                         AssistantPane(
@@ -213,5 +215,60 @@ struct AssistantsGrid: View {
                 .font(.caption).foregroundStyle(UstaTheme.dim2)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+/// Dead-simple fixed-column grid. Non-lazy on purpose: every subview is
+/// measured once per pass with a concrete width, placed left-to-right,
+/// wrapped every `columns` items. Zero-height subviews (hidden panes) are
+/// parked at the origin and skipped, so they neither consume a cell nor
+/// add row spacing. No caches, no feedback — layout always converges.
+struct FixedColumnsLayout: Layout {
+    var columns: Int
+    var spacing: CGFloat = 8
+
+    private func colWidth(_ total: CGFloat) -> CGFloat {
+        max(50, (total - spacing * CGFloat(columns - 1)) / CGFloat(columns))
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let width = proposal.width ?? 800
+        let colW = colWidth(width)
+        var y: CGFloat = 0, rowH: CGFloat = 0, col = 0, placedAny = false
+        for v in subviews {
+            let h = v.sizeThatFits(ProposedViewSize(width: colW, height: nil)).height
+            if h <= 0.5 { continue }
+            placedAny = true
+            rowH = max(rowH, h)
+            col += 1
+            if col == columns { y += rowH + spacing; rowH = 0; col = 0 }
+        }
+        if col > 0 { y += rowH }
+        else if placedAny { y -= spacing }
+        return CGSize(width: width, height: max(0, y))
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let colW = colWidth(bounds.width)
+        var x = bounds.minX, y = bounds.minY, rowH: CGFloat = 0, col = 0
+        for v in subviews {
+            let h = v.sizeThatFits(ProposedViewSize(width: colW, height: nil)).height
+            if h <= 0.5 {
+                // Hidden pane: keep it in the tree (SwiftTerm view survives)
+                // but give it no cell.
+                v.place(at: CGPoint(x: bounds.minX, y: bounds.minY),
+                        proposal: ProposedViewSize(width: 0, height: 0))
+                continue
+            }
+            v.place(at: CGPoint(x: x, y: y),
+                    proposal: ProposedViewSize(width: colW, height: h))
+            rowH = max(rowH, h)
+            col += 1
+            if col == columns {
+                col = 0; x = bounds.minX; y += rowH + spacing; rowH = 0
+            } else {
+                x += colW + spacing
+            }
+        }
     }
 }
