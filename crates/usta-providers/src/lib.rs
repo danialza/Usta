@@ -17,10 +17,45 @@ pub mod registry;
 
 pub use registry::ProviderRegistry;
 
+/// One piece of a message. Most turns are a single `Text` part; attachments
+/// add `Image`/`Document` parts that vision-capable providers send as native
+/// blocks (and everyone else degrades to the text manifest).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ContentPart {
+    Text(String),
+    Image { mime: String, data: Vec<u8> },
+    Document { mime: String, data: Vec<u8>, filename: String },
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatMessage {
     pub role: String,
-    pub content: String,
+    pub parts: Vec<ContentPart>,
+}
+
+impl ChatMessage {
+    /// Plain text turn — the overwhelmingly common case.
+    pub fn text(role: impl Into<String>, content: impl Into<String>) -> Self {
+        Self { role: role.into(), parts: vec![ContentPart::Text(content.into())] }
+    }
+
+    /// All text parts joined. Used by providers with no multimodal support,
+    /// and anywhere we just need the words.
+    pub fn text_content(&self) -> String {
+        let mut out = String::new();
+        for p in &self.parts {
+            if let ContentPart::Text(t) = p {
+                if !out.is_empty() { out.push('\n'); }
+                out.push_str(t);
+            }
+        }
+        out
+    }
+
+    /// Does this turn carry anything a text-only provider would drop?
+    pub fn has_media(&self) -> bool {
+        self.parts.iter().any(|p| !matches!(p, ContentPart::Text(_)))
+    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

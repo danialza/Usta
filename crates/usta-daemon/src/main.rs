@@ -1,3 +1,4 @@
+mod attachments;
 mod costs;
 mod toolexec;
 
@@ -761,7 +762,7 @@ async fn run_role_headless(
     let req = ChatRequest {
         model: role.default_model.clone(),
         system: Some(system),
-        messages: vec![ChatMessage { role: "user".into(), content: user_msg.clone() }],
+        messages: vec![ChatMessage::text("user", user_msg.clone())],
         max_tokens: Some(1536),
     };
 
@@ -1025,6 +1026,32 @@ fn render_role_brief(role: &RoleDef, workspace_path: &str) -> String {
          This guarantees the bus learns you finished even if the MCP call drops.\n\n",
         pubs = pubs_csv
     ));
+
+    // Reference material the user dropped into the project. These live on
+    // disk next to the code, so the agent can just open them — a mockup is
+    // far more useful than a paraphrase of a mockup.
+    let att_dir = std::path::Path::new(workspace_path).join(attachments::DIR);
+    if let Ok(rd) = std::fs::read_dir(&att_dir) {
+        let mut files: Vec<String> = rd
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_type().map(|t| t.is_file()).unwrap_or(false))
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| !n.starts_with('.'))
+            .collect();
+        if !files.is_empty() {
+            files.sort();
+            out.push_str(
+                "\n## Reference material the user attached\n\
+                 These files are the source of truth for what they want. READ THEM \
+                 (Read tool for text/images, open the path for anything else) BEFORE \
+                 you design or implement — do not guess at contents from the filename.\n",
+            );
+            for f in files {
+                out.push_str(&format!("- `{}/{}`\n", attachments::DIR, f));
+            }
+            out.push('\n');
+        }
+    }
 
     out.push_str(&role.system_prompt);
     out.push_str("\n\n## Your handoff topics\n");
@@ -1323,7 +1350,7 @@ impl Usta for UstaSvc {
             messages: r
                 .messages
                 .into_iter()
-                .map(|m| ChatMessage { role: m.role, content: m.content })
+                .map(|m| ChatMessage::text(m.role, m.content))
                 .collect(),
             max_tokens: if r.max_tokens > 0 { Some(r.max_tokens as u32) } else { None },
         };
@@ -1885,7 +1912,7 @@ impl Usta for UstaSvc {
         let req = ChatRequest {
             model,
             system: Some(system),
-            messages: vec![ChatMessage { role: "user".into(), content: r.user_msg }],
+            messages: vec![ChatMessage::text("user", r.user_msg)],
             max_tokens: if r.max_tokens > 0 { Some(r.max_tokens as u32) } else { Some(2048) },
         };
 
@@ -2300,7 +2327,7 @@ impl Usta for UstaSvc {
             let req = ChatRequest {
                 model,
                 system: Some(role.system_prompt.clone()),
-                messages: vec![ChatMessage { role: "user".into(), content: user_msg.clone() }],
+                messages: vec![ChatMessage::text("user", user_msg.clone())],
                 max_tokens: Some(1024),
             };
             plans.push(Plan { role_name: role.name.clone(), provider, request: req });
@@ -2425,9 +2452,13 @@ impl Usta for UstaSvc {
             .get(&provider_name)
             .ok_or_else(|| Status::not_found(format!("unknown provider '{provider_name}'")))?;
 
+        // Attachments reach the PM two ways: visual ones as real vision
+        // blocks, everything else as a text manifest appended to the idea.
+        let idea_with_refs = format!("{}{}", r.idea, attachments::manifest(&r.attachments));
+        let parts = attachments::content_parts(&r.attachments);
         let pm = usta_pm::Pm::new(provider, model);
         let proposal = pm
-            .propose_from_idea(&r.idea)
+            .propose_from_idea_with(&idea_with_refs, parts)
             .await
             .map_err(|e| Status::internal(format!("pm propose: {e:#}")))?;
 
@@ -2690,6 +2721,12 @@ impl Usta for UstaSvc {
             let _ = std::fs::write(&readme, body);
         }
 
+        // Land the user's reference material inside the new project BEFORE
+        // the roles are written, so each brief can point at real paths.
+        let mut atts = r.attachments.clone();
+        attachments::persist(&project_dir.to_string_lossy(), &mut atts);
+        let att_manifest = attachments::manifest(&atts);
+
         // Materialize roles.
         let roles_dir = project_dir.join(".usta").join("roles");
         purge_role_yamls(&roles_dir);
@@ -2698,7 +2735,10 @@ impl Usta for UstaSvc {
         let mut local = (*self.roles).clone();
         let mut written = Vec::new();
         for pr in &proposal.team {
-            let role = role_from_proposed(pr, &roles_dir);
+            let mut role = role_from_proposed(pr, &roles_dir);
+            if !att_manifest.is_empty() {
+                role.kickoff = format!("{}\n{}", role.kickoff, att_manifest);
+            }
             let path = local
                 .write_role(&roles_dir, &role)
                 .map_err(|e| Status::internal(format!("write role: {e}")))?;
@@ -3020,12 +3060,24 @@ impl Usta for UstaSvc {
         let model = if r.model.is_empty() { "claude-haiku-4-5-20251001".into() } else { r.model };
         let provider = self.providers.get(&provider_name)
             .ok_or_else(|| Status::not_found(format!("unknown provider '{provider_name}'")))?;
+        // Persist attachments into the workspace FIRST so the manifest can
+        // cite real paths — the roles that pick this up need to open them.
+        let mut atts = r.attachments.clone();
+        attachments::persist(&ws.path, &mut atts);
+        let feature_with_refs = format!("{}{}", r.feature_text, attachments::manifest(&atts));
+        let parts = attachments::content_parts(&atts);
         let pm = usta_pm::Pm::new(provider, model);
-        let (summary, plan) = pm.orchestrate_feature(&team_yaml, &event_log, &r.feature_text)
+        let (summary, plan) = pm
+            .orchestrate_feature_with(&team_yaml, &event_log, &feature_with_refs, parts)
             .await
             .map_err(|e| Status::internal(format!("pm orchestrate: {e}")))?;
-        // Publish the request event itself
-        let _ = self.db.insert_event(&r.workspace_id, "user", "feature.requested", &r.feature_text, now_ms(), &[]);
+        // Publish the request event itself — including attachment paths, so
+        // the activity feed and every downstream role can see them.
+        let files: Vec<String> = atts.iter()
+            .filter(|a| !a.saved_path.is_empty())
+            .map(|a| a.saved_path.clone())
+            .collect();
+        let _ = self.db.insert_event(&r.workspace_id, "user", "feature.requested", &feature_with_refs, now_ms(), &files);
         // For each affected role: write new kickoff into yaml
         let mut applied: Vec<PbAffectedRole> = Vec::new();
         for (role_name, task) in &plan {

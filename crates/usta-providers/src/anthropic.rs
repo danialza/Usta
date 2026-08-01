@@ -192,7 +192,66 @@ struct ApiReq<'a> {
 #[derive(Serialize)]
 struct ApiMsg<'a> {
     role: &'a str,
-    content: &'a str,
+    content: serde_json::Value,
+    #[serde(skip)]
+    _lt: std::marker::PhantomData<&'a ()>,
+}
+
+/// Anthropic content blocks. Plain text turns stay a bare string (cheapest
+/// on the wire); anything with media becomes an array of typed blocks.
+fn anthropic_content(m: &crate::ChatMessage) -> serde_json::Value {
+    use crate::ContentPart;
+    if !m.has_media() {
+        return json!(m.text_content());
+    }
+    let mut blocks: Vec<serde_json::Value> = Vec::new();
+    for p in &m.parts {
+        match p {
+            ContentPart::Text(t) if !t.is_empty() => {
+                blocks.push(json!({ "type": "text", "text": t }));
+            }
+            ContentPart::Image { mime, data } => {
+                blocks.push(json!({
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": mime,
+                        "data": b64(data),
+                    }
+                }));
+            }
+            ContentPart::Document { mime, data, .. } => {
+                blocks.push(json!({
+                    "type": "document",
+                    "source": {
+                        "type": "base64",
+                        "media_type": mime,
+                        "data": b64(data),
+                    }
+                }));
+            }
+            _ => {}
+        }
+    }
+    json!(blocks)
+}
+
+/// Shared with the other providers (they all need base64 data URLs).
+pub(crate) fn b64_public(bytes: &[u8]) -> String { b64(bytes) }
+
+/// Minimal base64 encoder — avoids pulling in a dep for a handful of calls.
+fn b64(bytes: &[u8]) -> String {
+    const T: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let b = [chunk[0], *chunk.get(1).unwrap_or(&0), *chunk.get(2).unwrap_or(&0)];
+        let n = ((b[0] as u32) << 16) | ((b[1] as u32) << 8) | b[2] as u32;
+        out.push(T[(n >> 18) as usize & 63] as char);
+        out.push(T[(n >> 12) as usize & 63] as char);
+        out.push(if chunk.len() > 1 { T[(n >> 6) as usize & 63] as char } else { '=' });
+        out.push(if chunk.len() > 2 { T[n as usize & 63] as char } else { '=' });
+    }
+    out
 }
 
 #[derive(Deserialize, Debug)]
@@ -248,7 +307,8 @@ impl Provider for AnthropicProvider {
             system: req.system.as_deref(),
             messages: req.messages.iter().map(|m| ApiMsg {
                 role: &m.role,
-                content: &m.content,
+                content: anthropic_content(m),
+                _lt: std::marker::PhantomData,
             }).collect(),
         };
 
@@ -323,7 +383,7 @@ impl Provider for AnthropicProvider {
         let mut messages: Vec<serde_json::Value> = req
             .messages
             .iter()
-            .map(|m| json!({ "role": m.role, "content": m.content }))
+            .map(|m| json!({ "role": m.role, "content": anthropic_content(m) }))
             .collect();
 
         let tools_json: Vec<serde_json::Value> = tools

@@ -91,7 +91,7 @@ impl Provider for OllamaProvider {
             messages.push(ApiMsg { role: "system", content: sys.clone() });
         }
         for m in &req.messages {
-            messages.push(ApiMsg { role: &m.role, content: m.content.clone() });
+            messages.push(ApiMsg { role: &m.role, content: m.text_content() });
         }
 
         let body = ApiReq { model: &req.model, stream: true, messages };
@@ -153,7 +153,7 @@ impl Provider for OllamaProvider {
             messages.push(json!({ "role": "system", "content": sys }));
         }
         for m in &req.messages {
-            messages.push(json!({ "role": m.role, "content": m.content }));
+            messages.push(json!({ "role": m.role, "content": m.text_content() }));
         }
 
         let tools_json: Vec<serde_json::Value> = tools

@@ -211,6 +211,7 @@ message OrchestrateFeatureRequest {
   string feature_text = 2;   // free-form user request
   string provider     = 3;   // default anthropic
   string model        = 4;   // default haiku
+  repeated Attachment attachments = 5;
 }
 
 message AffectedRole {
@@ -517,6 +518,36 @@ message ProposeProjectRequest {
   string idea     = 1;
   string provider = 2; // default "anthropic"
   string model    = 3; // default "claude-sonnet-4-6"
+  // Optional reference material the user dropped in (mockups, specs, clips).
+  repeated Attachment attachments = 4;
+}
+
+// A file the user attached to a prompt. The daemon persists it under
+// <workspace>/.usta/attachments/ so the CLI agents can open it directly,
+// AND — when the kind is visual — forwards it to the model as a vision
+// block so the PM can actually see it.
+message Attachment {
+  enum Kind {
+    OTHER    = 0;
+    IMAGE    = 1;  // png/jpeg/heic/webp → vision block
+    PDF      = 2;  // native document block where supported
+    VIDEO    = 3;  // keyframes extracted client-side into `frames`
+    AUDIO    = 4;  // transcript in extracted_text
+    TEXT     = 5;  // code/markdown/csv/json → inlined
+  }
+  Kind   kind      = 1;
+  string filename  = 2;   // original basename, e.g. "dashboard-mockup.png"
+  string mime      = 3;   // e.g. "image/png"
+  bytes  data      = 4;   // raw bytes (empty when only text was extracted)
+  // Text pulled out client-side: transcript for audio, plain text for
+  // text-ish files, or a short note for formats we can't inline.
+  string extracted_text = 5;
+  // For VIDEO: representative frames (png bytes) so vision models can
+  // "watch" it without native video support.
+  repeated bytes frames = 6;
+  // Filled by the daemon after it writes the file: workspace-relative
+  // path the agents can read, e.g. ".usta/attachments/mockup.png".
+  string saved_path = 7;
 }
 
 message ProjectProposal {
@@ -538,6 +569,9 @@ message ScaffoldProjectRequest {
   // anthropic + claude-haiku-4-5.
   string provider          = 4;
   string model             = 5;
+  // Re-sent from the describe step so the files land inside the freshly
+  // created workspace, where every agent can read them.
+  repeated Attachment attachments = 6;
 }
 
 message ScaffoldProjectResponse {
@@ -606,4 +640,5 @@ message RoleChatRequest {
   int32  max_tokens = 5;
   // Optional: include workspace-scoped roles for this workspace.
   string workspace_id = 6;
+  repeated Attachment attachments = 7;
 }

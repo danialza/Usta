@@ -48,6 +48,34 @@ async fn post_with_retry(
     anyhow::bail!("openai exhausted retries: {last_err}");
 }
 
+/// Chat Completions content. Text-only turns stay a bare string; media turns
+/// become the typed part array (images ride as `data:` URLs).
+fn openai_content(m: &crate::ChatMessage) -> serde_json::Value {
+    use crate::ContentPart;
+    if !m.has_media() {
+        return json!(m.text_content());
+    }
+    let mut parts: Vec<serde_json::Value> = Vec::new();
+    for p in &m.parts {
+        match p {
+            ContentPart::Text(t) if !t.is_empty() => {
+                parts.push(json!({ "type": "text", "text": t }));
+            }
+            ContentPart::Image { mime, data } => {
+                parts.push(json!({
+                    "type": "image_url",
+                    "image_url": { "url": format!("data:{};base64,{}", mime, crate::anthropic::b64_public(data)) }
+                }));
+            }
+            // Chat Completions has no PDF block — the daemon already put the
+            // filename + path in the text manifest, so nothing is lost.
+            ContentPart::Document { .. } => {}
+            _ => {}
+        }
+    }
+    json!(parts)
+}
+
 pub struct OpenAiProvider {
     api_key: Option<String>,
     base_url: String,
@@ -77,7 +105,7 @@ impl OpenAiProvider {
         }
         for m in &req.messages {
             let role = if m.role == "model" { "assistant" } else { m.role.as_str() };
-            out.push(json!({ "role": role, "content": m.content }));
+            out.push(json!({ "role": role, "content": openai_content(m) }));
         }
         out
     }

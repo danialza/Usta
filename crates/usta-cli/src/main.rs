@@ -475,6 +475,7 @@ async fn main() -> Result<()> {
                 if prompt.trim().is_empty() { anyhow::bail!("empty prompt"); }
                 let ws_id = CliState::load().active_workspace_id.unwrap_or_default();
                 let mut s = client.role_chat(RoleChatRequest {
+                    attachments: vec![],
                     role_name: name,
                     user_msg: prompt,
                     provider, model, max_tokens,

@@ -45,6 +45,24 @@ async fn post_with_retry(
     anyhow::bail!("gemini exhausted retries: {last_err}");
 }
 
+/// Gemini content parts: text plus `inline_data` blobs for images/PDFs
+/// (Gemini accepts PDFs natively as inline data).
+fn gemini_parts(m: &crate::ChatMessage) -> Vec<serde_json::Value> {
+    use crate::ContentPart;
+    let mut out = Vec::new();
+    for p in &m.parts {
+        match p {
+            ContentPart::Text(t) if !t.is_empty() => out.push(json!({ "text": t })),
+            ContentPart::Image { mime, data } | ContentPart::Document { mime, data, .. } => {
+                out.push(json!({ "inline_data": { "mime_type": mime, "data": crate::anthropic::b64_public(data) } }));
+            }
+            _ => {}
+        }
+    }
+    if out.is_empty() { out.push(json!({ "text": "" })); }
+    out
+}
+
 pub struct GeminiProvider {
     api_key: Option<String>,
     base_url: String,
@@ -100,7 +118,7 @@ impl Provider for GeminiProvider {
         let contents: Vec<serde_json::Value> = req
             .messages
             .iter()
-            .map(|m| json!({ "role": Self::role(&m.role), "parts": [{ "text": m.content }] }))
+            .map(|m| json!({ "role": Self::role(&m.role), "parts": gemini_parts(m) }))
             .collect();
         let mut body = json!({ "contents": contents });
         if let Some(s) = &req.system {
@@ -154,7 +172,7 @@ impl Provider for GeminiProvider {
         let mut contents: Vec<serde_json::Value> = req
             .messages
             .iter()
-            .map(|m| json!({ "role": Self::role(&m.role), "parts": [{ "text": m.content }] }))
+            .map(|m| json!({ "role": Self::role(&m.role), "parts": gemini_parts(m) }))
             .collect();
 
         let fn_decls: Vec<serde_json::Value> = tools

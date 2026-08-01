@@ -3,7 +3,7 @@
 
 pub mod summary;
 
-use usta_providers::{ChatDelta, ChatMessage, ChatRequest, DynProvider};
+use usta_providers::{ChatDelta, ChatMessage, ChatRequest, ContentPart, DynProvider};
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -285,15 +285,28 @@ impl Pm {
 
     /// Propose a brand-new project from a free-text user idea (no workspace yet).
     pub async fn propose_from_idea(&self, idea: &str) -> anyhow::Result<ProjectProposal> {
+        self.propose_from_idea_with(idea, Vec::new()).await
+    }
+
+    /// Same, but with extra content parts (mockups, spec PDFs, video frames)
+    /// appended to the user turn so the PM can actually *see* the reference
+    /// material before choosing a stack and team.
+    pub async fn propose_from_idea_with(
+        &self,
+        idea: &str,
+        extra_parts: Vec<ContentPart>,
+    ) -> anyhow::Result<ProjectProposal> {
         let user_msg = format!(
             "Project idea from the user:\n\n{}\n\nPropose the project name, stack, first steps, and the team.",
             idea.trim()
         );
+        let mut parts = vec![ContentPart::Text(user_msg)];
+        parts.extend(extra_parts);
         let req = ChatRequest {
             model: self.model.clone(),
             system: Some(PM_NEW_PROJECT_PROMPT.into()),
             max_tokens: Some(16384),
-            messages: vec![ChatMessage { role: "user".into(), content: user_msg }],
+            messages: vec![ChatMessage { role: "user".into(), parts }],
         };
         let mut stream = self.provider.chat(req).await?;
         let mut full = String::new();
@@ -355,7 +368,7 @@ Rules:
             model: self.model.clone(),
             system: Some(sys.into()),
             max_tokens: Some(2048),
-            messages: vec![ChatMessage { role: "user".into(), content: user }],
+            messages: vec![ChatMessage::text("user", user)],
         };
         let mut stream = self.provider.chat(req).await?;
         let mut full = String::new();
@@ -391,7 +404,7 @@ Rules:
             model: self.model.clone(),
             system: Some(PM_NEW_PROJECT_PROMPT.into()),
             max_tokens: Some(16384),
-            messages: vec![ChatMessage { role: "user".into(), content: user_msg }],
+            messages: vec![ChatMessage::text("user", user_msg)],
         };
         let mut stream = self.provider.chat(req).await?;
         let mut full = String::new();
@@ -424,7 +437,7 @@ Rules:
             model: self.model.clone(),
             system: Some(PM_SYSTEM_PROMPT.into()),
             max_tokens: Some(16384),
-            messages: vec![ChatMessage { role: "user".into(), content: user_msg }],
+            messages: vec![ChatMessage::text("user", user_msg)],
         };
 
         let mut stream = self.provider.chat(req).await?;
@@ -495,7 +508,7 @@ Rules:
             model: self.model.clone(),
             system: Some(sys.into()),
             max_tokens: Some(2048),
-            messages: vec![ChatMessage { role: "user".into(), content: user }],
+            messages: vec![ChatMessage::text("user", user)],
         };
         let mut stream = self.provider.chat(req).await?;
         let mut full = String::new();
@@ -521,6 +534,18 @@ Rules:
         team_yaml: &str,
         event_log: &str,
         feature_text: &str,
+    ) -> anyhow::Result<(String, Vec<(String, String)>)> {
+        self.orchestrate_feature_with(team_yaml, event_log, feature_text, Vec::new()).await
+    }
+
+    /// Same, with attachment content parts so the PM can plan against a
+    /// screenshot of the bug or a mockup of the requested change.
+    pub async fn orchestrate_feature_with(
+        &self,
+        team_yaml: &str,
+        event_log: &str,
+        feature_text: &str,
+        extra_parts: Vec<ContentPart>,
     ) -> anyhow::Result<(String, Vec<(String, String)>)> {
         let sys = r#"You are the PM in Usta. The user just requested a NEW feature on an existing project. You have the team yaml (roles + their topics) and the full event bus so far. Decide which roles must act, and write a concrete imperative task for each.
 
@@ -550,7 +575,11 @@ Rules:
             model: self.model.clone(),
             system: Some(sys.into()),
             max_tokens: Some(4096),
-            messages: vec![ChatMessage { role: "user".into(), content: user }],
+            messages: vec![{
+                let mut parts = vec![ContentPart::Text(user)];
+                parts.extend(extra_parts);
+                ChatMessage { role: "user".into(), parts }
+            }],
         };
         let mut stream = self.provider.chat(req).await?;
         let mut full = String::new();
@@ -602,7 +631,7 @@ Rules:
             model: self.model.clone(),
             system: Some(sys.into()),
             max_tokens: Some(512),
-            messages: vec![ChatMessage { role: "user".into(), content: user }],
+            messages: vec![ChatMessage::text("user", user)],
         };
         let mut stream = self.provider.chat(req).await?;
         let mut out = String::new();
