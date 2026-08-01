@@ -49,23 +49,45 @@ final class AppSettings: ObservableObject {
         let d = UserDefaults.standard
         let env = ProcessInfo.processInfo.environment
         self.socketPath = d.string(forKey: Self.socketKey) ?? Self.defaultSocketPath()
-        // Keys: prefer Keychain, then migrate any legacy plaintext UserDefaults
-        // value into the Keychain and scrub it from defaults.
-        let kcA = Keychain.get(account: Self.anthKey)
-        let kcG = Keychain.get(account: Self.gemKey)
-        let kcO = Keychain.get(account: Self.oaiKey)
-        let legacyA = d.string(forKey: Self.anthKey)
-        let legacyG = d.string(forKey: Self.gemKey)
-        let rawA = kcA ?? legacyA ?? (env["ANTHROPIC_API_KEY"] ?? "")
-        let rawG = kcG ?? legacyG ?? (env["GEMINI_API_KEY"] ?? "")
-        let rawO = kcO ?? (env["OPENAI_API_KEY"] ?? "")
-        self.anthropicKey = rawA.trimmingCharacters(in: .whitespacesAndNewlines)
-        self.geminiKey    = rawG.trimmingCharacters(in: .whitespacesAndNewlines)
-        self.openaiKey    = rawO.trimmingCharacters(in: .whitespacesAndNewlines)
         self.ollamaHost = d.string(forKey: Self.ollamaKey) ?? (env["OLLAMA_HOST"] ?? "http://127.0.0.1:11434")
         self.autoSpawnDaemon = d.object(forKey: Self.autoSpawnKey) as? Bool ?? true
-        // One-time migration: if a legacy plaintext key existed, persist it to
-        // the Keychain and remove the cleartext copy.
+        // Keychain reads are deliberately NOT done here. On an ad-hoc-signed
+        // build every rebuild changes the code signature, so the first read
+        // pops an authorization dialog — and doing that from init() blocks
+        // scene instantiation, leaving the app running with no window until
+        // someone finds the hidden prompt. Seed from the environment now and
+        // load the stored keys off the main thread in `loadKeys()`.
+        self.anthropicKey = (env["ANTHROPIC_API_KEY"] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        self.geminiKey    = (env["GEMINI_API_KEY"] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        self.openaiKey    = (env["OPENAI_API_KEY"] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// True once the Keychain values have been merged in. The daemon spawn
+    /// waits on this so it doesn't start with empty keys.
+    @Published private(set) var keysLoaded = false
+
+    /// Pull the stored API keys off the main thread. Safe to call more than
+    /// once; only the first call does work.
+    func loadKeys() async {
+        if keysLoaded { return }
+        let anth = Self.anthKey, gem = Self.gemKey, oai = Self.oaiKey
+        let (kcA, kcG, kcO) = await Task.detached(priority: .userInitiated) {
+            (Keychain.get(account: anth), Keychain.get(account: gem), Keychain.get(account: oai))
+        }.value
+
+        let d = UserDefaults.standard
+        // One-time migration of the pre-Keychain plaintext values.
+        let legacyA = d.string(forKey: Self.anthKey)
+        let legacyG = d.string(forKey: Self.gemKey)
+        let rawA = kcA ?? legacyA
+        let rawG = kcG ?? legacyG
+
+        // Only overwrite when the Keychain actually had something — otherwise
+        // an env-provided key would be wiped.
+        if let v = rawA?.trimmingCharacters(in: .whitespacesAndNewlines), !v.isEmpty { anthropicKey = v }
+        if let v = rawG?.trimmingCharacters(in: .whitespacesAndNewlines), !v.isEmpty { geminiKey = v }
+        if let v = kcO?.trimmingCharacters(in: .whitespacesAndNewlines), !v.isEmpty { openaiKey = v }
+
         if kcA == nil, let l = legacyA, !l.isEmpty {
             Keychain.set(l.trimmingCharacters(in: .whitespacesAndNewlines), account: Self.anthKey)
             d.removeObject(forKey: Self.anthKey)
@@ -74,6 +96,7 @@ final class AppSettings: ObservableObject {
             Keychain.set(l.trimmingCharacters(in: .whitespacesAndNewlines), account: Self.gemKey)
             d.removeObject(forKey: Self.gemKey)
         }
+        keysLoaded = true
     }
 
     static func defaultSocketPath() -> String {

@@ -12,6 +12,11 @@ struct UstaApp: App {
                 .environmentObject(settings)
                 .frame(minWidth: 900, minHeight: 600)
                 .task {
+                    // Nothing here may wait on the Keychain. On an ad-hoc
+                    // signed build every rebuild re-prompts for access, and
+                    // that dialog can sit unnoticed behind other windows —
+                    // so start the daemon with whatever we already have and
+                    // let the stored keys arrive later.
                     client.applySocket(settings.socketPath)
                     if settings.autoSpawnDaemon {
                         _ = DaemonSpawner.spawn(
@@ -32,6 +37,24 @@ struct UstaApp: App {
                     if settings.autoSpawnDaemon, client.connected, client.daemonStartedMs > 0,
                        let mtime = DaemonSpawner.binaryMtimeMs(),
                        mtime > client.daemonStartedMs + 1000 {
+                        let sock = settings.socketPath
+                        let aKey = settings.anthropicKey, gKey = settings.geminiKey
+                        let oaKey = settings.openaiKey, oHost = settings.ollamaHost
+                        await Task.detached(priority: .userInitiated) {
+                            DaemonSpawner.stopByProbe(socket: sock)
+                            _ = DaemonSpawner.spawn(socket: sock, anthropicKey: aKey,
+                                                    geminiKey: gKey, openaiKey: oaKey, ollamaHost: oHost)
+                        }.value
+                        try? await Task.sleep(nanoseconds: 800_000_000)
+                        await client.connect()
+                    }
+
+                    // Now the UI is live, fetch the stored API keys. If they
+                    // differ from what the daemon was started with, restart it
+                    // so the providers actually have credentials.
+                    let before = settings.snapshotKey
+                    await settings.loadKeys()
+                    if settings.autoSpawnDaemon, settings.snapshotKey != before {
                         let sock = settings.socketPath
                         let aKey = settings.anthropicKey, gKey = settings.geminiKey
                         let oaKey = settings.openaiKey, oHost = settings.ollamaHost
