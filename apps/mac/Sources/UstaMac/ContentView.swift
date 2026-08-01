@@ -346,6 +346,7 @@ struct WorkspaceDetailView: View {
     @State private var showActivity = true
     @State private var startingTeam = false
     @State private var newFeatureText: String = ""
+    @State private var featureAttachments: [UstaAttachment] = []
     @State private var showNewFeature: Bool = false
     @State private var newFeatureRole: String = "product-manager"
     // Team templates: export / import
@@ -355,19 +356,29 @@ struct WorkspaceDetailView: View {
     @State private var showCosts = false
     // Session replay
     @State private var showReplay = false
+    // ⌘K command palette (semantic code search + quick actions)
+    @State private var showPalette = false
+    @State private var paletteSelection = 0
     // Workshop grill: post-scaffold refinement
     @State private var showGrillMore: Bool = false
     @State private var grillMoreLoading: Bool = false
     @State private var grillMoreQs: [Usta_V1_GrillQuestion] = []
     @State private var grillMoreAns: [String: String] = [:]
     @StateObject private var bus = WorkspaceBus()
+    @StateObject private var budget: BudgetGuard
     @StateObject private var rate = RateLimitModel()
     @StateObject private var termCache = TerminalSessionCache()
+
+    init(ws: Usta_V1_Workspace) {
+        self.ws = ws
+        _budget = StateObject(wrappedValue: BudgetGuard(workspaceID: ws.id))
+    }
 
     var body: some View {
         HStack(spacing: 0) {
             VStack(spacing: 0) {
                 header
+                BudgetBanner(guardModel: budget) { showCosts = true }
                 Divider().overlay(UstaTheme.border)
                 switch mode {
                 case .assistants:
@@ -409,11 +420,20 @@ struct WorkspaceDetailView: View {
         .task(id: ws.id) {
             roles = await client.listRoles(workspaceID: ws.id)
             bus.start(workspaceID: ws.id, client: client, roles: roles)
+            budget.start(client: client) { level, spent, cap in
+                if level == 2 {
+                    bus.toast(kind: .info, title: "Budget reached",
+                              body: String(format: "$%.2f of $%.0f — new kickoffs paused.", spent, cap))
+                } else if level == 1 {
+                    bus.toast(kind: .info, title: "80% of budget used",
+                              body: String(format: "$%.2f of $%.0f spent so far.", spent, cap))
+                }
+            }
             rate.start(client: client) { msg in
                 bus.toast(kind: .info, title: "Anthropic rate limit", body: msg)
             }
         }
-        .onDisappear { bus.stop(); rate.stop() }
+        .onDisappear { bus.stop(); rate.stop(); budget.stop() }
         .alert("Import team template?", isPresented: Binding(
             get: { importConfirmYaml != nil },
             set: { if !$0 { importConfirmYaml = nil } }
@@ -441,6 +461,29 @@ struct WorkspaceDetailView: View {
         .sheet(isPresented: $showCosts) {
             CostDashboard(workspaceID: ws.id)
                 .environmentObject(client)
+        }
+        .sheet(isPresented: $showPalette) {
+            CommandPalette(
+                workspaceID: ws.id,
+                workspacePath: ws.path,
+                roles: roles,
+                onOpenRole: { name in
+                    if let r = roles.first(where: { $0.name == name }) {
+                        selectedRole = r; mode = .assistants
+                    }
+                },
+                onAction: { act in
+                    switch act {
+                    case .startTeam:  if !startingTeam { Task { await startTeamSequentially() } }
+                    case .costs:      showCosts = true
+                    case .replay:     showReplay = true
+                    case .graph:      mode = .graph
+                    case .newFeature: showNewFeature = true
+                    case .reindex:    break   // handled inside the palette
+                    }
+                }
+            )
+            .environmentObject(client)
         }
         .sheet(isPresented: $showReplay) {
             ReplayView(workspaceName: (ws.path as NSString).lastPathComponent)
@@ -573,7 +616,7 @@ struct WorkspaceDetailView: View {
         showGrillMore = false
         bus.toast(kind: .info, title: "Refining…",
                   body: "PM is updating affected roles' tasks.")
-        if let plan = await client.orchestrateFeature(workspaceID: ws.id, featureText: text) {
+        if let plan = await client.orchestrateFeature(workspaceID: ws.id, featureText: text, attachments: featureAttachments) {
             roles = await client.listRoles(workspaceID: ws.id)
             bus.updateRoles(roles)
             bus.resetAutoRegenGuards()
@@ -684,12 +727,14 @@ struct WorkspaceDetailView: View {
             }
             .buttonStyle(.plain)
         } else {
-            HStack(spacing: 6) {
+            VStack(alignment: .leading, spacing: 6) {
+              HStack(spacing: 6) {
                 Image(systemName: "lightbulb.fill").foregroundStyle(.yellow)
                 TextField("Describe the new feature or change…", text: $newFeatureText)
                     .textFieldStyle(.plain)
                     .font(.system(size: 12))
                     .onSubmit { submitNewFeature() }
+                DictationButton(text: $newFeatureText)
                 Picker("", selection: $newFeatureRole) {
                     ForEach(roles, id: \.name) { r in
                         Text("→ @\(r.name)").tag(r.name)
@@ -698,11 +743,16 @@ struct WorkspaceDetailView: View {
                 .pickerStyle(.menu).fixedSize()
                 Button("Send") { submitNewFeature() }
                     .buttonStyle(.borderedProminent).controlSize(.small)
-                    .disabled(newFeatureText.trimmingCharacters(in: .whitespaces).isEmpty)
+                    .disabled(newFeatureText.trimmingCharacters(in: .whitespaces).isEmpty
+                              && featureAttachments.isEmpty)
                 Button {
-                    showNewFeature = false; newFeatureText = ""
+                    showNewFeature = false; newFeatureText = ""; featureAttachments = []
                 } label: { Image(systemName: "xmark").font(.caption2) }
                     .buttonStyle(.borderless).foregroundStyle(UstaTheme.dim)
+              }
+              // Screenshot of the bug, mockup of the change — the PM sees it
+              // and every affected role gets the file path in its task.
+              AttachmentBar(attachments: $featureAttachments, compact: true)
             }
             .padding(.horizontal, 10).padding(.vertical, 6)
             .background(Color.yellow.opacity(0.08))
@@ -713,11 +763,13 @@ struct WorkspaceDetailView: View {
 
     private func submitNewFeature() {
         let text = newFeatureText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return }
+        // A dropped screenshot with no words is a legitimate request ("fix
+        // this"), so only bail when there's nothing at all.
+        guard !text.isEmpty || !featureAttachments.isEmpty else { return }
         Task {
             bus.toast(kind: .info, title: "Planning feature…",
                       body: "PM is deciding which roles act and writing tasks.")
-            if let plan = await client.orchestrateFeature(workspaceID: ws.id, featureText: text) {
+            if let plan = await client.orchestrateFeature(workspaceID: ws.id, featureText: text, attachments: featureAttachments) {
                 // Reload roles so updated kickoff yamls land in UI
                 roles = await client.listRoles(workspaceID: ws.id)
                 bus.updateRoles(roles)
@@ -738,6 +790,7 @@ struct WorkspaceDetailView: View {
             }
             await MainActor.run {
                 newFeatureText = ""
+                featureAttachments = []
                 showNewFeature = false
             }
         }
@@ -1007,6 +1060,7 @@ struct WorkspaceDetailView: View {
         HStack(spacing: 8) {
             modePicker
             RateLimitChip(model: rate)
+            BudgetChip(guardModel: budget)
             tbBtn("Run App", "play.rectangle.fill", compact: compact) {
                 PreviewRunner.run(at: ws.path)
             }
@@ -1073,6 +1127,11 @@ struct WorkspaceDetailView: View {
                 tbBtn("Add Role", "plus", compact: compact) { showAddRole = true }
                 tbBtn("Apply Team", "person.3.sequence", compact: compact) { showApplyTeam = true }
                 tbBtn("Costs", "dollarsign.circle", compact: compact) { showCosts = true }
+                .background(
+                    Button("") { showPalette = true }
+                        .keyboardShortcut("k", modifiers: .command)
+                        .opacity(0).frame(width: 0, height: 0)
+                )
                 tbBtn("Replay", "memories", compact: compact) { showReplay = true }
                 Menu {
                     Button("Export Team…") { exportTeamToFile() }
@@ -1212,6 +1271,13 @@ struct WorkspaceDetailView: View {
     /// roles with no `subscribes` go first (they generate events others wait on);
     /// downstream roles last. Within a tier, preserve PM-given order.
     private func startTeamSequentially() async {
+        // Hard stop: don't fan out a whole team when the cap is already blown.
+        guard budget.allowsNewWork() else {
+            bus.toast(kind: .info, title: "Budget reached",
+                      body: "Raise the cap in the budget chip to start more work.")
+            showCosts = true
+            return
+        }
         startingTeam = true
         defer { startingTeam = false }
         let ordered = topoSorted(roles)

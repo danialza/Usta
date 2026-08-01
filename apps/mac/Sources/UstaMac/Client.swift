@@ -130,6 +130,40 @@ final class UstaClientModel: ObservableObject {
         }
     }
 
+    // --- Semantic code search ---
+
+    /// Build/refresh the embedding index for a workspace. Streams progress;
+    /// `onProgress` fires per file so the UI can show a live count.
+    func indexWorkspace(workspaceID: String,
+                        onProgress: @escaping @MainActor (_ files: Int, _ chunks: Int, _ done: Bool) -> Void) async {
+        guard let stub else { return }
+        do {
+            try await stub.indexWorkspace(.with { $0.workspaceID = workspaceID }) { resp in
+                for try await p in resp.messages {
+                    let f = Int(p.filesIndexed), c = Int(p.chunks), d = p.done
+                    await MainActor.run { onProgress(f, c, d) }
+                }
+            }
+        } catch {
+            self.lastError = "index: \(error)"
+        }
+    }
+
+    func searchWorkspace(workspaceID: String, query: String, k: Int = 12) async -> [Usta_V1_SearchHit] {
+        guard let stub else { return [] }
+        do {
+            let r = try await stub.searchWorkspace(.with {
+                $0.workspaceID = workspaceID
+                $0.query = query
+                $0.k = Int32(k)
+            })
+            return r.items
+        } catch {
+            self.lastError = "search: \(error)"
+            return []
+        }
+    }
+
     /// Per-role token/cost report parsed from local CLI session logs.
     func getCosts(workspaceID: String) async -> Usta_V1_CostReport? {
         guard let stub else { return nil }
@@ -371,13 +405,14 @@ final class UstaClientModel: ObservableObject {
 
     // --- New project ---
 
-    func proposeProject(idea: String, provider: String = "anthropic", model: String = "claude-sonnet-4-6") async -> Usta_V1_ProjectProposal? {
+    func proposeProject(idea: String, provider: String = "anthropic", model: String = "claude-sonnet-4-6", attachments: [UstaAttachment] = []) async -> Usta_V1_ProjectProposal? {
         guard let stub else { return nil }
         do {
             let req = Usta_V1_ProposeProjectRequest.with {
                 $0.idea = idea
                 $0.provider = provider
                 $0.model = model
+                $0.attachments = attachments.map(\.proto)
             }
             return try await stub.proposeProject(req)
         } catch {
@@ -435,7 +470,8 @@ final class UstaClientModel: ObservableObject {
     func scaffoldProject(proposal: Usta_V1_ProjectProposal, parentDir: String,
                          idea: String = "",
                          provider: String = "anthropic",
-                         model: String = "claude-haiku-4-5-20251001")
+                         model: String = "claude-haiku-4-5-20251001",
+                         attachments: [UstaAttachment] = [])
         async -> Usta_V1_ScaffoldProjectResponse?
     {
         guard let stub else { return nil }
@@ -443,6 +479,7 @@ final class UstaClientModel: ObservableObject {
             let req = Usta_V1_ScaffoldProjectRequest.with {
                 $0.proposal = proposal
                 $0.parentDir = parentDir
+                $0.attachments = attachments.map(\.proto)
                 $0.idea = idea
                 $0.provider = provider
                 $0.model = model
@@ -509,7 +546,8 @@ final class UstaClientModel: ObservableObject {
     /// for each into role yamls. Returns plan summary + role list.
     func orchestrateFeature(workspaceID: String, featureText: String,
                             provider: String = "anthropic",
-                            model: String = "claude-haiku-4-5-20251001")
+                            model: String = "claude-haiku-4-5-20251001",
+                            attachments: [UstaAttachment] = [])
                             async -> (summary: String, roles: [(name: String, task: String)])? {
         guard let stub else { return nil }
         do {
@@ -518,6 +556,7 @@ final class UstaClientModel: ObservableObject {
                 $0.featureText = featureText
                 $0.provider = provider
                 $0.model = model
+                $0.attachments = attachments.map(\.proto)
             }
             let resp = try await stub.orchestrateFeature(req)
             return (resp.planSummary, resp.roles.map { ($0.roleName, $0.task) })

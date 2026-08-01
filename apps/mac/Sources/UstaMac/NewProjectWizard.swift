@@ -22,6 +22,9 @@ struct NewProjectWizard: View {
     @State private var grillQuestions: [Usta_V1_GrillQuestion] = []
     @State private var grillAnswers: [String: String] = [:]
     @State private var grillStatus: String = ""
+    /// Mockups, specs, clips the user dropped in. Carried through the whole
+    /// wizard so scaffold can land them inside the new project too.
+    @State private var attachments: [UstaAttachment] = []
 
     var onOpened: (Usta_V1_Workspace) -> Void = { _ in }
 
@@ -64,15 +67,20 @@ struct NewProjectWizard: View {
         VStack(alignment: .leading, spacing: 14) {
             Text("What do you want to build?")
                 .font(.title3.bold())
-            Text("Describe the project in 1–3 sentences. The PM agent will pick a stack and assemble a team of specialist assistants.")
+            Text("Describe the project in 1–3 sentences — or drop in a mockup, spec or screen recording and let the team read it.")
                 .font(.callout).foregroundStyle(UstaTheme.dim)
-            TextEditor(text: $idea)
-                .scrollContentBackground(.hidden)
-                .padding(8)
-                .background(UstaTheme.cell)
-                .overlay(RoundedRectangle(cornerRadius: 6).stroke(UstaTheme.border))
-                .frame(minHeight: 140)
-                .font(.system(size: 13))
+            ZStack(alignment: .topTrailing) {
+                TextEditor(text: $idea)
+                    .scrollContentBackground(.hidden)
+                    .padding(8)
+                    .background(UstaTheme.cell)
+                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(UstaTheme.border))
+                    .frame(minHeight: 140)
+                    .font(.system(size: 13))
+                DictationButton(text: $idea)
+                    .padding(10)
+            }
+            AttachmentBar(attachments: $attachments)
 
             HStack(spacing: 12) {
                 providerPicker
@@ -392,7 +400,7 @@ struct NewProjectWizard: View {
     private func propose() async {
         working = true; errorMsg = nil
         defer { working = false }
-        if let p = await client.proposeProject(idea: idea, provider: provider, model: model) {
+        if let p = await client.proposeProject(idea: idea, provider: provider, model: model, attachments: attachments) {
             proposal = p
             step = .review
         } else {
@@ -459,7 +467,8 @@ struct NewProjectWizard: View {
             for (q, a) in qa { enriched += "- \(q) → \(a)\n" }
         }
         if let resp = await client.scaffoldProject(proposal: p, parentDir: url.path,
-                                                   idea: enriched, provider: provider, model: model) {
+                                                   idea: enriched, provider: provider, model: model,
+                                                   attachments: attachments) {
             openedWS = resp.workspace
             step = .done
         } else {
