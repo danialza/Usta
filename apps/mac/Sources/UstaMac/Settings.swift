@@ -66,6 +66,13 @@ final class AppSettings: ObservableObject {
     /// waits on this so it doesn't start with empty keys.
     @Published private(set) var keysLoaded = false
 
+    /// Re-read the secret store after it changed underneath us (e.g. the
+    /// one-time import of legacy keychain items).
+    func reloadFromStore() async {
+        keysLoaded = false
+        await loadKeys()
+    }
+
     /// Pull the stored API keys off the main thread. Safe to call more than
     /// once; only the first call does work.
     func loadKeys() async {
@@ -187,6 +194,9 @@ struct SettingsView: View {
 
     // Snapshot keys/host at sheet open so we can detect changes on Done
     @State private var openSnapshot: String = ""
+    /// Old per-key keychain items from before the single-item store.
+    @State private var legacyKeysPresent = false
+    @State private var importing = false
 
     var body: some View {
         ScrollView {
@@ -194,6 +204,7 @@ struct SettingsView: View {
                 Text("Settings").font(.title2.bold())
 
                 daemonBox
+                if legacyKeysPresent { legacyImportBox }
                 anthropicBox
                 openaiBox
                 geminiBox
@@ -239,6 +250,7 @@ struct SettingsView: View {
         }
         .task {
             openSnapshot = settings.snapshotKey
+            legacyKeysPresent = Keychain.hasLegacyItems()
             await ollama.refresh(base: settings.ollamaHost)
         }
     }
@@ -301,6 +313,44 @@ struct SettingsView: View {
             }
             .padding(.vertical, 4)
         }
+    }
+
+    /// One-time, user-initiated import of the pre-v0.3 keychain items. Kept
+    /// off the launch path on purpose: reading those items is what raises the
+    /// login-password dialog, so it happens once, when the user asks for it.
+    private var legacyImportBox: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Image(systemName: "key.horizontal.fill").foregroundStyle(UstaTheme.accentAmber)
+                Text("Saved keys from an older version").font(.system(size: 13, weight: .semibold))
+            }
+            Text("Usta used to store each key as its own keychain item, which made macOS ask for your login password on every launch. Import them once and that stops for good.")
+                .font(.system(size: 11)).foregroundStyle(UstaTheme.dim)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 10) {
+                Button(importing ? "Importing…" : "Import keys") {
+                    importing = true
+                    let n = Keychain.migrateLegacyItems()
+                    Task { @MainActor in
+                        await settings.reloadFromStore()
+                        legacyKeysPresent = Keychain.hasLegacyItems()
+                        importing = false
+                        status = n > 0 ? "Imported \(n) key(s) — macOS won't ask again."
+                                       : "Nothing to import (you can just paste your keys below)."
+                    }
+                }
+                .buttonStyle(.borderedProminent).controlSize(.small)
+                .disabled(importing)
+                Button("Ignore") { legacyKeysPresent = false }
+                    .buttonStyle(.plain).font(.system(size: 11))
+                    .foregroundStyle(UstaTheme.dim)
+            }
+        }
+        .padding(14)
+        .background(UstaTheme.accentAmber.opacity(0.08))
+        .clipShape(RoundedRectangle(cornerRadius: UstaTheme.radiusMedium))
+        .overlay(RoundedRectangle(cornerRadius: UstaTheme.radiusMedium)
+            .stroke(UstaTheme.accentAmber.opacity(0.35)))
     }
 
     private var anthropicBox: some View {
